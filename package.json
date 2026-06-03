@@ -1,0 +1,19 @@
+{
+  "name": "lane-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @lane/todo-api dev",
+    "dev:todo-nextjs-react-query": "pnpm --filter @lane/todo-nextjs-react-query dev",
+    "dev:todo-nextjs-lane": "pnpm --filter @lane/todo-nextjs-lane dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}
+

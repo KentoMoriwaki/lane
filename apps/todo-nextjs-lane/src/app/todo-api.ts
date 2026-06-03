@@ -1,4 +1,4 @@
-import type { AppType } from "@lane/todo-api";
+import type { AppType, Todo } from "@lane/todo-api";
 import { hc } from "hono/client";
 
 const apiUrl = process.env.TODO_API_URL ?? "http://localhost:4000";
@@ -13,13 +13,13 @@ type UpdateTodoInput = NonNullable<
   Parameters<(typeof client.todos)[":id"]["$patch"]>[0]
 >["json"];
 
-export async function listTodos() {
+export async function listTodos(): Promise<Todo[]> {
   const response = await client.todos.$get(undefined, requestOptions);
   await assertOk(response);
-  return response.json();
+  return response.json() as Promise<Todo[]>;
 }
 
-export async function createTodo(input: { title: string }) {
+export async function createTodo(input: { title: string }): Promise<Todo> {
   const response = await client.todos.$post(
     {
       json: input,
@@ -27,10 +27,13 @@ export async function createTodo(input: { title: string }) {
     requestOptions,
   );
   await assertOk(response);
-  return response.json();
+  return response.json() as Promise<Todo>;
 }
 
-export async function updateTodo(id: string, input: UpdateTodoInput) {
+export async function updateTodo(
+  id: string,
+  input: UpdateTodoInput,
+): Promise<Todo> {
   const response = await client.todos[":id"].$patch(
     {
       json: input,
@@ -39,7 +42,7 @@ export async function updateTodo(id: string, input: UpdateTodoInput) {
     requestOptions,
   );
   await assertOk(response);
-  return response.json();
+  return response.json() as Promise<Todo>;
 }
 
 export async function deleteTodo(id: string): Promise<void> {

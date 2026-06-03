@@ -1,12 +1,23 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { Todo } from "@lane/todo-api";
 import { createTodo, deleteTodo, updateTodo } from "./todo-api";
 
 export type TodoActionState = {
   error: string | null;
   submissionId: number;
 };
+
+export type ToggleTodoActionResult =
+  | {
+      ok: true;
+      todo: Todo;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
 
 export async function createTodoAction(
   previousState: TodoActionState,
@@ -40,13 +51,29 @@ export async function refreshTodosAction() {
   revalidatePath("/");
 }
 
-export async function toggleTodoAction(id: string, completed: boolean) {
+export async function toggleTodoAction(
+  id: string,
+  completed: boolean,
+): Promise<ToggleTodoActionResult> {
   if (!id) {
-    return;
+    return {
+      ok: false,
+      error: "Todo id is required",
+    };
   }
 
-  await updateTodo(id, { completed });
-  revalidatePath("/");
+  try {
+    const todo = await updateTodo(id, { completed });
+    return {
+      ok: true,
+      todo,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+    };
+  }
 }
 
 export async function deleteTodoAction(id: string) {

@@ -6,8 +6,7 @@ import { createTodoAction, type TodoActionState } from "./actions";
 import {
   AddTodoForm,
   RefreshTodosForm,
-  TodoDeleteForm,
-  TodoToggleForm,
+  TodoRow,
 } from "./todo-controls";
 
 type OptimisticTodoInput = {
@@ -93,13 +92,11 @@ function TodoList({ todos }: { todos: Todo[] }) {
   return (
     <div className="todo-list">
       {todos.map((todo) => (
-        <div className="todo-row" key={todo.id}>
-          <TodoToggleForm todo={todo} disabled={isOptimisticTodo(todo)} />
-          <span className="todo-title" data-completed={todo.completed}>
-            {todo.title}
-          </span>
-          <TodoDeleteForm todo={todo} disabled={isOptimisticTodo(todo)} />
-        </div>
+        <TodoRow
+          disabled={isOptimisticTodo(todo)}
+          key={`${todo.id}:${todo.updatedAt}`}
+          todo={todo}
+        />
       ))}
     </div>
   );

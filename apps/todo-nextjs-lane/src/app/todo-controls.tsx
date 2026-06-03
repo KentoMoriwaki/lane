@@ -4,6 +4,8 @@ import type { Todo } from "@lane/todo-api";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
+  startTransition,
+  useActionState,
   useOptimistic,
   useRef,
   useTransition,
@@ -13,6 +15,11 @@ import {
   deleteTodoAction,
   toggleTodoAction,
 } from "./actions";
+
+type ToggleState = {
+  completed: boolean;
+  error: string | null;
+};
 
 export function AddTodoForm({
   action,
@@ -65,38 +72,70 @@ export function RefreshTodosForm() {
   );
 }
 
-export function TodoToggleForm({
+export function TodoRow({
   disabled,
   todo,
 }: {
   disabled?: boolean;
   todo: Todo;
 }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [state, dispatchToggle, isPending] = useActionState(
+    async (
+      previousState: ToggleState,
+      requestedCompleted: boolean,
+    ): Promise<ToggleState> => {
+      const result = await toggleTodoAction(todo.id, requestedCompleted);
+
+      if (!result.ok) {
+        return {
+          completed: previousState.completed,
+          error: result.error,
+        };
+      }
+
+      return {
+        completed: result.todo.completed,
+        error: null,
+      };
+    },
+    {
+      completed: todo.completed,
+      error: null,
+    },
+  );
   const [optimisticCompleted, setOptimisticCompleted] = useOptimistic(
-    todo.completed,
+    state.completed,
     (_currentCompleted, nextCompleted: boolean) => nextCompleted,
   );
 
   return (
-    <span className="toggle-form">
-      <input
-        aria-label={`Toggle ${todo.title}`}
-        className="checkbox"
-        checked={optimisticCompleted}
-        disabled={disabled || isPending}
-        type="checkbox"
-        onChange={() => {
-          const nextCompleted = !optimisticCompleted;
+    <div className="todo-row" data-pending={isPending}>
+      <span className="toggle-form">
+        <input
+          aria-label={`Toggle ${todo.title}`}
+          aria-busy={isPending}
+          className="checkbox"
+          checked={optimisticCompleted}
+          disabled={disabled}
+          type="checkbox"
+          onChange={() => {
+            const nextCompleted = !optimisticCompleted;
 
-          startTransition(async () => {
-            setOptimisticCompleted(nextCompleted);
-            await toggleTodoAction(todo.id, nextCompleted);
-          });
-        }}
-      />
-    </span>
+            startTransition(() => {
+              setOptimisticCompleted(nextCompleted);
+              dispatchToggle(nextCompleted);
+            });
+          }}
+        />
+      </span>
+      <span className="todo-title" data-completed={optimisticCompleted}>
+        {todo.title}
+      </span>
+      <TodoDeleteForm todo={todo} disabled={disabled} />
+      {state.error ? (
+        <span className="todo-row-error">{state.error}</span>
+      ) : null}
+    </div>
   );
 }
 
@@ -107,7 +146,6 @@ export function TodoDeleteForm({
   disabled?: boolean;
   todo: Todo;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   return (

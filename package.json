@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "dev:api": "pnpm --filter @lane/todo-api dev",
-    "dev:todo-nextjs-react-query": "pnpm --filter @lane/todo-nextjs-react-query dev",
+    "dev:todo-nextjs-swr": "pnpm --filter @lane/todo-nextjs-swr dev",
     "dev:todo-nextjs-lane": "pnpm --filter @lane/todo-nextjs-lane dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck"
@@ -16,4 +16,3 @@
     "typescript": "^5.9.3"
   }
 }
-

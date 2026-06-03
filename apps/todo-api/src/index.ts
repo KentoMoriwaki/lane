@@ -1,1 +1,1 @@
-export type { AppType, Todo } from "./app.js";
+export type { AppType, Todo, UpdateTodoInput } from "./app.js";

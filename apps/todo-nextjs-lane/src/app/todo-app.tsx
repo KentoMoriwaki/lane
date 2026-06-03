@@ -1,71 +1,68 @@
 "use client";
 
-import type { AppType, Todo } from "@lane/todo-api";
-import { hc } from "hono/client";
-import { Plus, Trash2 } from "lucide-react";
+import type { Todo } from "@lane/todo-api";
+import { useOptimistic, useState } from "react";
+import { createTodoAction, type TodoActionState } from "./actions";
 import {
-  FormEvent,
-  Suspense,
-  use,
-  useCallback,
-  useEffect,
-  useState,
-  useTransition,
-} from "react";
+  AddTodoForm,
+  RefreshTodosForm,
+  TodoDeleteForm,
+  TodoToggleForm,
+} from "./todo-controls";
 
-const apiUrl = process.env.NEXT_PUBLIC_TODO_API_URL ?? "http://localhost:4000";
-const client = hc<AppType>(apiUrl);
+type OptimisticTodoInput = {
+  id: string;
+  title: string;
+};
 
-export function TodoApp() {
-  const [title, setTitle] = useState("");
-  const [todosPromise, setTodosPromise] = useState<Promise<Todo[]> | null>(
-    null,
+const initialCreateState: TodoActionState = {
+  error: null,
+  submissionId: 0,
+};
+
+export function TodoApp({ todos }: { todos: Todo[] }) {
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [optimisticTodos, addOptimisticTodo] = useOptimistic(
+    todos,
+    (currentTodos, input: OptimisticTodoInput): Todo[] => {
+      const now = new Date().toISOString();
+
+      return [
+        ...currentTodos,
+        {
+          completed: false,
+          createdAt: now,
+          id: input.id,
+          title: input.title,
+          updatedAt: now,
+        },
+      ];
+    },
   );
-  const [isTransitionPending, beginTransition] = useTransition();
-  const [isMutating, setIsMutating] = useState(false);
-  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setTodosPromise(listTodos());
-  }, []);
+  async function createTodo(formData: FormData) {
+    const title = readTitle(formData);
 
-  const refresh = useCallback(() => {
-    beginTransition(() => {
-      setTodosPromise(listTodos());
-    });
-  }, [beginTransition]);
-
-  async function mutate(operation: () => Promise<unknown>) {
-    setMutationError(null);
-    setIsMutating(true);
-
-    try {
-      await operation();
-      refresh();
-    } catch (error) {
-      setMutationError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsMutating(false);
-    }
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!title.trim() || isMutating) {
-      return;
+    if (!title) {
+      setCreateError("Title is required");
+      return false;
     }
 
-    void mutate(async () => {
-      const response = await client.todos.$post({
-        json: { title },
-      });
-      await assertOk(response);
-      setTitle("");
+    setCreateError(null);
+    addOptimisticTodo({
+      id: `optimistic-${crypto.randomUUID()}`,
+      title,
     });
-  }
 
-  const pending = isMutating || isTransitionPending;
+    const nextState = await createTodoAction(initialCreateState, formData);
+
+    if (nextState.error) {
+      setCreateError(nextState.error);
+      return false;
+    }
+
+    return true;
+  }
 
   return (
     <main className="app-shell">
@@ -74,108 +71,21 @@ export function TodoApp() {
           <p className="eyebrow">Next.js / Lane path</p>
           <h1>Todos</h1>
         </div>
-        <div className="status-pill">{pending ? "Transitioning" : "Idle"}</div>
+        <div className="topbar-actions">
+          <RefreshTodosForm />
+          <div className="status-pill">Server rendered</div>
+        </div>
       </div>
 
       <section className="todo-panel">
-        <form className="composer" onSubmit={handleSubmit}>
-          <input
-            aria-label="New todo"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="Add a task"
-          />
-          <button
-            className="primary-button"
-            disabled={!title.trim() || isMutating}
-            type="submit"
-          >
-            <Plus size={18} aria-hidden="true" />
-            Add
-          </button>
-        </form>
-
-        {mutationError ? (
-          <div className="error-state">{mutationError}</div>
-        ) : null}
-
-        {todosPromise ? (
-          <Suspense fallback={<div className="loading-state">Loading...</div>}>
-            <TodoList
-              todosPromise={todosPromise}
-              pending={pending}
-              onToggle={(todo) =>
-                void mutate(async () => {
-                  const response = await client.todos[":id"].$patch({
-                    param: { id: todo.id },
-                    json: { completed: !todo.completed },
-                  });
-                  await assertOk(response);
-                })
-              }
-              onDelete={(id) =>
-                void mutate(async () => {
-                  const response = await client.todos[":id"].$delete({
-                    param: { id },
-                  });
-                  await assertOk(response);
-                })
-              }
-            />
-          </Suspense>
-        ) : (
-          <div className="loading-state">Loading...</div>
-        )}
+        <AddTodoForm action={createTodo} error={createError} />
+        <TodoList todos={optimisticTodos} />
       </section>
     </main>
   );
 }
 
-async function listTodos() {
-  const response = await client.todos.$get();
-  await assertOk(response);
-  return response.json();
-}
-
-async function assertOk(response: Response) {
-  if (response.ok) {
-    return;
-  }
-
-  const fallback = `Request failed with ${response.status}`;
-  const body = await response.text();
-
-  if (!body) {
-    throw new Error(fallback);
-  }
-
-  let message = body;
-
-  try {
-    const data = JSON.parse(body) as { error?: unknown };
-    if (typeof data.error === "string") {
-      message = data.error;
-    }
-  } catch {
-    // Keep the raw response body for non-JSON errors.
-  }
-
-  throw new Error(message);
-}
-
-function TodoList({
-  todosPromise,
-  pending,
-  onToggle,
-  onDelete,
-}: {
-  todosPromise: Promise<Todo[]>;
-  pending: boolean;
-  onToggle: (todo: Todo) => void;
-  onDelete: (id: string) => void;
-}) {
-  const todos = use(todosPromise);
-
+function TodoList({ todos }: { todos: Todo[] }) {
   if (todos.length === 0) {
     return <div className="empty-state">No todos yet.</div>;
   }
@@ -184,28 +94,22 @@ function TodoList({
     <div className="todo-list">
       {todos.map((todo) => (
         <div className="todo-row" key={todo.id}>
-          <input
-            aria-label={`Toggle ${todo.title}`}
-            className="checkbox"
-            checked={todo.completed}
-            disabled={pending}
-            type="checkbox"
-            onChange={() => onToggle(todo)}
-          />
+          <TodoToggleForm todo={todo} disabled={isOptimisticTodo(todo)} />
           <span className="todo-title" data-completed={todo.completed}>
             {todo.title}
           </span>
-          <button
-            aria-label={`Delete ${todo.title}`}
-            className="icon-button"
-            disabled={pending}
-            type="button"
-            onClick={() => onDelete(todo.id)}
-          >
-            <Trash2 size={17} aria-hidden="true" />
-          </button>
+          <TodoDeleteForm todo={todo} disabled={isOptimisticTodo(todo)} />
         </div>
       ))}
     </div>
   );
+}
+
+function readTitle(formData: FormData) {
+  const value = formData.get("title");
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isOptimisticTodo(todo: Todo) {
+  return todo.id.startsWith("optimistic-");
 }

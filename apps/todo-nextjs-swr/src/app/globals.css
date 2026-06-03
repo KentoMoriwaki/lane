@@ -46,6 +46,12 @@ button:disabled {
   margin-bottom: 24px;
 }
 
+.topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0 0 6px;
   color: #6f6357;
@@ -182,10 +188,10 @@ h1 {
 
   .topbar {
     align-items: start;
+    flex-direction: column;
   }
 
   .status-pill {
     white-space: normal;
   }
 }
-

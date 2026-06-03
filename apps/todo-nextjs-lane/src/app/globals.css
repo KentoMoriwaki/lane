@@ -46,6 +46,12 @@ button:disabled {
   margin-bottom: 24px;
 }
 
+.topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0 0 6px;
   color: #586a64;
@@ -157,6 +163,11 @@ h1 {
   accent-color: #395b9b;
 }
 
+.toggle-form {
+  display: inline-flex;
+  align-items: center;
+}
+
 .empty-state,
 .error-state,
 .loading-state {
@@ -182,10 +193,10 @@ h1 {
 
   .topbar {
     align-items: start;
+    flex-direction: column;
   }
 
   .status-pill {
     white-space: normal;
   }
 }
-

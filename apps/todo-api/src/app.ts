@@ -34,6 +34,8 @@ export type Todo = z.infer<typeof todoSchema>;
 export type UpdateTodoInput = z.infer<typeof updateTodoInputSchema>;
 
 const app = new Hono();
+const defaultDelayMs = 1_000;
+const apiDelayMs = Number(process.env.TODO_API_DELAY_MS ?? defaultDelayMs);
 
 app.use(
   "*",
@@ -43,6 +45,14 @@ app.use(
     allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
+
+app.use("*", async (context, next) => {
+  if (context.req.path === "/todos" || context.req.path.startsWith("/todos/")) {
+    await delay(apiDelayMs);
+  }
+
+  await next();
+});
 
 export const routes = app
   .get("/health", (context) => context.json({ ok: true }, 200))
@@ -92,3 +102,11 @@ export const routes = app
 export type AppType = typeof routes;
 
 export { app };
+
+async function delay(milliseconds: number) {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}

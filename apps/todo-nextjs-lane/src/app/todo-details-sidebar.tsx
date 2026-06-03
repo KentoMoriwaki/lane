@@ -12,7 +12,7 @@ export function TodoDetailsSidebar({ todo }: { todo: Todo | null }) {
 
   return (
     <aside className="details-sidebar">
-      <TodoDetailControls key={`${todo.id}:${todo.updatedAt}`} todo={todo} />
+      <TodoDetailControls key={todo.id} todo={todo} />
     </aside>
   );
 }

@@ -25,14 +25,11 @@ import {
 } from "./actions";
 
 type ToggleState = {
-  completed: boolean;
   error: string | null;
 };
 
 type DetailState = {
-  completed: boolean;
   error: string | null;
-  title: string;
 };
 
 export function AddTodoForm({
@@ -94,14 +91,13 @@ export function TodoRow({
   const router = useRouter();
   const [state, dispatchToggle, isPending] = useActionState(
     async (
-      previousState: ToggleState,
+      _previousState: ToggleState,
       requestedCompleted: boolean,
     ): Promise<ToggleState> => {
       const result = await toggleTodoAction(todo.id, requestedCompleted);
 
       if (!result.ok) {
         return {
-          completed: previousState.completed,
           error: result.error,
         };
       }
@@ -109,17 +105,15 @@ export function TodoRow({
       router.refresh();
 
       return {
-        completed: result.todo.completed,
         error: null,
       };
     },
     {
-      completed: todo.completed,
       error: null,
     },
   );
   const [optimisticCompleted, setOptimisticCompleted] = useOptimistic(
-    state.completed,
+    todo.completed,
     (_currentCompleted, nextCompleted: boolean) => nextCompleted,
   );
 
@@ -185,7 +179,7 @@ export function TodoDetailControls({
   const router = useRouter();
   const [state, dispatchDetail, isPending] = useActionState(
     async (
-      previousState: DetailState,
+      _previousState: DetailState,
       mutation:
         | { type: "completed"; completed: boolean }
         | { type: "title"; title: string },
@@ -197,7 +191,6 @@ export function TodoDetailControls({
 
       if (!result.ok) {
         return {
-          ...previousState,
           error: result.error,
         };
       }
@@ -205,19 +198,15 @@ export function TodoDetailControls({
       router.refresh();
 
       return {
-        completed: result.todo.completed,
         error: null,
-        title: result.todo.title,
       };
     },
     {
-      completed: todo.completed,
       error: null,
-      title: todo.title,
     },
   );
   const [optimisticCompleted, setOptimisticCompleted] = useOptimistic(
-    state.completed,
+    todo.completed,
     (_currentCompleted, nextCompleted: boolean) => nextCompleted,
   );
   const [isDeleting, startDeleteTransition] = useTransition();
@@ -239,7 +228,7 @@ export function TodoDetailControls({
     <div className="details-content" data-pending={isPending}>
       <div className="details-header">
         <p className="eyebrow">Task detail</p>
-        <h2 data-completed={optimisticCompleted}>{state.title}</h2>
+        <h2 data-completed={optimisticCompleted}>{todo.title}</h2>
       </div>
 
       <label className="details-check">
@@ -269,12 +258,11 @@ export function TodoDetailControls({
           <input
             id={`todo-title-${todo.id}`}
             name="title"
-            defaultValue={state.title}
+            defaultValue={todo.title}
           />
           <button
-            aria-label={`Save ${state.title}`}
+            aria-label={`Save ${todo.title}`}
             className="icon-button"
-            disabled={isPending}
             type="submit"
           >
             <Save size={17} aria-hidden="true" />

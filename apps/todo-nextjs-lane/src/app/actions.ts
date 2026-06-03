@@ -9,7 +9,7 @@ export type TodoActionState = {
   submissionId: number;
 };
 
-export type ToggleTodoActionResult =
+export type TodoMutationActionResult =
   | {
       ok: true;
       todo: Todo;
@@ -54,7 +54,7 @@ export async function refreshTodosAction() {
 export async function toggleTodoAction(
   id: string,
   completed: boolean,
-): Promise<ToggleTodoActionResult> {
+): Promise<TodoMutationActionResult> {
   if (!id) {
     return {
       ok: false,
@@ -64,6 +64,42 @@ export async function toggleTodoAction(
 
   try {
     const todo = await updateTodo(id, { completed });
+    revalidatePath("/");
+    return {
+      ok: true,
+      todo,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+    };
+  }
+}
+
+export async function updateTodoTitleAction(
+  id: string,
+  title: string,
+): Promise<TodoMutationActionResult> {
+  if (!id) {
+    return {
+      ok: false,
+      error: "Todo id is required",
+    };
+  }
+
+  const trimmedTitle = title.trim();
+
+  if (!trimmedTitle) {
+    return {
+      ok: false,
+      error: "Title is required",
+    };
+  }
+
+  try {
+    const todo = await updateTodo(id, { title: trimmedTitle });
+    revalidatePath("/");
     return {
       ok: true,
       todo,

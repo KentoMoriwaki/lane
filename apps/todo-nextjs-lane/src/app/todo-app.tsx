@@ -1,6 +1,7 @@
 "use client";
 
 import type { Todo } from "@lane/todo-api";
+import type { ReactNode } from "react";
 import { useOptimistic, useState } from "react";
 import { createTodoAction, type TodoActionState } from "./actions";
 import {
@@ -19,7 +20,15 @@ const initialCreateState: TodoActionState = {
   submissionId: 0,
 };
 
-export function TodoApp({ todos }: { todos: Todo[] }) {
+export function TodoApp({
+  selectedTodoId,
+  sidebar,
+  todos,
+}: {
+  selectedTodoId: string | null;
+  sidebar: ReactNode;
+  todos: Todo[];
+}) {
   const [createError, setCreateError] = useState<string | null>(null);
   const [optimisticTodos, addOptimisticTodo] = useOptimistic(
     todos,
@@ -76,15 +85,27 @@ export function TodoApp({ todos }: { todos: Todo[] }) {
         </div>
       </div>
 
-      <section className="todo-panel">
-        <AddTodoForm action={createTodo} error={createError} />
-        <TodoList todos={optimisticTodos} />
-      </section>
+      <div className="todo-workspace">
+        <section className="todo-panel">
+          <AddTodoForm action={createTodo} error={createError} />
+          <TodoList
+            selectedTodoId={selectedTodoId}
+            todos={optimisticTodos}
+          />
+        </section>
+        {sidebar}
+      </div>
     </main>
   );
 }
 
-function TodoList({ todos }: { todos: Todo[] }) {
+function TodoList({
+  selectedTodoId,
+  todos,
+}: {
+  selectedTodoId: string | null;
+  todos: Todo[];
+}) {
   if (todos.length === 0) {
     return <div className="empty-state">No todos yet.</div>;
   }
@@ -94,6 +115,7 @@ function TodoList({ todos }: { todos: Todo[] }) {
       {todos.map((todo) => (
         <TodoRow
           disabled={isOptimisticTodo(todo)}
+          isSelected={todo.id === selectedTodoId}
           key={`${todo.id}:${todo.updatedAt}`}
           todo={todo}
         />

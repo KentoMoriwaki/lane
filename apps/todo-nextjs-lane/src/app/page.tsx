@@ -1,8 +1,29 @@
 import { TodoApp } from "./todo-app";
+import { TodoDetailsSidebar } from "./todo-details-sidebar";
 import { listTodos } from "./todo-api";
 
-export default async function Page() {
-  const todos = await listTodos();
+type PageProps = {
+  searchParams?: Promise<{
+    todoId?: string | string[];
+  }>;
+};
 
-  return <TodoApp todos={todos} />;
+export default async function Page({ searchParams }: PageProps) {
+  const params = await searchParams;
+  const selectedTodoId = readSingleParam(params?.todoId);
+  const todos = await listTodos();
+  const selectedTodo =
+    todos.find((todo) => todo.id === selectedTodoId) ?? null;
+
+  return (
+    <TodoApp
+      selectedTodoId={selectedTodoId}
+      sidebar={<TodoDetailsSidebar todo={selectedTodo} />}
+      todos={todos}
+    />
+  );
+}
+
+function readSingleParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value ?? null;
 }

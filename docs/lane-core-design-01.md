@@ -8,6 +8,37 @@ label search and creation flow in `apps/todo-nextjs-lane`.
 Lane starts as a tiny async coordination layer for React Suspense and
 transitions.
 
+The core value is that Lane is a transition-native client data loading layer
+that fits next to Server Components instead of competing with them.
+
+Server Components should own data that must be server-rendered. That data should
+be updated through Server Functions, Server Actions, revalidation, or an RSC
+refresh. Lane should own data that only becomes relevant on the client: focused
+controls, client-only async islands, local optimistic workflows, and distant
+client consumers that need to observe the same promise refresh.
+
+Both sides keep the same mental model: React renders from promises.
+
+```tsx
+// Server Component owner
+const labels = await getLabels();
+
+return <Labels labels={labels} />;
+```
+
+```tsx
+// Client Component owner
+const labelsPromise = useLanePromise(labelLane, labelsKey, fetchLabels);
+const labels = use(labelsPromise);
+
+return <Labels labels={labels} />;
+```
+
+This is why Lane should not grow into an SSR data framework. If a piece of data
+needs to be server-rendered as route or page data, the Server Component tree is
+the right owner. Lane exists for the client-owned half of the app while keeping
+the same Suspense, Error Boundary, action, optimistic, and transition primitives.
+
 The minimum unit Lane caches is a `Promise`, not resolved data.
 
 ```ts
@@ -55,10 +86,13 @@ This first design does not include:
 - Lane-owned mutation pending state
 - global Context state for all queries
 - subscriber notifications for resolved values
+- SSR hydration for Server Component-owned data
 
 Lane should not become an SWR-like external data store in the first version.
 It also should not become a React replacement layer. The point is to compose
 with React primitives, not to wrap them in less transition-compatible copies.
+Lane also should not hydrate Server Component data into a client cache by
+default; that creates two owners for the same data.
 
 ## Why Promise Only
 
@@ -463,6 +497,47 @@ Suspense child:
 - create option rendering
 - assigned option toggles remove
 
+## Server Components And SSR
+
+Lane is not trying to replace Server Component data loading.
+
+If data is naturally owned by a Server Component, it should stay there:
+
+```txt
+Server Component fetch
+-> props into Client Components if needed
+-> mutation through Server Function or Server Action
+-> revalidation or RSC refresh
+```
+
+Hydrating that same data into Lane would create a split ownership model:
+
+```txt
+initial owner: Server Component
+later owner: Lane
+```
+
+That is not the default direction for this library.
+
+The intended split is:
+
+```txt
+Server-rendered route or page data
+=> Server Component owner
+
+Client-only async data
+=> Lane owner
+```
+
+This keeps the whole application transition-native without making every data
+source go through the same cache. The writing style remains close because both
+owners expose data through promises that React unwraps during render.
+
+SSR support for client-owned Lane data is possible, but it is not part of this
+minimum design. A future SSR API would need to preserve the same ownership rule:
+it may serialize a fulfilled promise for a client-owned island, but it should
+not become a hydration bridge for Server Component-owned route data.
+
 ## Open Questions
 
 - How should keys be serialized, and how strict should key equality be?
@@ -470,3 +545,5 @@ Suspense child:
 - Should query promises ever be evicted?
 - Should `subscribe` call the listener immediately, or should the hook always
   perform its own post-subscribe sync?
+- If client-owned Lane data ever supports SSR, what is the smallest API that can
+  serialize fulfilled promises without introducing a resolved value cache?

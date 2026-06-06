@@ -231,6 +231,7 @@ export function TodoLabelCombobox({
                 labelsPromise={labelsPromise}
                 optimisticCreatedLabels={optimisticCreatedLabels}
                 query={query}
+                removeLabel={removeLabel}
               />
             </Suspense>
           ) : null
@@ -325,6 +326,7 @@ function LabelOptions({
   labelsPromise,
   optimisticCreatedLabels,
   query,
+  removeLabel,
 }: {
   assignedLabels: Label[];
   assignLabel: (label: Label) => void;
@@ -333,6 +335,7 @@ function LabelOptions({
   labelsPromise: Promise<Label[]>;
   optimisticCreatedLabels: Label[];
   query: string;
+  removeLabel: (label: Label) => void;
 }) {
   const labels = use(labelsPromise);
   const visibleLabels = useMemo(
@@ -385,11 +388,17 @@ function LabelOptions({
             className="label-option"
             data-optimistic={isOptimistic ? "true" : undefined}
             data-selected={isAssigned}
-            disabled={isAssigned || isOptimistic}
+            disabled={isOptimistic}
             key={label.id}
             role="option"
             type="button"
-            onClick={() => assignLabel(label)}
+            onClick={() => {
+              if (isAssigned) {
+                removeLabel(label);
+              } else {
+                assignLabel(label);
+              }
+            }}
           >
             {isAssigned ? (
               <Check size={16} aria-hidden="true" />

@@ -18,7 +18,7 @@ React reads the promise with `use(promise)`.
 
 ```tsx
 function LabelOptions() {
-  const labelsPromise = useLanePromise(labelsKey, fetchLabels);
+  const labelsPromise = useLanePromise(labelLane, labelsKey, fetchLabels);
   const labels = use(labelsPromise);
 
   return null;
@@ -113,11 +113,13 @@ This design intentionally avoids that shape.
 Mutation pending is already represented by `useActionState`.
 
 ```tsx
-const [_state, createLabelAction, isPending] = useActionState(
+const [_state, createLabelAction] = useActionState(
   async (_previousState, formData: FormData) => {
     await postLabel(readLabelName(formData));
 
-    lane.refresh(labelsKey, fetchLabels);
+    startTransition(() => {
+      labelLane.refresh(labelsKey, fetchLabels);
+    });
 
     return { ok: true };
   },
@@ -197,10 +199,11 @@ The hook stores the promise identity in React state.
 
 ```tsx
 function useLanePromise<T>(
+  lane: Lane,
   key: LaneKey,
   loader: () => Promise<T>,
 ): Promise<T> {
-  const stableKey = serializeKey(key);
+  const keyId = useMemo(() => serializeKey(key), [key]);
   const [promise, setPromise] = useState(() => lane.get(key, loader));
 
   useEffect(() => {
@@ -210,14 +213,14 @@ function useLanePromise<T>(
 
     const latestPromise = lane.get(key, loader);
 
-    if (latestPromise !== promise) {
-      startTransition(() => {
-        setPromise(latestPromise);
-      });
-    }
+    startTransition(() => {
+      setPromise((currentPromise) =>
+        currentPromise === latestPromise ? currentPromise : latestPromise,
+      );
+    });
 
     return unsubscribe;
-  }, [stableKey, loader, promise]);
+  }, [lane, keyId, loader]);
 
   return promise;
 }
@@ -242,20 +245,57 @@ function TodoLabelCombobox({
 }: Props) {
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
-  const labelsPromise = useLanePromise(labelsKey, fetchLabels);
+  const [optimisticLabels, addOptimisticLabelMutation] = useOptimistic(
+    assignedLabels,
+    reduceOptimisticLabels,
+  );
+  const [optimisticCreatedLabels, addOptimisticCreatedLabel] = useOptimistic(
+    [] as Label[],
+    mergeLabel,
+  );
+  const labelsPromise = useLanePromise(labelLane, labelsKey, fetchLabels);
 
-  const [_state, createLabelAction, isPending] = useActionState(
+  const [_state, dispatchCreateLabelAction] = useActionState(
     async (_previousState, formData: FormData) => {
       const name = readLabelName(formData);
 
       await postLabel(name);
 
-      lane.refresh(labelsKey, fetchLabels);
+      startTransition(() => {
+        labelLane.refresh(labelsKey, fetchLabels);
+      });
 
       return { ok: true };
     },
     { ok: false },
   );
+
+  function dispatchCreateLabel(name: string) {
+    const formData = new FormData();
+    const optimisticLabel = createOptimisticLabel(name);
+
+    formData.set("name", name);
+    setQuery("");
+
+    startTransition(() => {
+      addOptimisticCreatedLabel(optimisticLabel);
+      dispatchCreateLabelAction(formData);
+    });
+  }
+
+  function assignLabel(label: Label) {
+    startTransition(async () => {
+      addOptimisticLabelMutation({ type: "assign", label });
+      await changeTaskLabelsAction({ type: "assign", labelId: label.id });
+    });
+  }
+
+  function removeLabel(label: Label) {
+    startTransition(async () => {
+      addOptimisticLabelMutation({ type: "remove", labelId: label.id });
+      await changeTaskLabelsAction({ type: "remove", labelId: label.id });
+    });
+  }
 
   return (
     <section>
@@ -273,10 +313,11 @@ function TodoLabelCombobox({
           <LabelOptions
             labelsPromise={labelsPromise}
             query={query}
-            assignedLabels={assignedLabels}
-            createLabelAction={createLabelAction}
-            isPending={isPending}
-            changeTaskLabelsAction={changeTaskLabelsAction}
+            assignedLabels={optimisticLabels}
+            optimisticCreatedLabels={optimisticCreatedLabels}
+            createLabel={dispatchCreateLabel}
+            assignLabel={assignLabel}
+            removeLabel={removeLabel}
           />
         </Suspense>
       ) : null}
@@ -293,49 +334,67 @@ function LabelOptions({
   labelsPromise,
   query,
   assignedLabels,
-  createLabelAction,
-  isPending,
-  changeTaskLabelsAction,
+  optimisticCreatedLabels,
+  createLabel,
+  assignLabel,
+  removeLabel,
 }: LabelOptionsProps) {
   const labels = use(labelsPromise);
 
-  const filteredLabels = filterLabels(labels, query);
-  const canCreate = canCreateLabel(labels, assignedLabels, query);
+  const visibleLabels = mergeVisibleLabels(labels, optimisticCreatedLabels);
+  const filteredLabels = filterLabels(visibleLabels, query);
+  const assignedLabelIds = new Set(assignedLabels.map((label) => label.id));
+  const canCreate = canCreateLabel(visibleLabels, assignedLabels, query);
 
   return (
     <div role="listbox">
+      {canCreate ? (
+        <button type="button" onClick={() => createLabel(query.trim())}>
+          Create "{query.trim()}"
+        </button>
+      ) : null}
+
       {filteredLabels.map((label) => (
         <button
           key={label.id}
+          data-optimistic={label.isOptimistic ? "true" : undefined}
+          data-selected={assignedLabelIds.has(label.id)}
+          disabled={label.isOptimistic}
           type="button"
-          onClick={() =>
-            changeTaskLabelsAction({
-              type: "assign",
-              labelId: label.id,
-            })
-          }
+          onClick={() => {
+            if (assignedLabelIds.has(label.id)) {
+              removeLabel(label);
+            } else {
+              assignLabel(label);
+            }
+          }}
         >
           {label.name}
         </button>
       ))}
-
-      {canCreate ? (
-        <form action={createLabelAction}>
-          <input type="hidden" name="name" value={query} />
-          <button disabled={isPending} type="submit">
-            Create "{query.trim()}"
-          </button>
-        </form>
-      ) : null}
     </div>
   );
 }
 ```
 
+Created labels are optimistic only inside the combobox that initiated the
+creation. They are merged into that combobox's visible options with
+`mergeVisibleLabels`, marked with `data-optimistic`, and disabled until the
+server label appears through the refreshed labels promise.
+
+That optimistic state is intentionally not shared with the debug label list or
+any other labels consumer. Sharing it would require an optimistic external cache,
+which is outside Lane's responsibilities.
+
+Assigned labels are also local optimistic UI. Clicking an unassigned option
+assigns it. Clicking an assigned option removes it. The option remains enabled
+so global disabled styling does not make selected labels look pending; only
+created optimistic labels are disabled.
+
 The create action does not await the refreshed labels promise.
 
 ```ts
-lane.refresh(labelsKey, fetchLabels);
+labelLane.refresh(labelsKey, fetchLabels);
 ```
 
 The refreshed promise is delivered to subscribers. Their local promise state is
@@ -347,18 +406,30 @@ render.
 If two components read the same key, each component owns its own promise state:
 
 ```tsx
-const labelsPromise = useLanePromise(labelsKey, fetchLabels);
+const labelsPromise = useLanePromise(labelLane, labelsKey, fetchLabels);
 ```
 
 They do not share local React state. They share the Lane promise store and the
 per-key subscription.
 
-When `lane.refresh(labelsKey, fetchLabels)` runs, Lane notifies only subscribers
-for `labelsKey`. Each subscriber receives the same new promise identity and
-updates its own state in a transition.
+When `labelLane.refresh(labelsKey, fetchLabels)` runs, Lane notifies only
+subscribers for `labelsKey`. Each subscriber receives the same new promise
+identity and updates its own state within the transition that called refresh.
 
 This avoids a broad Context update while still keeping all consumers of the same
 key aligned.
+
+The sample app uses this with `DebugLabelList` on the left side. It mounts only
+after the client has mounted, then calls
+`useLanePromise(labelLane, labelsKey, fetchLabels)` independently from the
+combobox. This keeps SSR out of scope while still verifying that distant client
+consumers observe the same refreshed promise.
+
+The current label combobox chooses to let the parent component own
+`useLanePromise` because the create transition and the local optimistic created
+labels also live there. A Suspense child can mechanically subscribe to the same
+key as well, but the current sample keeps the promise identity at the component
+that owns the transition-producing actions.
 
 ## Component Boundary
 
@@ -378,13 +449,19 @@ Component parent:
 - `useActionState`
 - `useLanePromise`
 - `labelsPromise`
+- local optimistic assigned labels
+- local optimistic created labels
+- create, assign, and remove actions
 - Suspense boundary
 
 Suspense child:
 
 - `use(labelsPromise)`
+- merge server labels with local optimistic created labels
 - derived filtering
 - option rendering
+- create option rendering
+- assigned option toggles remove
 
 ## Open Questions
 

@@ -55,6 +55,42 @@ export async function deleteTodo(id: string): Promise<void> {
   await assertOk(response);
 }
 
+export async function assignTodoLabel(
+  todoId: string,
+  labelId: string,
+): Promise<Todo> {
+  const response = await client.todos[":id"].labels.$post(
+    {
+      json: {
+        labelId,
+      },
+      param: {
+        id: todoId,
+      },
+    },
+    requestOptions,
+  );
+  await assertOk(response);
+  return response.json() as Promise<Todo>;
+}
+
+export async function removeTodoLabel(
+  todoId: string,
+  labelId: string,
+): Promise<Todo> {
+  const response = await client.todos[":id"].labels[":labelId"].$delete(
+    {
+      param: {
+        id: todoId,
+        labelId,
+      },
+    },
+    requestOptions,
+  );
+  await assertOk(response);
+  return response.json() as Promise<Todo>;
+}
+
 async function assertOk(response: {
   ok: boolean;
   status: number;

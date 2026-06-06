@@ -226,6 +226,25 @@ h1 {
   gap: 8px;
 }
 
+.details-meta {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.details-meta .eyebrow {
+  margin: 0;
+}
+
+.details-saving {
+  color: #586a64;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .details-header h2 {
   margin: 0;
   color: #18211e;
@@ -269,6 +288,130 @@ h1 {
   padding: 9px 10px;
   background: #fff;
   color: #18211e;
+}
+
+.label-field {
+  display: grid;
+  gap: 10px;
+}
+
+.label-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.label-field-header label {
+  color: #586a64;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.label-chips {
+  display: flex;
+  min-height: 32px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.label-chip {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #b9c8c3;
+  border-radius: 999px;
+  padding: 4px 6px 4px 10px;
+  background: #edf5f2;
+  color: #263a35;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.label-chip button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: transparent;
+  color: #4f625d;
+}
+
+.label-empty {
+  color: #71807c;
+  font-size: 0.9rem;
+}
+
+.label-combobox {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #bccbc6;
+  border-radius: 6px;
+  min-height: 40px;
+  padding: 0 10px;
+  background: #fff;
+  color: #566662;
+}
+
+.label-combobox input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 9px 0;
+  background: transparent;
+  color: #18211e;
+}
+
+.label-options {
+  display: grid;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #ccd8d4;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(22, 42, 35, 0.12);
+}
+
+.label-option,
+.label-option-empty {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 0;
+  border-bottom: 1px solid #edf2ef;
+  padding: 8px 10px;
+  background: #fff;
+  color: #263a35;
+  text-align: left;
+}
+
+.label-option:last-child,
+.label-option-empty:last-child {
+  border-bottom: 0;
+}
+
+.label-option:hover:not(:disabled) {
+  background: #f3f8f6;
+}
+
+.label-option[data-selected="true"] {
+  color: #62736e;
+}
+
+.label-option-empty {
+  display: block;
+  color: #71807c;
+  font-size: 0.9rem;
 }
 
 .details-error {

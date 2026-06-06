@@ -19,16 +19,26 @@ import {
 } from "react";
 import { useFormStatus } from "react-dom";
 import {
+  changeTodoLabelsAction,
   deleteTodoAction,
+  type TaskLabelMutation,
   toggleTodoAction,
   updateTodoTitleAction,
 } from "./actions";
+import {
+  TodoLabelCombobox,
+  type ChangeTaskLabelsAction,
+} from "./todo-label-combobox";
 
 type ToggleState = {
   error: string | null;
 };
 
 type DetailState = {
+  error: string | null;
+};
+
+type TaskLabelState = {
   error: string | null;
 };
 
@@ -101,8 +111,6 @@ export function TodoRow({
           error: result.error,
         };
       }
-
-      router.refresh();
 
       return {
         error: null,
@@ -195,8 +203,6 @@ export function TodoDetailControls({
         };
       }
 
-      router.refresh();
-
       return {
         error: null,
       };
@@ -209,7 +215,37 @@ export function TodoDetailControls({
     todo.completed,
     (_currentCompleted, nextCompleted: boolean) => nextCompleted,
   );
+  const [
+    changeTaskLabelsState,
+    dispatchChangeTaskLabelsAction,
+    isChangingTaskLabels,
+  ] = useActionState(
+    async (
+      _previousState: TaskLabelState,
+      mutation: TaskLabelMutation,
+    ): Promise<TaskLabelState> => {
+      const result = await changeTodoLabelsAction(todo.id, mutation);
+
+      if (!result.ok) {
+        return {
+          error: result.error,
+        };
+      }
+
+      return {
+        error: null,
+      };
+    },
+    {
+      error: null,
+    },
+  );
   const [isDeleting, startDeleteTransition] = useTransition();
+  const isDetailPending = isPending || isDeleting || isChangingTaskLabels;
+
+  const changeTaskLabelsAction: ChangeTaskLabelsAction = async (mutation) => {
+    dispatchChangeTaskLabelsAction(mutation);
+  };
 
   function submitTitle(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -225,10 +261,19 @@ export function TodoDetailControls({
   }
 
   return (
-    <div className="details-content" data-pending={isPending}>
+    <div
+      aria-busy={isDetailPending}
+      className="details-content"
+      data-pending={isDetailPending}
+    >
       <div className="details-header">
-        <p className="eyebrow">Task detail</p>
-        <h2 data-completed={optimisticCompleted}>{todo.title}</h2>
+        <div className="details-meta">
+          <p className="eyebrow">Task detail</p>
+          {isDetailPending ? (
+            <span className="details-saving">Saving...</span>
+          ) : null}
+        </div>
+        <h2 data-completed={todo.completed}>{todo.title}</h2>
       </div>
 
       <label className="details-check">
@@ -270,8 +315,16 @@ export function TodoDetailControls({
         </div>
       </form>
 
+      <TodoLabelCombobox
+        assignedLabels={todo.labels}
+        changeTaskLabelsAction={changeTaskLabelsAction}
+      />
+
       {state.error ? (
         <div className="details-error">{state.error}</div>
+      ) : null}
+      {changeTaskLabelsState.error ? (
+        <div className="details-error">{changeTaskLabelsState.error}</div>
       ) : null}
 
       <button
@@ -282,7 +335,6 @@ export function TodoDetailControls({
           startDeleteTransition(async () => {
             await deleteTodoAction(todo.id);
             router.replace("/");
-            router.refresh();
           });
         }}
       >

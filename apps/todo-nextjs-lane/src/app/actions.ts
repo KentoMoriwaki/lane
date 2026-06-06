@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import type { Todo } from "@lane/todo-api";
-import { createTodo, deleteTodo, updateTodo } from "./todo-api";
+import {
+  assignTodoLabel,
+  createTodo,
+  deleteTodo,
+  removeTodoLabel,
+  updateTodo,
+} from "./todo-api";
 
 export type TodoActionState = {
   error: string | null;
@@ -10,6 +16,26 @@ export type TodoActionState = {
 };
 
 export type TodoMutationActionResult =
+  | {
+      ok: true;
+      todo: Todo;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+export type TaskLabelMutation =
+  | {
+      type: "assign";
+      labelId: string;
+    }
+  | {
+      type: "remove";
+      labelId: string;
+    };
+
+export type TaskLabelMutationActionResult =
   | {
       ok: true;
       todo: Todo;
@@ -99,6 +125,43 @@ export async function updateTodoTitleAction(
 
   try {
     const todo = await updateTodo(id, { title: trimmedTitle });
+    revalidatePath("/");
+    return {
+      ok: true,
+      todo,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+    };
+  }
+}
+
+export async function changeTodoLabelsAction(
+  id: string,
+  mutation: TaskLabelMutation,
+): Promise<TaskLabelMutationActionResult> {
+  if (!id) {
+    return {
+      ok: false,
+      error: "Todo id is required",
+    };
+  }
+
+  if (!mutation.labelId) {
+    return {
+      ok: false,
+      error: "Label id is required",
+    };
+  }
+
+  try {
+    const todo =
+      mutation.type === "assign"
+        ? await assignTodoLabel(id, mutation.labelId)
+        : await removeTodoLabel(id, mutation.labelId);
+
     revalidatePath("/");
     return {
       ok: true,

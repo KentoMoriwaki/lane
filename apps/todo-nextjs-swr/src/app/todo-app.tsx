@@ -58,6 +58,7 @@ export function TodoApp() {
       completed: false,
       createdAt: now,
       id: `optimistic-${crypto.randomUUID()}`,
+      labels: [],
       title: trimmedTitle,
       updatedAt: now,
     };

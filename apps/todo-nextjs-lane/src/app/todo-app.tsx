@@ -41,6 +41,7 @@ export function TodoApp({
           completed: false,
           createdAt: now,
           id: input.id,
+          labels: [],
           title: input.title,
           updatedAt: now,
         },

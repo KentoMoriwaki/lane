@@ -1,20 +1,24 @@
 "use client";
 
-import type { AppType, Label } from "@lane/todo-api";
+import { useLanePromise } from "@lane/lane";
+import type { Label } from "@lane/todo-api";
 import { Check, ChevronDown, Plus, Search, X } from "lucide-react";
-import { hc } from "hono/client";
+import type { ReactNode } from "react";
 import {
+  Suspense,
   startTransition,
-  useEffect,
+  use,
+  useActionState,
   useId,
   useMemo,
   useOptimistic,
   useState,
 } from "react";
+import { fetchLabels, labelLane, labelsKey, postLabel } from "./todo-label-data";
 
-const apiUrl = process.env.NEXT_PUBLIC_TODO_API_URL ?? "http://localhost:4000";
-const client = hc<AppType>(apiUrl);
-const labelLimit = "500";
+type CreateLabelState = {
+  error: string | null;
+};
 
 export type ChangeTaskLabelsMutation =
   | {
@@ -40,6 +44,10 @@ type OptimisticLabelMutation =
       labelId: string;
     };
 
+type VisibleLabel = Label & {
+  isOptimistic?: boolean;
+};
+
 export function TodoLabelCombobox({
   assignedLabels,
   changeTaskLabelsAction,
@@ -52,95 +60,51 @@ export function TodoLabelCombobox({
     assignedLabels,
     reduceOptimisticLabels,
   );
-  const [options, setOptions] = useState<Label[]>([]);
+  const [optimisticCreatedLabels, addOptimisticCreatedLabel] = useOptimistic(
+    [] as Label[],
+    mergeLabel,
+  );
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
-  const [hasRequestedOptions, setHasRequestedOptions] = useState(false);
-  const [isLoadingOptions, setIsLoadingOptions] = useState(false);
-  const [isCreatingLabel, setIsCreatingLabel] = useState(false);
-  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const labelsPromise = useLanePromise(labelLane, labelsKey, fetchLabels);
+  const [createLabelState, dispatchCreateLabelAction] = useActionState(
+      async (
+        _previousState: CreateLabelState,
+        formData: FormData,
+      ): Promise<CreateLabelState> => {
+        const name = readLabelName(formData);
+
+        if (!name) {
+          return {
+            error: "Label name is required",
+          };
+        }
+
+        try {
+          await postLabel(name);
+
+          startTransition(() => {
+            labelLane.refresh(labelsKey, fetchLabels);
+          });
+
+          return {
+            error: null,
+          };
+        } catch (error) {
+          return {
+            error: getErrorMessage(error),
+          };
+        }
+      },
+      {
+        error: null,
+      },
+    );
   const assignedLabelIds = useMemo(
     () => new Set(optimisticLabels.map((label) => label.id)),
     [optimisticLabels],
   );
   const trimmedQuery = query.trim();
-  const normalizedQuery = trimmedQuery.toLowerCase();
-  const filteredOptions = useMemo(() => {
-    if (!normalizedQuery) {
-      return options;
-    }
-
-    return options.filter((label) =>
-      label.name.toLowerCase().includes(normalizedQuery),
-    );
-  }, [normalizedQuery, options]);
-  const hasExactMatch = [...options, ...optimisticLabels].some(
-    (label) => label.name.toLowerCase() === trimmedQuery.toLowerCase(),
-  );
-  const canCreate = trimmedQuery.length > 0 && !hasExactMatch;
-
-  useEffect(() => {
-    if (!hasRequestedOptions) {
-      return;
-    }
-
-    const abortController = new AbortController();
-    async function loadLabels() {
-      setIsLoadingOptions(true);
-      setOptionsError(null);
-
-      try {
-        const response = await client.labels.$get(
-          {
-            query: {
-              limit: labelLimit,
-            },
-          },
-          {
-            init: {
-              cache: "no-store",
-              signal: abortController.signal,
-            },
-          },
-        );
-
-        await assertOk(response);
-        setOptions((await response.json()) as Label[]);
-      } catch (error) {
-        if (!abortController.signal.aborted) {
-          setOptionsError(getErrorMessage(error));
-        }
-      } finally {
-        if (!abortController.signal.aborted) {
-          setIsLoadingOptions(false);
-        }
-      }
-    }
-
-    void loadLabels();
-
-    return () => {
-      abortController.abort();
-    };
-  }, [hasRequestedOptions]);
-
-  async function createLabel(name: string) {
-    const response = await client.labels.$post(
-      {
-        json: {
-          name,
-        },
-      },
-      {
-        init: {
-          cache: "no-store",
-        },
-      },
-    );
-
-    await assertOk(response);
-    return (await response.json()) as Label;
-  }
 
   function assignLabel(label: Label) {
     if (assignedLabelIds.has(label.id)) {
@@ -160,23 +124,47 @@ export function TodoLabelCombobox({
     });
   }
 
-  async function createAndAssignLabel() {
-    if (!canCreate) {
+  function dispatchCreateLabel(name: string) {
+    const formData = new FormData();
+    const optimisticLabel: Label = {
+      createdAt: new Date().toISOString(),
+      id: `optimistic-label-${crypto.randomUUID()}`,
+      name,
+    };
+
+    formData.set("name", name);
+    setQuery("");
+
+    startTransition(() => {
+      addOptimisticCreatedLabel(optimisticLabel);
+      dispatchCreateLabelAction(formData);
+    });
+  }
+
+  async function submitQuery() {
+    if (!trimmedQuery) {
       return;
     }
 
-    setOptionsError(null);
-    setIsCreatingLabel(true);
+    const labels = await labelsPromise;
+    const filteredLabels = filterLabels(labels, trimmedQuery);
+    const nextLabel = filteredLabels.find(
+      (label) => !assignedLabelIds.has(label.id),
+    );
 
-    try {
-      const label = await createLabel(trimmedQuery);
-      setOptions((currentOptions) => mergeLabel(currentOptions, label));
-      setQuery("");
-      assignLabel(label);
-    } catch (error) {
-      setOptionsError(getErrorMessage(error));
-    } finally {
-      setIsCreatingLabel(false);
+    if (nextLabel) {
+      assignLabel(nextLabel);
+      return;
+    }
+
+    if (
+      canCreateLabel(
+        labels,
+        [...optimisticLabels, ...optimisticCreatedLabels],
+        trimmedQuery,
+      )
+    ) {
+      dispatchCreateLabel(trimmedQuery);
     }
   }
 
@@ -196,7 +184,6 @@ export function TodoLabelCombobox({
 
   function openOptions() {
     setIsOpen(true);
-    setHasRequestedOptions(true);
   }
 
   return (
@@ -220,11 +207,72 @@ export function TodoLabelCombobox({
         </button>
       </div>
 
+      <LabelControls
+        comboboxId={comboboxId}
+        isOpen={isOpen}
+        labels={optimisticLabels}
+        query={query}
+        removeLabel={removeLabel}
+        openOptions={openOptions}
+        setQuery={setQuery}
+        submitQuery={submitQuery}
+        options={
+          isOpen ? (
+            <Suspense
+              fallback={
+                <div className="label-option-empty">Loading labels</div>
+              }
+            >
+              <LabelOptions
+                assignedLabels={optimisticLabels}
+                assignLabel={assignLabel}
+                comboboxId={comboboxId}
+                createLabel={dispatchCreateLabel}
+                labelsPromise={labelsPromise}
+                optimisticCreatedLabels={optimisticCreatedLabels}
+                query={query}
+                removeLabel={removeLabel}
+              />
+            </Suspense>
+          ) : null
+        }
+      />
+
+      {createLabelState.error ? (
+        <div className="details-error">{createLabelState.error}</div>
+      ) : null}
+    </section>
+  );
+}
+
+function LabelControls({
+  comboboxId,
+  isOpen,
+  labels,
+  openOptions,
+  options,
+  query,
+  removeLabel,
+  setQuery,
+  submitQuery,
+}: {
+  comboboxId: string;
+  isOpen: boolean;
+  labels: Label[];
+  openOptions: () => void;
+  options?: ReactNode;
+  query: string;
+  removeLabel: (label: Label) => void;
+  setQuery: (query: string) => void;
+  submitQuery: () => void;
+}) {
+  return (
+    <>
       <div className="label-chips" aria-label="Assigned labels">
-        {optimisticLabels.length === 0 ? (
+        {labels.length === 0 ? (
           <span className="label-empty">No labels</span>
         ) : (
-          optimisticLabels.map((label) => (
+          labels.map((label) => (
             <span className="label-chip" key={label.id}>
               {label.name}
               <button
@@ -260,77 +308,112 @@ export function TodoLabelCombobox({
             }
 
             event.preventDefault();
-
-            const nextLabel = filteredOptions.find(
-              (label) => !assignedLabelIds.has(label.id),
-            );
-
-            if (nextLabel) {
-              assignLabel(nextLabel);
-              return;
-            }
-
-            if (canCreate) {
-              createAndAssignLabel();
-            }
+            void submitQuery();
           }}
         />
       </div>
 
-      {isOpen ? (
-        <div
-          className="label-options"
-          id={`${comboboxId}-options`}
-          role="listbox"
+      {options}
+    </>
+  );
+}
+
+function LabelOptions({
+  assignedLabels,
+  assignLabel,
+  comboboxId,
+  createLabel,
+  labelsPromise,
+  optimisticCreatedLabels,
+  query,
+  removeLabel,
+}: {
+  assignedLabels: Label[];
+  assignLabel: (label: Label) => void;
+  comboboxId: string;
+  createLabel: (name: string) => void;
+  labelsPromise: Promise<Label[]>;
+  optimisticCreatedLabels: Label[];
+  query: string;
+  removeLabel: (label: Label) => void;
+}) {
+  const labels = use(labelsPromise);
+  const visibleLabels = useMemo(
+    () => mergeVisibleLabels(labels, optimisticCreatedLabels),
+    [labels, optimisticCreatedLabels],
+  );
+  const assignedLabelIds = useMemo(
+    () => new Set(assignedLabels.map((label) => label.id)),
+    [assignedLabels],
+  );
+  const trimmedQuery = query.trim();
+  const filteredOptions = useMemo(
+    () => filterLabels(visibleLabels, trimmedQuery),
+    [visibleLabels, trimmedQuery],
+  );
+  const canCreate = canCreateLabel(visibleLabels, assignedLabels, trimmedQuery);
+
+  return (
+    <div
+      className="label-options"
+      id={`${comboboxId}-options`}
+      role="listbox"
+    >
+      {canCreate ? (
+        <form
+          className="label-option-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createLabel(trimmedQuery);
+          }}
         >
-          {filteredOptions.map((label) => {
-            const isAssigned = assignedLabelIds.has(label.id);
-
-            return (
-              <button
-                className="label-option"
-                data-selected={isAssigned}
-                disabled={isAssigned}
-                key={label.id}
-                role="option"
-                type="button"
-                onClick={() => assignLabel(label)}
-              >
-                {isAssigned ? (
-                  <Check size={16} aria-hidden="true" />
-                ) : (
-                  <span aria-hidden="true" />
-                )}
-                {label.name}
-              </button>
-            );
-          })}
-
-          {canCreate ? (
-            <button
-              className="label-option"
-              disabled={isCreatingLabel}
-              role="option"
-              type="button"
-              onClick={() => createAndAssignLabel()}
-            >
-              <Plus size={16} aria-hidden="true" />
-              {isCreatingLabel ? "Creating label..." : `Create "${trimmedQuery}"`}
-            </button>
-          ) : null}
-
-          {!isLoadingOptions && filteredOptions.length === 0 && !canCreate ? (
-            <div className="label-option-empty">No matching labels</div>
-          ) : null}
-
-          {isLoadingOptions ? (
-            <div className="label-option-empty">Loading labels</div>
-          ) : null}
-        </div>
+          <input name="name" type="hidden" value={trimmedQuery} />
+          <button
+            className="label-option"
+            role="option"
+            type="submit"
+          >
+            <Plus size={16} aria-hidden="true" />
+            {`Create "${trimmedQuery}"`}
+          </button>
+        </form>
       ) : null}
 
-      {optionsError ? <div className="details-error">{optionsError}</div> : null}
-    </section>
+      {filteredOptions.map((label) => {
+        const isAssigned = assignedLabelIds.has(label.id);
+        const isOptimistic = label.isOptimistic === true;
+
+        return (
+          <button
+            className="label-option"
+            data-optimistic={isOptimistic ? "true" : undefined}
+            data-selected={isAssigned}
+            disabled={isOptimistic}
+            key={label.id}
+            role="option"
+            type="button"
+            onClick={() => {
+              if (isAssigned) {
+                removeLabel(label);
+              } else {
+                assignLabel(label);
+              }
+            }}
+          >
+            {isAssigned ? (
+              <Check size={16} aria-hidden="true" />
+            ) : (
+              <span aria-hidden="true" />
+            )}
+            {label.name}
+          </button>
+        );
+      })}
+
+      {filteredOptions.length === 0 && !canCreate ? (
+        <div className="label-option-empty">No matching labels</div>
+      ) : null}
+    </div>
   );
 }
 
@@ -355,35 +438,65 @@ function mergeLabel(labels: Label[], label: Label) {
   );
 }
 
-async function assertOk(response: {
-  ok: boolean;
-  status: number;
-  text: () => Promise<string>;
-}) {
-  if (response.ok) {
-    return;
+function mergeVisibleLabels(labels: Label[], optimisticLabels: Label[]) {
+  const existingNames = new Set(
+    labels.map((label) => normalizeLabelName(label.name)),
+  );
+  const visibleLabels: VisibleLabel[] = [...labels];
+
+  for (const label of optimisticLabels) {
+    if (existingNames.has(normalizeLabelName(label.name))) {
+      continue;
+    }
+
+    visibleLabels.push({
+      ...label,
+      isOptimistic: true,
+    });
   }
 
-  const fallback = `Request failed with ${response.status}`;
-  const body = await response.text();
+  return visibleLabels.sort((first, second) =>
+    first.name.localeCompare(second.name),
+  );
+}
 
-  if (!body) {
-    throw new Error(fallback);
+function filterLabels<T extends Label>(labels: T[], query: string) {
+  const normalizedQuery = normalizeLabelName(query);
+
+  if (!normalizedQuery) {
+    return labels;
   }
 
-  let data: { error?: unknown } | null = null;
+  return labels.filter((label) =>
+    normalizeLabelName(label.name).includes(normalizedQuery),
+  );
+}
 
-  try {
-    data = JSON.parse(body) as { error?: unknown };
-  } catch {
-    // Keep the raw response body for non-JSON errors.
+function canCreateLabel(
+  labels: Label[],
+  assignedLabels: Label[],
+  query: string,
+) {
+  const trimmedQuery = query.trim();
+
+  if (!trimmedQuery) {
+    return false;
   }
 
-  if (typeof data?.error === "string") {
-    throw new Error(data.error);
-  }
+  const normalizedQuery = normalizeLabelName(trimmedQuery);
 
-  throw new Error(body);
+  return ![...labels, ...assignedLabels].some(
+    (label) => normalizeLabelName(label.name) === normalizedQuery,
+  );
+}
+
+function readLabelName(formData: FormData) {
+  const value = formData.get("name");
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeLabelName(name: string) {
+  return name.trim().toLowerCase();
 }
 
 function getErrorMessage(error: unknown) {

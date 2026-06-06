@@ -140,6 +140,46 @@ h1 {
   display: grid;
 }
 
+.debug-label-list {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #dce5e1;
+  padding: 14px 16px 16px;
+  background: #fbfdfc;
+}
+
+.debug-label-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #586a64;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.debug-label-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.debug-label-chip {
+  border: 1px solid #c8d6d1;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #fff;
+  color: #31423d;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.debug-label-empty {
+  color: #71807c;
+  font-size: 0.9rem;
+}
+
 .todo-row {
   display: grid;
   grid-template-columns: auto 1fr auto auto;
@@ -380,6 +420,10 @@ h1 {
   box-shadow: 0 12px 28px rgba(22, 42, 35, 0.12);
 }
 
+.label-option-form {
+  display: contents;
+}
+
 .label-option,
 .label-option-empty {
   display: grid;
@@ -404,8 +448,8 @@ h1 {
   background: #f3f8f6;
 }
 
-.label-option[data-selected="true"] {
-  color: #62736e;
+.label-option[data-optimistic="true"] {
+  opacity: 0.56;
 }
 
 .label-option-empty {

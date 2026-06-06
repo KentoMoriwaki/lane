@@ -244,7 +244,9 @@ export function TodoDetailControls({
   const isDetailPending = isPending || isDeleting || isChangingTaskLabels;
 
   const changeTaskLabelsAction: ChangeTaskLabelsAction = async (mutation) => {
-    dispatchChangeTaskLabelsAction(mutation);
+    startTransition(() => {
+      dispatchChangeTaskLabelsAction(mutation);
+    });
   };
 
   function submitTitle(event: FormEvent<HTMLFormElement>) {

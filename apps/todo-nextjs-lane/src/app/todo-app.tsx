@@ -4,6 +4,7 @@ import type { Todo } from "@lane/todo-api";
 import type { ReactNode } from "react";
 import { useOptimistic, useState } from "react";
 import { createTodoAction, type TodoActionState } from "./actions";
+import { DebugLabelList } from "./debug-label-list";
 import {
   AddTodoForm,
   RefreshTodosForm,
@@ -93,6 +94,7 @@ export function TodoApp({
             selectedTodoId={selectedTodoId}
             todos={optimisticTodos}
           />
+          <DebugLabelList />
         </section>
         {sidebar}
       </div>

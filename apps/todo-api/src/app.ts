@@ -61,6 +61,8 @@ export type UpdateTodoInput = z.infer<typeof updateTodoInputSchema>;
 const app = new Hono();
 const defaultDelayMs = 1_000;
 const apiDelayMs = Number(process.env.TODO_API_DELAY_MS ?? defaultDelayMs);
+const labelListDelayMs = Number(process.env.TODO_LABEL_LIST_DELAY_MS ?? 100);
+const labelCreateDelayMs = Number(process.env.TODO_LABEL_CREATE_DELAY_MS ?? 3_000);
 
 app.use(
   "*",
@@ -72,14 +74,7 @@ app.use(
 );
 
 app.use("*", async (context, next) => {
-  if (
-    context.req.path === "/labels" ||
-    context.req.path === "/todos" ||
-    context.req.path.startsWith("/todos/")
-  ) {
-    await delay(apiDelayMs);
-  }
-
+  await delay(readRequestDelay(context.req.method, context.req.path));
   await next();
 });
 
@@ -211,4 +206,20 @@ async function delay(milliseconds: number) {
   }
 
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function readRequestDelay(method: string, path: string) {
+  if (path === "/labels" && method === "GET") {
+    return labelListDelayMs;
+  }
+
+  if (path === "/labels" && method === "POST") {
+    return labelCreateDelayMs;
+  }
+
+  if (path === "/todos" || path.startsWith("/todos/")) {
+    return apiDelayMs;
+  }
+
+  return 0;
 }

@@ -1,0 +1,136 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * Calm Command Workspace
+ * White and light-mist surfaces, ink text, restrained borders, and four
+ * accents (sage, cobalt, rose, amber). Light only — the direction is a calm,
+ * premium daytime workspace.
+ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-surface: var(--surface);
+  --color-sidebar: var(--sidebar);
+
+  --color-sage: var(--sage);
+  --color-cobalt: var(--cobalt);
+  --color-rose: var(--rose);
+  --color-amber: var(--amber);
+  --color-slate-accent: var(--slate-accent);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+:root {
+  --radius: 0.5rem;
+
+  --background: #f3f5f8;
+  --foreground: #181b20;
+
+  --surface: #ffffff;
+  --sidebar: #fbfcfd;
+
+  --card: #ffffff;
+  --card-foreground: #181b20;
+  --popover: #ffffff;
+  --popover-foreground: #181b20;
+
+  --primary: #2f8f6a;
+  --primary-foreground: #ffffff;
+
+  --secondary: #eef1f5;
+  --secondary-foreground: #2a2f36;
+
+  --muted: #f1f3f6;
+  --muted-foreground: #6a7280;
+
+  --accent: #eef2f7;
+  --accent-foreground: #1f242b;
+
+  --destructive: #d6456b;
+  --destructive-foreground: #ffffff;
+
+  --border: #e7e9ee;
+  --input: #e2e5ea;
+  --ring: #3b6fe0;
+
+  --sage: #2f8f6a;
+  --cobalt: #3b6fe0;
+  --rose: #d6456b;
+  --amber: #c47d20;
+  --slate-accent: #647084;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--cobalt) 22%, transparent);
+  }
+}
+
+/* Thin, calm scrollbars that suit a dense workspace. */
+@layer utilities {
+  .scrollbar-calm {
+    scrollbar-width: thin;
+    scrollbar-color: #d4d8df transparent;
+  }
+
+  .scrollbar-calm::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .scrollbar-calm::-webkit-scrollbar-thumb {
+    background-color: #d4d8df;
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: padding-box;
+  }
+
+  .scrollbar-calm::-webkit-scrollbar-thumb:hover {
+    background-color: #c2c7d0;
+  }
+}

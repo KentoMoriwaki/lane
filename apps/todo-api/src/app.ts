@@ -12,6 +12,7 @@ import {
   removeLabelFromTodo,
   updateTodo,
 } from "./db.js";
+import { teamRoutes } from "./team/routes.js";
 
 export const labelSchema = z.object({
   id: z.string(),
@@ -64,11 +65,17 @@ const apiDelayMs = Number(process.env.TODO_API_DELAY_MS ?? defaultDelayMs);
 const labelListDelayMs = Number(process.env.TODO_LABEL_LIST_DELAY_MS ?? 100);
 const labelCreateDelayMs = Number(process.env.TODO_LABEL_CREATE_DELAY_MS ?? 3_000);
 
+// Team task API delays. These keep pending/optimistic/transition states
+// observable in the React Query baseline without being annoying.
+const teamReadDelayMs = Number(process.env.TEAM_API_READ_DELAY_MS ?? 550);
+const teamWriteDelayMs = Number(process.env.TEAM_API_WRITE_DELAY_MS ?? 650);
+const teamPickerDelayMs = Number(process.env.TEAM_API_PICKER_DELAY_MS ?? 200);
+
 app.use(
   "*",
   cors({
     origin: "*",
-    allowHeaders: ["content-type"],
+    allowHeaders: ["content-type", "x-user-id", "x-team-id"],
     allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
@@ -184,7 +191,8 @@ export const routes = app
     }
 
     return context.body(null, 204);
-  });
+  })
+  .route("/api", teamRoutes);
 
 export type AppType = typeof routes;
 
@@ -219,6 +227,18 @@ function readRequestDelay(method: string, path: string) {
 
   if (path === "/todos" || path.startsWith("/todos/")) {
     return apiDelayMs;
+  }
+
+  if (path.startsWith("/api/")) {
+    // Lightweight selectors (labels/members/assignees) stay snappy.
+    if (
+      (path === "/api/labels" || path === "/api/members") &&
+      method === "GET"
+    ) {
+      return teamPickerDelayMs;
+    }
+
+    return method === "GET" ? teamReadDelayMs : teamWriteDelayMs;
   }
 
   return 0;

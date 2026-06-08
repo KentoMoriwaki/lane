@@ -27,6 +27,18 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const { userId } = useWorkspace();
+  const [debouncedQ, setDebouncedQ] = React.useState(filters.q);
+
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQ(filters.q), 300);
+    return () => window.clearTimeout(timer);
+  }, [filters.q]);
+
+  const queryFilters = React.useMemo(
+    () => ({ ...filters, q: debouncedQ }),
+    [filters, debouncedQ],
+  );
+
   const {
     data: tasks,
     isPending,
@@ -35,7 +47,7 @@ export function TaskList({
     refetch,
     isFetching,
     isPlaceholderData,
-  } = useTasks(filters);
+  } = useTasks(queryFilters);
 
   // Background refresh / filter change while previous data is on screen.
   const dimmed = isFetching && isPlaceholderData;

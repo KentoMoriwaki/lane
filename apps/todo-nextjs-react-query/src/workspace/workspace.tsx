@@ -3,7 +3,6 @@
 import type { TaskPriority, TaskScope, TaskStatus } from "@lane/todo-api";
 import * as React from "react";
 import { useWorkspaceRefresh } from "@/api/hooks";
-import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { FilterBar } from "./filter-bar";
 import { InsightStrip } from "./insight-strip";
@@ -43,28 +42,6 @@ function WorkspaceShell() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const { refresh, isRefreshing } = useWorkspaceRefresh();
 
-  // Local, snappy search input that is debounced into the durable URL state.
-  const [searchInput, setSearchInput] = React.useState(filters.q);
-  const debouncedSearch = useDebouncedValue(searchInput, 300);
-  const committedQ = React.useRef(filters.q);
-
-  // Typed input (debounced) -> URL. Replace (not push) so each keystroke does
-  // not create a separate history entry.
-  React.useEffect(() => {
-    if (debouncedSearch !== committedQ.current) {
-      committedQ.current = debouncedSearch;
-      patchFilters({ q: debouncedSearch }, "replace");
-    }
-  }, [debouncedSearch, patchFilters]);
-
-  // External URL changes (back/forward, team switch, clear) -> input.
-  React.useEffect(() => {
-    if (filters.q !== committedQ.current) {
-      committedQ.current = filters.q;
-      setSearchInput(filters.q);
-    }
-  }, [filters.q]);
-
   const hasActiveFilters =
     filters.scope !== "all" ||
     filters.status.length > 0 ||
@@ -89,8 +66,8 @@ function WorkspaceShell() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
-          search={searchInput}
-          onSearchChange={setSearchInput}
+          search={filters.q}
+          onSearchChange={(q) => patchFilters({ q }, "replace")}
           onNewTask={() => setCreateOpen(true)}
           onRefresh={refresh}
           isRefreshing={isRefreshing}

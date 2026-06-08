@@ -11,6 +11,12 @@ transitions.
 The core value is that Lane is a transition-native client data loading layer
 that fits next to Server Components instead of competing with them.
 
+This note captures the first RSC-first design target. Lane also supports an
+RSC-seeded client ownership architecture, where Server Components load initial
+data and the client seeds Lane promises before taking over live reads and
+refreshes. See `docs/lane-supported-architectures.md` for the supported
+architecture matrix.
+
 Server Components should own data that must be server-rendered. That data should
 be updated through Server Functions, Server Actions, revalidation, or an RSC
 refresh. Lane should own data that only becomes relevant on the client: focused
@@ -86,13 +92,16 @@ This first design does not include:
 - Lane-owned mutation pending state
 - global Context state for all queries
 - subscriber notifications for resolved values
-- SSR hydration for Server Component-owned data
+- legacy SSR hydration through a global `window.__DATA__`-style payload
 
 Lane should not become an SWR-like external data store in the first version.
 It also should not become a React replacement layer. The point is to compose
 with React primitives, not to wrap them in less transition-compatible copies.
-Lane also should not hydrate Server Component data into a client cache by
-default; that creates two owners for the same data.
+In the RSC-first architecture, Lane should not hydrate Server Component-owned
+route data into a client cache by default; that creates two owners for the same
+data. In the RSC-seeded client ownership architecture, the ownership transfer is
+intentional: Server Components provide initial data, then Lane owns live client
+reads and refreshes after hydration.
 
 ## Why Promise Only
 

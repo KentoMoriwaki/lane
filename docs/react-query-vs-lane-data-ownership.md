@@ -6,6 +6,9 @@ baseline and the future Lane implementation.
 The two implementations do not need to use the same data ownership model. They
 need to deliver the same product experience.
 
+Lane supports more than one ownership model. For the broader architecture
+positioning, see `docs/lane-supported-architectures.md`.
+
 ## Shared Product Requirement
 
 Both implementations must support durable workspace state:
@@ -76,11 +79,15 @@ Use App Router navigation for route identity changes:
 - workspace changes
 - hard navigation and external deep links
 
-## Lane Target
+## Lane Targets
 
-The Lane app should lean into Server Components for route/page data.
+Lane can be evaluated against the React Query baseline through either supported
+architecture.
 
-Route/page data:
+### RSC-First Lane
+
+In the RSC-first architecture, Lane leans into Server Components for route/page
+data.
 
 ```txt
 URL
@@ -88,6 +95,8 @@ URL
 -> Server Component loads active team, task list, insights, projects, labels,
    members, and selected task when present
 -> Server Component passes data into Client Components
+-> Server Functions / Server Actions mutate server-owned data
+-> revalidate / refresh updates the RSC payload
 ```
 
 Lane should not replace Server Components for data that naturally belongs to the
@@ -103,12 +112,38 @@ Lane should own client-only async islands:
 - distant client consumers that need to observe the same promise refresh
 - interaction-time async data that is not the route/page owner
 
-Lane coordinates promise identity for those client-owned async islands while
-React owns pending, errors, optimistic UI, and transitions.
+### RSC-Seeded Client-Owned Lane
+
+In the RSC-seeded client ownership architecture, Lane competes more directly
+with the React Query baseline.
+
+```txt
+URL
+-> Server Component reads params/searchParams
+-> Server Component resolves current user, active team, and initial filters
+-> Server Component loads initial workspace data
+-> Client Workspace seeds Lane promises from the initial data
+-> after hydration, Lane owns reads and refreshes
+```
+
+After hydration, filter/search/task selection changes can stay in the client
+data layer:
+
+```txt
+filter/search/task selection changes
+-> URL state updates
+-> Client Component reads URL state
+-> Lane key changes or refreshes
+-> client-side loader fetches from the API if needed
+```
+
+Mutations in this model should call the API from client code and then
+`replace` or `refresh` the relevant Lane promises. React should still own
+pending, errors, optimistic UI, and transitions.
 
 ## Intentional Asymmetry
 
-The comparison is intentionally asymmetric:
+The RSC-first comparison is intentionally asymmetric:
 
 ```txt
 React Query:
@@ -122,9 +157,25 @@ Lane:
   -> React primitives own transitions, pending, errors, and optimistic UI
 ```
 
-This asymmetry is acceptable. The goal is not to prove both apps use the same
-architecture. The goal is to prove Lane can replace the user-facing experience
-of a React Query app while using a React-native ownership model.
+This asymmetry is acceptable when evaluating the RSC-first architecture. The
+goal is not to prove both apps use the same ownership model. The goal is to
+prove Lane can replace the user-facing experience of a React Query app while
+using a React-native ownership model.
+
+The RSC-seeded client ownership comparison is more symmetric:
+
+```txt
+React Query:
+  RSC prefetch
+  -> hydrated client query cache
+  -> React Query owns reads/writes after hydration
+
+Lane:
+  RSC initial load
+  -> seeded client promise cache
+  -> Lane owns reads/refreshes after hydration
+  -> React primitives own transitions, pending, errors, and optimistic UI
+```
 
 ## Practical Routing Direction
 
@@ -136,7 +187,7 @@ React Query baseline:
   reloads.
 - React Query should remain the live client data owner after hydration.
 
-Lane target:
+RSC-first Lane target:
 
 - URL state should be durable.
 - App Router navigation may reload Server Components for route/page data.
@@ -144,6 +195,16 @@ Lane target:
   detail, and other URL-owned workspace data.
 - Lane should be reserved for client-only data that becomes relevant through
   interaction.
+
+RSC-seeded client-owned Lane target:
+
+- URL state should be durable.
+- Server Component initial load should serve first load, reload, and deep links.
+- Same-workspace filter/search updates do not need to reload Server Components.
+- Lane should own live reads and refreshes after hydration.
+- Client mutations should call the API and then refresh or replace Lane
+  promises.
+- React primitives should own pending, errors, transitions, and optimistic UI.
 
 ## Success Criteria
 

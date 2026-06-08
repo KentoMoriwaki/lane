@@ -353,7 +353,8 @@ The React Query app is successful if it creates a credible baseline that Lane
 can replace.
 
 The later Lane implementation should be able to match the same user-facing
-experience while using a different ownership model:
+experience while using one of Lane's supported ownership models. For the full
+architecture positioning, see `docs/lane-supported-architectures.md`.
 
 ```txt
 React Query baseline:
@@ -361,11 +362,21 @@ React Query baseline:
   -> hydrated client query cache
   -> React Query owns reads and writes after hydration
 
-Lane target:
+Lane RSC-seeded client ownership target:
+  Server Component initial load
+  -> seeded client promise cache
+  -> Lane owns reads and refreshes after hydration
+  -> React primitives own pending, errors, transitions, and optimistic UI
+
+Lane RSC-first target:
   Server Components own route/page data
   -> Lane owns client-only async islands and shared promise refresh
   -> React primitives own pending, errors, transitions, and optimistic UI
 ```
+
+The RSC-seeded client ownership target is the closest direct replacement for the
+React Query baseline. The RSC-first target remains useful for validating Lane as
+an async island layer next to Server Component-owned route data.
 
 The comparison should focus on user experience and implementation clarity, not
 on copying API shapes.

@@ -17,10 +17,10 @@ Lane manages promise identity.
 React manages UI state.
 ```
 
-Lane should coordinate reads, refreshes, and shared promise replacement. It
-should not own mutation state, optimistic state, loading result objects, retry
-policy, or cache patching policy unless a future design explicitly adds those
-responsibilities.
+Lane should coordinate reads, invalidation-driven re-reads, and authoritative
+promise replacement. It should not own mutation state, optimistic state, loading
+result objects, retry policy, or cache patching policy unless a future design
+explicitly adds those responsibilities.
 
 ## Architecture 1: RSC-First Ownership
 
@@ -54,7 +54,7 @@ Lane owns data that becomes relevant only through client interaction:
 - label and member suggestions
 - command palette suggestions
 - lazily opened client-only panels
-- distant client consumers that need to observe the same refresh promise
+- distant client consumers that need to observe the same promise invalidation
 - local async data that is not the owner of the route or page
 
 This keeps Lane next to Server Components rather than competing with them. If
@@ -72,8 +72,8 @@ URL / initial request
 -> Server Component loads initial data
 -> Client Component receives serializable initial data
 -> Lane seeds client promise entries from that initial data
--> after hydration, Lane owns reads and refreshes
--> client mutations call the API and replace or refresh Lane promises
+-> after hydration, Lane owns reads and invalidation-driven re-reads
+-> client mutations call the API and invalidate or replace Lane promises
 ```
 
 This is the architecture that competes most directly with a React Query or SWR
@@ -91,14 +91,14 @@ After hydration, the client tree owns live data through Lane:
 
 - filters and search can update durable URL state without forcing an RSC reload
 - Lane reads hydrated promises for the first render
-- Lane refreshes promises after interaction-time changes
+- Lane invalidates and re-reads promises after interaction-time changes
 - client mutations call the HTTP/API boundary directly
 - React primitives own pending, errors, and optimistic UI
 
 In this mode, Lane needs a way to seed client-owned promises from server-loaded
-initial data, then refresh or replace those promises after client interactions.
-The exact API shape belongs in a focused design document, not in this
-architecture overview.
+initial data, then invalidate or replace those promises after client
+interactions. The exact API shape belongs in a focused design document, not in
+this architecture overview.
 
 Client mutations in this architecture should still be React-owned:
 
@@ -106,10 +106,10 @@ Client mutations in this architecture should still be React-owned:
 - optimistic UI: `useOptimistic`
 - read pending: `Suspense`
 - read errors: Error Boundaries
-- convergence: Lane-managed refresh or replacement of affected promises
+- convergence: Lane-managed invalidation or replacement of affected promises
 
 Lane should not add a `useMutation` API just because this architecture supports
-client-side writes. The mutation call, rollback decision, toast, form error,
+client-side writes. The mutation call, local failure recovery, toast, form error,
 and optimistic reducer are application concerns.
 
 ## URL Ownership
@@ -131,7 +131,7 @@ In RSC-seeded client ownership:
 ```txt
 URL change
 -> client state observes the new URL
--> Lane key changes or refreshes
+-> Lane key changes or invalidates
 -> client-side loader fetches new data
 ```
 
@@ -169,4 +169,4 @@ against that baseline directly.
 
 Separate examples should continue to validate the RSC-first ownership
 architecture: route/page data stays in Server Components, and Lane is used for
-client-only async islands such as label search and picker refresh.
+client-only async islands such as label search and picker invalidation.

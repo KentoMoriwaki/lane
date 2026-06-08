@@ -365,12 +365,12 @@ React Query baseline:
 Lane RSC-seeded client ownership target:
   Server Component initial load
   -> seeded client promise cache
-  -> Lane owns reads and refreshes after hydration
+  -> Lane owns reads and invalidation-driven re-reads after hydration
   -> React primitives own pending, errors, transitions, and optimistic UI
 
 Lane RSC-first target:
   Server Components own route/page data
-  -> Lane owns client-only async islands and shared promise refresh
+  -> Lane owns client-only async islands and shared promise invalidation
   -> React primitives own pending, errors, transitions, and optimistic UI
 ```
 

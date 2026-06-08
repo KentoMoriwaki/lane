@@ -1,5 +1,21 @@
 # Lane Core Design 01
 
+Status: historical first design. It is still useful for the original RSC-first
+label-search example and the promise-only mental model, but it is not the
+current implementation contract for the next Lane replacement work.
+
+For the current RSC-seeded client ownership implementation, use these documents
+as the source of truth:
+
+- `docs/lane-library-requirements-from-react-query-baseline.md`
+- `docs/lane-api-design-notes.md`
+- `docs/lane-use-lane-reference.md`
+
+In particular, the `get` / `refresh` / `subscribe` API in this document has been
+superseded by the newer `readOrCreate` / `invalidate` / `replace` / `remove`
+direction. `useLane` is the preferred public hook shape; `useLanePromise` may
+exist only as a thin wrapper.
+
 This note captures the first minimum design for Lane. The current target is the
 label search and creation flow in `apps/todo-nextjs-lane`.
 
@@ -20,8 +36,9 @@ architecture matrix.
 Server Components should own data that must be server-rendered. That data should
 be updated through Server Functions, Server Actions, revalidation, or an RSC
 refresh. Lane should own data that only becomes relevant on the client: focused
-controls, client-only async islands, local optimistic workflows, and distant
-client consumers that need to observe the same promise refresh.
+controls, client-only async islands, and distant client consumers that need to
+observe the same promise invalidation. Optimistic state remains local React
+state, even when it lives next to a Lane-owned async read.
 
 Both sides keep the same mental model: React renders from promises.
 
@@ -101,7 +118,7 @@ In the RSC-first architecture, Lane should not hydrate Server Component-owned
 route data into a client cache by default; that creates two owners for the same
 data. In the RSC-seeded client ownership architecture, the ownership transfer is
 intentional: Server Components provide initial data, then Lane owns live client
-reads and refreshes after hydration.
+reads and invalidation-driven re-reads after hydration.
 
 ## Why Promise Only
 

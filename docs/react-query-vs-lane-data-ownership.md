@@ -106,10 +106,10 @@ Components can own it.
 Lane should own client-only async islands:
 
 - assignee picker search
-- label picker search and creation refresh
+- label picker search and creation invalidation
 - command palette suggestions
 - client-only detail sections
-- distant client consumers that need to observe the same promise refresh
+- distant client consumers that need to observe the same promise invalidation
 - interaction-time async data that is not the route/page owner
 
 ### RSC-Seeded Client-Owned Lane
@@ -123,7 +123,7 @@ URL
 -> Server Component resolves current user, active team, and initial filters
 -> Server Component loads initial workspace data
 -> Client Workspace seeds Lane promises from the initial data
--> after hydration, Lane owns reads and refreshes
+-> after hydration, Lane owns reads and invalidation-driven re-reads
 ```
 
 After hydration, filter/search/task selection changes can stay in the client
@@ -133,12 +133,12 @@ data layer:
 filter/search/task selection changes
 -> URL state updates
 -> Client Component reads URL state
--> Lane key changes or refreshes
+-> Lane key changes or invalidates
 -> client-side loader fetches from the API if needed
 ```
 
 Mutations in this model should call the API from client code and then
-`replace` or `refresh` the relevant Lane promises. React should still own
+`invalidate` or `replace` the relevant Lane promises. React should still own
 pending, errors, optimistic UI, and transitions.
 
 ## Intentional Asymmetry
@@ -173,7 +173,7 @@ React Query:
 Lane:
   RSC initial load
   -> seeded client promise cache
-  -> Lane owns reads/refreshes after hydration
+  -> Lane owns reads and invalidation-driven re-reads after hydration
   -> React primitives own transitions, pending, errors, and optimistic UI
 ```
 
@@ -201,8 +201,8 @@ RSC-seeded client-owned Lane target:
 - URL state should be durable.
 - Server Component initial load should serve first load, reload, and deep links.
 - Same-workspace filter/search updates do not need to reload Server Components.
-- Lane should own live reads and refreshes after hydration.
-- Client mutations should call the API and then refresh or replace Lane
+- Lane should own live reads and invalidation-driven re-reads after hydration.
+- Client mutations should call the API and then invalidate or replace Lane
   promises.
 - React primitives should own pending, errors, transitions, and optimistic UI.
 

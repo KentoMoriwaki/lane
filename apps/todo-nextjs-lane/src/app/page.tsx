@@ -1,29 +1,78 @@
-import { TodoApp } from "./todo-app";
-import { TodoDetailsSidebar } from "./todo-details-sidebar";
-import { listTodos } from "./todo-api";
+import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import {
+  fetchCurrentUser,
+  fetchInsights,
+  fetchLabels,
+  fetchMembers,
+  fetchProjects,
+  fetchTask,
+  fetchTasks,
+  fetchTeams,
+} from "@/api/endpoints";
+import {
+  buildWorkspaceSearch,
+  getterFromRecord,
+  parseWorkspaceState,
+} from "@/api/url-state";
+import { Workspace } from "@/workspace/workspace";
+import { WorkspaceProvider } from "@/workspace/workspace-provider";
 
 type PageProps = {
-  searchParams?: Promise<{
-    todoId?: string | string[];
-  }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
 export default async function Page({ searchParams }: PageProps) {
-  const params = await searchParams;
-  const selectedTodoId = readSingleParam(params?.todoId);
-  const todos = await listTodos();
-  const selectedTodo =
-    todos.find((todo) => todo.id === selectedTodoId) ?? null;
+  const requested = parseWorkspaceState(getterFromRecord(await searchParams));
+  const user = await fetchCurrentUser({ userId: "", teamId: "" });
+  const teams = await fetchTeams({ userId: user.id, teamId: "" });
+
+  if (requested.teamId && !teams.some((team) => team.id === requested.teamId)) {
+    const search = buildWorkspaceSearch({ ...requested, teamId: null });
+    redirect(search ? `/?${search}` : "/");
+  }
+
+  const teamId = requested.teamId ?? user.defaultTeamId;
+  const ctx = { userId: user.id, teamId };
+  const [
+    tasks,
+    insights,
+    projects,
+    labels,
+    members,
+    selectedTask,
+  ] = await Promise.all([
+    fetchTasks(ctx, requested.filters),
+    fetchInsights(ctx),
+    fetchProjects(ctx),
+    fetchLabels(ctx),
+    fetchMembers(ctx),
+    requested.selectedTaskId
+      ? fetchTask(ctx, requested.selectedTaskId).catch(() => null)
+      : Promise.resolve(null),
+  ]);
 
   return (
-    <TodoApp
-      selectedTodoId={selectedTodoId}
-      sidebar={<TodoDetailsSidebar todo={selectedTodo} />}
-      todos={todos}
-    />
+    <Suspense fallback={<div className="min-h-screen bg-background" />}>
+      <WorkspaceProvider
+        initialUser={user}
+        initialTeamId={teamId}
+        initialSeeds={{
+          currentUser: user,
+          insights,
+          labels,
+          members,
+          projects,
+          selectedTask,
+          tasks: {
+            data: tasks,
+            filters: requested.filters,
+          },
+          teams,
+        }}
+      >
+        <Workspace />
+      </WorkspaceProvider>
+    </Suspense>
   );
-}
-
-function readSingleParam(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] : value ?? null;
 }

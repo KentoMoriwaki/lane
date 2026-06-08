@@ -6,6 +6,9 @@
     "moduleResolution": "Bundler",
     "allowJs": true,
     "incremental": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "plugins": [
       {
         "name": "next"
@@ -20,4 +23,3 @@
   ],
   "exclude": ["node_modules"]
 }
-

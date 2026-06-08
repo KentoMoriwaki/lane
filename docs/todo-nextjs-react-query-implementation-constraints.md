@@ -11,6 +11,9 @@ This document intentionally avoids detailed data modeling. The data model should
 be derived during implementation from the product requirements in
 `docs/team-task-app-requirements.md`.
 
+For the intended comparison between the React Query baseline and the future
+Lane implementation, see `docs/react-query-vs-lane-data-ownership.md`.
+
 ## Purpose
 
 Build a React Query baseline for the richer team task management app.

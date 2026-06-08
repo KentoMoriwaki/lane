@@ -1,47 +1,89 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
-import { EMPTY_FILTERS, fetchCurrentUser } from "@/api/endpoints";
+import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import { fetchCurrentUser, fetchTeams } from "@/api/endpoints";
 import {
   currentUserQueryOptions,
   insightsQueryOptions,
   labelsQueryOptions,
   membersQueryOptions,
   projectsQueryOptions,
+  taskQueryOptions,
   tasksQueryOptions,
   teamsQueryOptions,
 } from "@/api/query-options";
+import {
+  buildWorkspaceSearch,
+  getterFromRecord,
+  parseWorkspaceState,
+} from "@/api/url-state";
 import { getQueryClient } from "@/lib/get-query-client";
 import { Workspace } from "@/workspace/workspace";
 import { WorkspaceProvider } from "@/workspace/workspace-provider";
 
+type PageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
 /**
- * Server Component entry point. It collects the initial data, dehydrates the
- * React Query cache, and hands ownership to the client tree. After this point
- * the server no longer owns the displayed data — the client query cache does.
+ * Server Component entry point. It reads the durable view state from the URL,
+ * collects the matching initial data, dehydrates the React Query cache, and
+ * hands ownership to the client tree. This is what makes reload and deep-links
+ * restore the same workspace; after hydration the client query cache owns the
+ * data and same-workspace filter/search changes never reload this component.
  */
-export default async function Page() {
+export default async function Page({ searchParams }: PageProps) {
   const queryClient = getQueryClient();
+  const requested = parseWorkspaceState(getterFromRecord(await searchParams));
 
-  // Resolve the mock-authenticated user first (the API applies a default user
-  // when no id is sent), then prefetch the active team's workspace.
+  // Resolve the mock-authenticated user (the API applies a default user when no
+  // id is sent), then resolve which team this URL refers to.
   const user = await fetchCurrentUser({ userId: "", teamId: "" });
-  const ctx = { userId: user.id, teamId: user.defaultTeamId };
+  const teams = await fetchTeams({ userId: user.id, teamId: "" });
 
+  // Canonicalize an unknown / non-member `team` param before doing anything
+  // else: drop it and redirect so the URL the client sees always matches the
+  // team the server resolves. The provider derives the active team from the
+  // URL, so a stale param would otherwise desync the client request context
+  // from the hydrated data (and break later refresh/mutations).
+  if (requested.teamId && !teams.some((team) => team.id === requested.teamId)) {
+    const search = buildWorkspaceSearch({ ...requested, teamId: null });
+    redirect(search ? `/?${search}` : "/");
+  }
+
+  const teamId = requested.teamId ?? user.defaultTeamId;
+  const ctx = { userId: user.id, teamId };
+
+  // Seed the already-fetched session queries to avoid refetching them.
   queryClient.setQueryData(currentUserQueryOptions(ctx).queryKey, user);
+  queryClient.setQueryData(teamsQueryOptions(ctx).queryKey, teams);
 
-  await Promise.all([
-    queryClient.prefetchQuery(teamsQueryOptions(ctx)),
-    queryClient.prefetchQuery(tasksQueryOptions(ctx, EMPTY_FILTERS)),
+  const prefetches = [
+    queryClient.prefetchQuery(tasksQueryOptions(ctx, requested.filters)),
     queryClient.prefetchQuery(insightsQueryOptions(ctx)),
     queryClient.prefetchQuery(projectsQueryOptions(ctx)),
     queryClient.prefetchQuery(labelsQueryOptions(ctx)),
     queryClient.prefetchQuery(membersQueryOptions(ctx)),
-  ]);
+  ];
+
+  // Deep-linked task detail: prefetch it so the panel renders immediately.
+  if (requested.selectedTaskId) {
+    prefetches.push(
+      queryClient.prefetchQuery(
+        taskQueryOptions(ctx, requested.selectedTaskId),
+      ),
+    );
+  }
+
+  await Promise.all(prefetches);
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <WorkspaceProvider initialUser={user} initialTeamId={ctx.teamId}>
-        <Workspace />
-      </WorkspaceProvider>
+      <Suspense fallback={<div className="min-h-screen bg-background" />}>
+        <WorkspaceProvider initialUser={user} initialTeamId={teamId}>
+          <Workspace />
+        </WorkspaceProvider>
+      </Suspense>
     </HydrationBoundary>
   );
 }

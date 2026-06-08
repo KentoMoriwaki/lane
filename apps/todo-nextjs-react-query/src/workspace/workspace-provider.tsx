@@ -2,6 +2,7 @@
 
 import type { CurrentUser } from "@lane/todo-api";
 import { useQueryClient } from "@tanstack/react-query";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 import type { WorkspaceCtx } from "@/api/client";
 import { TEAM_SCOPED_KEYS } from "@/api/query-options";
@@ -14,8 +15,6 @@ type WorkspaceContextValue = {
   sessionUser: CurrentUser;
   activeTeamId: string;
   isSignedIn: boolean;
-  /** Bumped whenever the active team changes, so views can reset local state. */
-  teamEpoch: number;
   switchTeam: (teamId: string) => void;
   signOut: () => void;
   signIn: () => void;
@@ -33,10 +32,15 @@ export function WorkspaceProvider({
   children: React.ReactNode;
 }) {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [userId] = React.useState(initialUser.id);
-  const [activeTeamId, setActiveTeamId] = React.useState(initialTeamId);
   const [isSignedIn, setIsSignedIn] = React.useState(true);
-  const [teamEpoch, setTeamEpoch] = React.useState(0);
+
+  // The active team is durable URL state. It falls back to the team the server
+  // resolved for this request when no `team` param is present.
+  const activeTeamId = searchParams.get("team")?.trim() || initialTeamId;
 
   const switchTeam = React.useCallback(
     (teamId: string) => {
@@ -45,16 +49,18 @@ export function WorkspaceProvider({
       }
 
       // The new team owns a fresh workspace. Drop every team-scoped query so
-      // stale tasks/labels/members from the previous team can never be shown
-      // as if they belonged to the new one.
+      // stale tasks/labels/members/projects from the previous team can never be
+      // shown as if they belonged to the new one (team is not in the keys).
       for (const key of TEAM_SCOPED_KEYS) {
         queryClient.removeQueries({ queryKey: [...key] });
       }
 
-      setActiveTeamId(teamId);
-      setTeamEpoch((epoch) => epoch + 1);
+      // A team change is a route-identity change: navigate so the Server
+      // Component re-prefetches the new team's workspace, and reset the other
+      // view params (filters/search/selected task) which are team-specific.
+      router.push(`${pathname}?team=${encodeURIComponent(teamId)}`);
     },
-    [activeTeamId, queryClient],
+    [activeTeamId, pathname, queryClient, router],
   );
 
   const signOut = React.useCallback(() => {
@@ -79,7 +85,6 @@ export function WorkspaceProvider({
       sessionUser: initialUser,
       activeTeamId,
       isSignedIn,
-      teamEpoch,
       switchTeam,
       signOut,
       signIn,
@@ -90,7 +95,6 @@ export function WorkspaceProvider({
       initialUser,
       activeTeamId,
       isSignedIn,
-      teamEpoch,
       switchTeam,
       signOut,
       signIn,

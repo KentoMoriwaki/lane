@@ -2,7 +2,6 @@
 
 import type { TaskPriority, TaskScope, TaskStatus } from "@lane/todo-api";
 import * as React from "react";
-import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";
 import { useWorkspaceRefresh } from "@/api/hooks";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { CreateTaskDialog } from "./create-task-dialog";
@@ -13,6 +12,7 @@ import { SignInScreen } from "./sign-in-screen";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { TaskList } from "./task-list";
 import { Topbar } from "./topbar";
+import { useWorkspaceUrl } from "./use-workspace-url";
 import { useWorkspace } from "./workspace-provider";
 
 function toggle<T>(values: T[], value: T): T[] {
@@ -22,52 +22,48 @@ function toggle<T>(values: T[], value: T): T[] {
 }
 
 export function Workspace() {
-  const { isSignedIn, teamEpoch } = useWorkspace();
+  const { isSignedIn } = useWorkspace();
 
-  // A fresh key per team means switching teams remounts the workspace and
-  // resets all local view state (filters, selection, search) cleanly.
   if (!isSignedIn) {
     return <SignInScreen />;
   }
 
-  return <WorkspaceShell key={teamEpoch} />;
+  return <WorkspaceShell />;
 }
 
 function WorkspaceShell() {
-  const [baseFilters, setBaseFilters] = React.useState<TaskFilters>(() => ({
-    ...EMPTY_FILTERS,
-  }));
-  const [searchInput, setSearchInput] = React.useState("");
-  const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(
-    null,
-  );
+  const {
+    filters,
+    selectedTaskId,
+    patchFilters,
+    applyView,
+    resetFilters,
+    selectTask,
+  } = useWorkspaceUrl();
   const [createOpen, setCreateOpen] = React.useState(false);
-
-  const debouncedSearch = useDebouncedValue(searchInput, 300);
   const { refresh, isRefreshing } = useWorkspaceRefresh();
 
-  const filters = React.useMemo<TaskFilters>(
-    () => ({ ...baseFilters, q: debouncedSearch.trim() }),
-    [baseFilters, debouncedSearch],
-  );
+  // Local, snappy search input that is debounced into the durable URL state.
+  const [searchInput, setSearchInput] = React.useState(filters.q);
+  const debouncedSearch = useDebouncedValue(searchInput, 300);
+  const committedQ = React.useRef(filters.q);
 
-  const applyView = React.useCallback((view: Partial<TaskFilters>) => {
-    setBaseFilters({ ...EMPTY_FILTERS, ...view, q: "" });
-    setSearchInput("");
-  }, []);
+  // Typed input (debounced) -> URL. Replace (not push) so each keystroke does
+  // not create a separate history entry.
+  React.useEffect(() => {
+    if (debouncedSearch !== committedQ.current) {
+      committedQ.current = debouncedSearch;
+      patchFilters({ q: debouncedSearch }, "replace");
+    }
+  }, [debouncedSearch, patchFilters]);
 
-  const patchFilters = React.useCallback((patch: Partial<TaskFilters>) => {
-    setBaseFilters((current) => ({ ...current, ...patch }));
-  }, []);
-
-  const resetAll = React.useCallback(() => {
-    setBaseFilters({ ...EMPTY_FILTERS });
-    setSearchInput("");
-  }, []);
-
-  const clearSelectionFor = React.useCallback((taskId: string) => {
-    setSelectedTaskId((current) => (current === taskId ? null : current));
-  }, []);
+  // External URL changes (back/forward, team switch, clear) -> input.
+  React.useEffect(() => {
+    if (filters.q !== committedQ.current) {
+      committedQ.current = filters.q;
+      setSearchInput(filters.q);
+    }
+  }, [filters.q]);
 
   const hasActiveFilters =
     filters.scope !== "all" ||
@@ -77,6 +73,15 @@ function WorkspaceShell() {
     Boolean(filters.labelId) ||
     Boolean(filters.due) ||
     filters.q.trim().length > 0;
+
+  const clearSelectionFor = React.useCallback(
+    (taskId: string) => {
+      if (selectedTaskId === taskId) {
+        selectTask(null);
+      }
+    },
+    [selectedTaskId, selectTask],
+  );
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
@@ -98,35 +103,29 @@ function WorkspaceShell() {
               filters={filters}
               onScopeChange={(scope: TaskScope) => patchFilters({ scope })}
               onToggleStatus={(status: TaskStatus) =>
-                setBaseFilters((current) => ({
-                  ...current,
-                  status: toggle(current.status, status),
-                }))
+                patchFilters({ status: toggle(filters.status, status) })
               }
               onTogglePriority={(priority: TaskPriority) =>
-                setBaseFilters((current) => ({
-                  ...current,
-                  priority: toggle(current.priority, priority),
-                }))
+                patchFilters({ priority: toggle(filters.priority, priority) })
               }
               onPatch={patchFilters}
-              onResetAll={resetAll}
+              onResetAll={resetFilters}
             />
             <div className="scrollbar-calm min-h-0 flex-1 overflow-y-auto">
               <TaskList
                 filters={filters}
                 hasActiveFilters={hasActiveFilters}
                 selectedTaskId={selectedTaskId}
-                onSelectTask={setSelectedTaskId}
+                onSelectTask={selectTask}
                 onClearSelection={clearSelectionFor}
-                onResetFilters={resetAll}
+                onResetFilters={resetFilters}
               />
             </div>
           </section>
 
           <TaskDetailPanel
             taskId={selectedTaskId}
-            onClose={() => setSelectedTaskId(null)}
+            onClose={() => selectTask(null)}
           />
         </div>
       </div>
@@ -134,7 +133,7 @@ function WorkspaceShell() {
       <CreateTaskDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onCreated={setSelectedTaskId}
+        onCreated={selectTask}
       />
     </div>
   );

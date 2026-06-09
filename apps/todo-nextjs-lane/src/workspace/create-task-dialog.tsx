@@ -140,22 +140,22 @@ export function CreateTaskDialog({
           <div className="flex flex-wrap items-center gap-2">
             <StatusControl
               value={draft.status}
-              onChange={(status) => patch({ status })}
+              changeAction={(status) => patch({ status })}
             />
             <PriorityControl
               value={draft.priority}
-              onChange={(priority) => patch({ priority })}
+              changeAction={(priority) => patch({ priority })}
             />
             <div className="w-44">
               <AssigneePicker
                 value={draft.assigneeId}
-                onChange={(assigneeId) => patch({ assigneeId })}
+                changeAction={(assigneeId) => patch({ assigneeId })}
               />
             </div>
             <div className="w-44">
               <ProjectPicker
                 value={draft.projectId}
-                onChange={(projectId) => patch({ projectId })}
+                changeAction={(projectId) => patch({ projectId })}
               />
             </div>
             <Input
@@ -192,14 +192,14 @@ export function CreateTaskDialog({
             ))}
             <LabelPicker
               selectedIds={draft.labels.map((label) => label.id)}
-              onAdd={(label) =>
+              addAction={(label) =>
                 patch({
                   labels: draft.labels.some((item) => item.id === label.id)
                     ? draft.labels
                     : [...draft.labels, label],
                 })
               }
-              onRemove={(labelId) =>
+              removeAction={(labelId) =>
                 patch({
                   labels: draft.labels.filter((item) => item.id !== labelId),
                 })

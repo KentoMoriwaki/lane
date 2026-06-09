@@ -114,6 +114,14 @@ const validationHook = (
   }
 };
 
+const DERIVED_DATA_DELAY_MS = 200;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 export const teamRoutes = team
   .get("/me", (context) => {
     const user = getCurrentUser(context.get("userId"));
@@ -228,7 +236,8 @@ export const teamRoutes = team
 
     return context.json(task, 200);
   })
-  .get("/projects", (context) => {
+  .get("/projects", async (context) => {
+    await delay(DERIVED_DATA_DELAY_MS);
     return context.json(listProjects(context.get("teamId")), 200);
   })
   .post(
@@ -283,7 +292,8 @@ export const teamRoutes = team
       );
     },
   )
-  .get("/insights", (context) => {
+  .get("/insights", async (context) => {
+    await delay(DERIVED_DATA_DELAY_MS);
     return context.json(
       getInsights(context.get("teamId"), context.get("userId")),
       200,

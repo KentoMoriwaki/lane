@@ -14,13 +14,13 @@ import { cn } from "@/lib/utils";
 
 export function StatusControl({
   value,
-  onChange,
+  changeAction,
   variant = "full",
   pending,
   disabled,
 }: {
   value: TaskStatus;
-  onChange: (next: TaskStatus) => void;
+  changeAction: (next: TaskStatus) => void;
   variant?: "full" | "icon";
   pending?: boolean;
   disabled?: boolean;
@@ -62,7 +62,7 @@ export function StatusControl({
               type="button"
               onClick={() => {
                 setOpen(false);
-                if (status !== value) onChange(status);
+                if (status !== value) changeAction(status);
               }}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
             >

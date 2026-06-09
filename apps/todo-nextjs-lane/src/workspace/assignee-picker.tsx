@@ -23,12 +23,12 @@ import { InlineSpinner } from "./feedback";
 
 export function AssigneePicker({
   value,
-  onChange,
+  changeAction,
   pending,
   disabled,
 }: {
   value: string | null;
-  onChange: (assigneeId: string | null) => void;
+  changeAction: (assigneeId: string | null) => void;
   pending?: boolean;
   disabled?: boolean;
 }) {
@@ -78,7 +78,7 @@ export function AssigneePicker({
               <CommandItem
                 value="unassigned no-assignee"
                 onSelect={() => {
-                  onChange(null);
+                  changeAction(null);
                   setOpen(false);
                 }}
               >
@@ -91,7 +91,7 @@ export function AssigneePicker({
                   key={member.id}
                   value={`${member.name} ${member.email}`}
                   onSelect={() => {
-                    onChange(member.id);
+                    changeAction(member.id);
                     setOpen(false);
                   }}
                 >

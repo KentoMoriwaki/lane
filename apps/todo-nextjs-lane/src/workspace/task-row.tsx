@@ -5,6 +5,7 @@ import { MoreHorizontal, Trash2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { useDeleteTask, useUpdateTask } from "@/api/hooks";
+import { taskCacheStrategies } from "@/api/task-cache-sync";
 import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -103,11 +104,11 @@ export function TaskRow({
         <StatusControl
           variant="icon"
           value={optimisticTask.status}
-          onChange={(status) => {
+          changeAction={(status) => {
             startUpdateTransition(async () => {
               addOptimisticTask({ type: "status", status });
               try {
-                await update({ status });
+                await update({ status }, taskCacheStrategies.status);
               } catch (error) {
                 toast.error("Couldn't update status", {
                   description:

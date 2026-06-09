@@ -27,12 +27,12 @@ const PROJECT_COLORS = ["cobalt", "sage", "amber", "rose", "slate"];
 
 export function ProjectPicker({
   value,
-  onChange,
+  changeAction,
   pending,
   disabled,
 }: {
   value: string | null;
-  onChange: (projectId: string | null) => void;
+  changeAction: (projectId: string | null) => void;
   pending?: boolean;
   disabled?: boolean;
 }) {
@@ -56,7 +56,7 @@ export function ProjectPicker({
     startCreateTransition(async () => {
       try {
         const project = await createProject({ name: trimmed, color });
-        onChange(project.id);
+        changeAction(project.id);
         setSearch("");
         setOpen(false);
         toast.success(`Project “${project.name}” created`);
@@ -120,7 +120,7 @@ export function ProjectPicker({
               <CommandItem
                 value="__no_project__"
                 onSelect={() => {
-                  onChange(null);
+                  changeAction(null);
                   setOpen(false);
                 }}
               >
@@ -133,7 +133,7 @@ export function ProjectPicker({
                   key={project.id}
                   value={project.name}
                   onSelect={() => {
-                    onChange(project.id);
+                    changeAction(project.id);
                     setOpen(false);
                   }}
                 >

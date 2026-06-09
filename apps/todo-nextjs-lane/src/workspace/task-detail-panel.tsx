@@ -19,6 +19,7 @@ import {
   useTask,
   useUpdateTask,
 } from "@/api/hooks";
+import { taskCacheStrategies } from "@/api/task-cache-sync";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -58,7 +59,7 @@ export function TaskDetailPanel({
 
   return (
     <DetailShell>
-      <React.Suspense fallback={<DetailSkeleton />}>
+      <React.Suspense key={taskId} fallback={<DetailSkeleton />}>
         <TaskDetail taskId={taskId} onClose={onClose} />
       </React.Suspense>
     </DetailShell>
@@ -87,47 +88,146 @@ function TaskDetail({
   const addLabel = useAddTaskLabel(taskId);
   const removeLabel = useRemoveTaskLabel(taskId);
   const remove = useDeleteTask();
-  const [isSaving, startSaveTransition] = React.useTransition();
+  const [isSavedVisible, showSavedNotice] = useSavedNotice();
   const [optimisticTask, addOptimisticTask] = React.useOptimistic(
     task,
     (current, change: OptimisticTaskChange) =>
       applyOptimisticTaskChange(current, change, { members, projects }),
   );
+  const [, dispatchSaveAction, isSaving] = React.useActionState(
+    async (version: number, action: SaveAction): Promise<number> => {
+      try {
+        await action.run();
+        action.onSuccess?.();
+      } catch (error) {
+        toast.error(action.errorMessage, {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
+
+      return version + 1;
+    },
+    0,
+  );
 
   const isClosed = STATUS_META[optimisticTask.status].group === "closed";
 
-  function runAction(
-    optimisticChange: OptimisticTaskChange,
-    action: () => Promise<unknown>,
-    errorMessage: string,
-  ) {
-    startSaveTransition(async () => {
-      addOptimisticTask(optimisticChange);
-      try {
-        await action();
-      } catch (error) {
-        toast.error(errorMessage, {
-          description: error instanceof Error ? error.message : undefined,
-        });
-      }
+  function saveTitleAction(title: string) {
+    const input = { title };
+    React.startTransition(() => {
+      addOptimisticTask({ type: "update", input });
+      dispatchSaveAction({
+        errorMessage: "Couldn't save title",
+        onSuccess: showSavedNotice,
+        run: () => update(input, taskCacheStrategies.searchText),
+      });
     });
   }
 
-  function saveTask(input: UpdateTaskInput, errorMessage: string) {
-    runAction({ type: "update", input }, () => update(input), errorMessage);
+  function saveDescriptionAction(description: string) {
+    const input = { description };
+    React.startTransition(() => {
+      addOptimisticTask({ type: "update", input });
+      dispatchSaveAction({
+        errorMessage: "Couldn't save description",
+        onSuccess: showSavedNotice,
+        run: () => update(input, taskCacheStrategies.searchText),
+      });
+    });
+  }
+
+  function changeStatusAction(status: Task["status"]) {
+    const input = { status };
+    React.startTransition(() => {
+      addOptimisticTask({ type: "update", input });
+      dispatchSaveAction({
+        errorMessage: "Couldn't update status",
+        onSuccess: showSavedNotice,
+        run: () => update(input, taskCacheStrategies.status),
+      });
+    });
+  }
+
+  function changePriorityAction(priority: Task["priority"]) {
+    const input = { priority };
+    React.startTransition(() => {
+      addOptimisticTask({ type: "update", input });
+      dispatchSaveAction({
+        errorMessage: "Couldn't update priority",
+        onSuccess: showSavedNotice,
+        run: () => update(input, taskCacheStrategies.priority),
+      });
+    });
+  }
+
+  function changeAssigneeAction(assigneeId: string | null) {
+    const input = { assigneeId };
+    React.startTransition(() => {
+      addOptimisticTask({ type: "update", input });
+      dispatchSaveAction({
+        errorMessage: "Couldn't update assignee",
+        onSuccess: showSavedNotice,
+        run: () => update(input, taskCacheStrategies.assignee),
+      });
+    });
+  }
+
+  function changeProjectAction(projectId: string | null) {
+    const input = { projectId };
+    React.startTransition(() => {
+      addOptimisticTask({ type: "update", input });
+      dispatchSaveAction({
+        errorMessage: "Couldn't move task",
+        onSuccess: showSavedNotice,
+        run: () => update(input, taskCacheStrategies.project),
+      });
+    });
+  }
+
+  function changeDueDateAction(dueDate: string | null) {
+    const input = { dueDate };
+    React.startTransition(() => {
+      addOptimisticTask({ type: "update", input });
+      dispatchSaveAction({
+        errorMessage: "Couldn't update due date",
+        onSuccess: showSavedNotice,
+        run: () => update(input, taskCacheStrategies.dueDate),
+      });
+    });
+  }
+
+  function addLabelAction(label: TeamLabel) {
+    React.startTransition(() => {
+      addOptimisticTask({ type: "addLabel", label });
+      dispatchSaveAction({
+        errorMessage: "Couldn't add label",
+        onSuccess: showSavedNotice,
+        run: () => addLabel(label),
+      });
+    });
+  }
+
+  function removeLabelAction(labelId: string) {
+    React.startTransition(() => {
+      addOptimisticTask({ type: "removeLabel", labelId });
+      dispatchSaveAction({
+        errorMessage: "Couldn't remove label",
+        onSuccess: showSavedNotice,
+        run: () => removeLabel(labelId),
+      });
+    });
   }
 
   const handleDelete = () => {
-    startSaveTransition(async () => {
-      try {
-        await remove(task.id);
-        toast.success("Task deleted");
-        onClose();
-      } catch (error) {
-        toast.error("Couldn't delete task", {
-          description: error instanceof Error ? error.message : undefined,
-        });
-      }
+    React.startTransition(() => {
+      dispatchSaveAction({
+        errorMessage: "Couldn't delete task",
+        run: () => remove(task.id),
+        onSuccess: () => {
+          toast.success("Task deleted");
+          onClose();
+        },
+      });
     });
   };
 
@@ -152,11 +252,11 @@ function TaskDetail({
             <span className="inline-flex items-center gap-1 text-cobalt">
               <InlineSpinner className="size-3" /> Saving…
             </span>
-          ) : (
+          ) : isSavedVisible ? (
             <span className="inline-flex items-center gap-1 text-sage">
               <Check className="size-3" /> Saved
             </span>
-          )}
+          ) : null}
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -184,17 +284,13 @@ function TaskDetail({
           key={`title:${optimisticTask.id}`}
           value={optimisticTask.title}
           isClosed={isClosed}
-          onSave={(title) =>
-            saveTask({ title }, "Couldn't save title")
-          }
+          saveAction={saveTitleAction}
         />
 
         <DescriptionEditor
           key={`desc:${optimisticTask.id}`}
           value={optimisticTask.description}
-          onSave={(description) =>
-            saveTask({ description }, "Couldn't save description")
-          }
+          saveAction={saveDescriptionAction}
         />
 
         <Separator />
@@ -203,9 +299,7 @@ function TaskDetail({
           <Field label="Status">
             <StatusControl
               value={optimisticTask.status}
-              onChange={(status) =>
-                saveTask({ status }, "Couldn't update status")
-              }
+              changeAction={changeStatusAction}
               pending={isSaving}
             />
           </Field>
@@ -213,9 +307,7 @@ function TaskDetail({
           <Field label="Priority">
             <PriorityControl
               value={optimisticTask.priority}
-              onChange={(priority) =>
-                saveTask({ priority }, "Couldn't update priority")
-              }
+              changeAction={changePriorityAction}
               pending={isSaving}
             />
           </Field>
@@ -223,9 +315,7 @@ function TaskDetail({
           <Field label="Assignee">
             <AssigneePicker
               value={optimisticTask.assignee?.id ?? null}
-              onChange={(assigneeId) =>
-                saveTask({ assigneeId }, "Couldn't update assignee")
-              }
+              changeAction={changeAssigneeAction}
               pending={isSaving}
             />
           </Field>
@@ -233,9 +323,7 @@ function TaskDetail({
           <Field label="Project">
             <ProjectPicker
               value={optimisticTask.project?.id ?? null}
-              onChange={(projectId) =>
-                saveTask({ projectId }, "Couldn't move task")
-              }
+              changeAction={changeProjectAction}
               pending={isSaving}
             />
           </Field>
@@ -244,12 +332,10 @@ function TaskDetail({
             <Input
               type="date"
               value={toDateInputValue(optimisticTask.dueDate)}
-              onChange={(event) =>
-                saveTask(
-                  { dueDate: fromDateInputValue(event.target.value) },
-                  "Couldn't update due date",
-                )
-              }
+              onChange={(event) => {
+                const dueDate = fromDateInputValue(event.target.value);
+                changeDueDateAction(dueDate);
+              }}
               className="h-9"
             />
           </Field>
@@ -276,13 +362,7 @@ function TaskDetail({
                 {label.name}
                 <button
                   type="button"
-                  onClick={() =>
-                    runAction(
-                      { type: "removeLabel", labelId: label.id },
-                      () => removeLabel(label.id),
-                      "Couldn't remove label",
-                    )
-                  }
+                  onClick={() => removeLabelAction(label.id)}
                   className="rounded-full p-0.5 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-rose"
                   aria-label={`Remove ${label.name}`}
                 >
@@ -292,20 +372,8 @@ function TaskDetail({
             ))}
             <LabelPicker
               selectedIds={optimisticTask.labels.map((label) => label.id)}
-              onAdd={(label) =>
-                runAction(
-                  { type: "addLabel", label },
-                  () => addLabel(label),
-                  "Couldn't add label",
-                )
-              }
-              onRemove={(labelId) =>
-                runAction(
-                  { type: "removeLabel", labelId },
-                  () => removeLabel(labelId),
-                  "Couldn't remove label",
-                )
-              }
+              addAction={addLabelAction}
+              removeAction={removeLabelAction}
             />
           </div>
         </div>
@@ -322,6 +390,39 @@ type OptimisticTaskChange =
   | { type: "update"; input: UpdateTaskInput }
   | { type: "addLabel"; label: TeamLabel }
   | { type: "removeLabel"; labelId: string };
+
+type SaveAction = {
+  errorMessage: string;
+  run: () => Promise<unknown>;
+  onSuccess?: () => void;
+};
+
+function useSavedNotice(): [boolean, () => void] {
+  const [isVisible, setIsVisible] = React.useState(false);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const show = React.useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    setIsVisible(true);
+    timerRef.current = setTimeout(() => {
+      setIsVisible(false);
+      timerRef.current = null;
+    }, 1200);
+  }, []);
+
+  return [isVisible, show];
+}
 
 function applyOptimisticTaskChange(
   task: Task,
@@ -414,18 +515,18 @@ function Field({
 function TitleEditor({
   value,
   isClosed,
-  onSave,
+  saveAction,
 }: {
   value: string;
   isClosed: boolean;
-  onSave: (title: string) => void;
+  saveAction: (title: string) => void;
 }) {
   const [draft, setDraft] = React.useState(value);
 
   function commit() {
     const next = draft.trim();
     if (next && next !== value) {
-      onSave(next);
+      saveAction(next);
     } else if (!next) {
       setDraft(value);
     }
@@ -453,16 +554,16 @@ function TitleEditor({
 
 function DescriptionEditor({
   value,
-  onSave,
+  saveAction,
 }: {
   value: string;
-  onSave: (description: string) => void;
+  saveAction: (description: string) => void;
 }) {
   const [draft, setDraft] = React.useState(value);
 
   function commit() {
     if (draft.trim() !== value.trim()) {
-      onSave(draft.trim());
+      saveAction(draft.trim());
     }
   }
 

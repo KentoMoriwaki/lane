@@ -11,7 +11,7 @@ import {
   UserCircle2,
   UserX,
 } from "lucide-react";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import * as React from "react";
 import type { TaskFilters } from "@/api/endpoints";
 import {
@@ -239,10 +239,45 @@ function NavItem({
   return (
     <Link
       href={href}
+      prefetch={false}
       scroll={false}
+      className="block w-full rounded-md"
+    >
+      <NavItemContent
+        icon={Icon}
+        dotClass={dotClass}
+        label={label}
+        count={count}
+        tone={tone}
+        isActive={isActive}
+      />
+    </Link>
+  );
+}
+
+function NavItemContent({
+  icon: Icon,
+  dotClass,
+  label,
+  count,
+  tone,
+  isActive,
+}: {
+  icon?: LucideIcon;
+  dotClass?: string;
+  label: string;
+  count?: number;
+  tone?: "rose";
+  isActive?: boolean;
+}) {
+  const { pending } = useLinkStatus();
+  const active = Boolean(isActive || pending);
+
+  return (
+    <span
       className={cn(
         "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
-        isActive
+        active
           ? "bg-accent font-medium text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
       )}
@@ -263,6 +298,6 @@ function NavItem({
           {count}
         </span>
       ) : null}
-    </Link>
+    </span>
   );
 }

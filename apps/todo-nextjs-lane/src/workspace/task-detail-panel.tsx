@@ -1,12 +1,20 @@
 "use client";
 
-import type { Task, UpdateTaskInput } from "@lane/todo-api";
+import type {
+  Project,
+  Task,
+  TeamLabel,
+  TeamMember,
+  UpdateTaskInput,
+} from "@lane/todo-api";
 import { Check, MousePointerClick, Trash2, X } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import {
   useAddTaskLabel,
   useDeleteTask,
+  useMembers,
+  useProjects,
   useRemoveTaskLabel,
   useTask,
   useUpdateTask,
@@ -73,16 +81,28 @@ function TaskDetail({
   onClose: () => void;
 }) {
   const task = React.use(useTask(taskId).promise);
+  const projects = React.use(useProjects().promise);
+  const members = React.use(useMembers().promise);
   const update = useUpdateTask(taskId);
   const addLabel = useAddTaskLabel(taskId);
   const removeLabel = useRemoveTaskLabel(taskId);
   const remove = useDeleteTask();
   const [isSaving, startSaveTransition] = React.useTransition();
+  const [optimisticTask, addOptimisticTask] = React.useOptimistic(
+    task,
+    (current, change: OptimisticTaskChange) =>
+      applyOptimisticTaskChange(current, change, { members, projects }),
+  );
 
-  const isClosed = STATUS_META[task.status].group === "closed";
+  const isClosed = STATUS_META[optimisticTask.status].group === "closed";
 
-  function runAction(action: () => Promise<unknown>, errorMessage: string) {
+  function runAction(
+    optimisticChange: OptimisticTaskChange,
+    action: () => Promise<unknown>,
+    errorMessage: string,
+  ) {
     startSaveTransition(async () => {
+      addOptimisticTask(optimisticChange);
       try {
         await action();
       } catch (error) {
@@ -94,7 +114,7 @@ function TaskDetail({
   }
 
   function saveTask(input: UpdateTaskInput, errorMessage: string) {
-    runAction(() => update(input), errorMessage);
+    runAction({ type: "update", input }, () => update(input), errorMessage);
   }
 
   const handleDelete = () => {
@@ -115,15 +135,15 @@ function TaskDetail({
     <div className="flex flex-col">
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-surface/95 px-4 py-2.5 backdrop-blur">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          {task.project ? (
+          {optimisticTask.project ? (
             <span className="inline-flex items-center gap-1.5">
               <span
                 className={cn(
                   "size-1.5 rounded-full",
-                  accent(task.project.color).dot,
+                  accent(optimisticTask.project.color).dot,
                 )}
               />
-              {task.project.name}
+              {optimisticTask.project.name}
             </span>
           ) : (
             <span>No project</span>
@@ -161,8 +181,8 @@ function TaskDetail({
 
       <div className="space-y-5 p-4">
         <TitleEditor
-          key={`title:${task.id}`}
-          value={task.title}
+          key={`title:${optimisticTask.id}`}
+          value={optimisticTask.title}
           isClosed={isClosed}
           onSave={(title) =>
             saveTask({ title }, "Couldn't save title")
@@ -170,8 +190,8 @@ function TaskDetail({
         />
 
         <DescriptionEditor
-          key={`desc:${task.id}`}
-          value={task.description}
+          key={`desc:${optimisticTask.id}`}
+          value={optimisticTask.description}
           onSave={(description) =>
             saveTask({ description }, "Couldn't save description")
           }
@@ -182,7 +202,7 @@ function TaskDetail({
         <div className="space-y-3">
           <Field label="Status">
             <StatusControl
-              value={task.status}
+              value={optimisticTask.status}
               onChange={(status) =>
                 saveTask({ status }, "Couldn't update status")
               }
@@ -192,7 +212,7 @@ function TaskDetail({
 
           <Field label="Priority">
             <PriorityControl
-              value={task.priority}
+              value={optimisticTask.priority}
               onChange={(priority) =>
                 saveTask({ priority }, "Couldn't update priority")
               }
@@ -202,7 +222,7 @@ function TaskDetail({
 
           <Field label="Assignee">
             <AssigneePicker
-              value={task.assignee?.id ?? null}
+              value={optimisticTask.assignee?.id ?? null}
               onChange={(assigneeId) =>
                 saveTask({ assigneeId }, "Couldn't update assignee")
               }
@@ -212,7 +232,7 @@ function TaskDetail({
 
           <Field label="Project">
             <ProjectPicker
-              value={task.project?.id ?? null}
+              value={optimisticTask.project?.id ?? null}
               onChange={(projectId) =>
                 saveTask({ projectId }, "Couldn't move task")
               }
@@ -223,7 +243,7 @@ function TaskDetail({
           <Field label="Due date">
             <Input
               type="date"
-              value={toDateInputValue(task.dueDate)}
+              value={toDateInputValue(optimisticTask.dueDate)}
               onChange={(event) =>
                 saveTask(
                   { dueDate: fromDateInputValue(event.target.value) },
@@ -242,7 +262,7 @@ function TaskDetail({
             Labels
           </p>
           <div className="flex flex-wrap items-center gap-1.5">
-            {task.labels.map((label) => (
+            {optimisticTask.labels.map((label) => (
               <span
                 key={label.id}
                 className="inline-flex items-center gap-1 rounded-full border border-border bg-surface py-0.5 pl-2 pr-1 text-[11px] font-medium text-muted-foreground"
@@ -258,6 +278,7 @@ function TaskDetail({
                   type="button"
                   onClick={() =>
                     runAction(
+                      { type: "removeLabel", labelId: label.id },
                       () => removeLabel(label.id),
                       "Couldn't remove label",
                     )
@@ -270,23 +291,107 @@ function TaskDetail({
               </span>
             ))}
             <LabelPicker
-              selectedIds={task.labels.map((label) => label.id)}
+              selectedIds={optimisticTask.labels.map((label) => label.id)}
               onAdd={(label) =>
-                runAction(() => addLabel(label), "Couldn't add label")
+                runAction(
+                  { type: "addLabel", label },
+                  () => addLabel(label),
+                  "Couldn't add label",
+                )
               }
               onRemove={(labelId) =>
-                runAction(() => removeLabel(labelId), "Couldn't remove label")
+                runAction(
+                  { type: "removeLabel", labelId },
+                  () => removeLabel(labelId),
+                  "Couldn't remove label",
+                )
               }
             />
           </div>
         </div>
 
         <p className="pt-1 text-xs text-muted-foreground">
-          Updated {formatRelative(task.updatedAt)}
+          Updated {formatRelative(optimisticTask.updatedAt)}
         </p>
       </div>
     </div>
   );
+}
+
+type OptimisticTaskChange =
+  | { type: "update"; input: UpdateTaskInput }
+  | { type: "addLabel"; label: TeamLabel }
+  | { type: "removeLabel"; labelId: string };
+
+function applyOptimisticTaskChange(
+  task: Task,
+  change: OptimisticTaskChange,
+  refs: { members: TeamMember[]; projects: Project[] },
+): Task {
+  const updatedAt = new Date().toISOString();
+
+  if (change.type === "addLabel") {
+    if (task.labels.some((label) => label.id === change.label.id)) {
+      return task;
+    }
+
+    return {
+      ...task,
+      labels: [...task.labels, change.label],
+      updatedAt,
+    };
+  }
+
+  if (change.type === "removeLabel") {
+    return {
+      ...task,
+      labels: task.labels.filter((label) => label.id !== change.labelId),
+      updatedAt,
+    };
+  }
+
+  const { input } = change;
+
+  const next: Task = {
+    ...task,
+    updatedAt,
+  };
+
+  if ("title" in input && input.title !== undefined) {
+    next.title = input.title;
+  }
+
+  if ("description" in input && input.description !== undefined) {
+    next.description = input.description;
+  }
+
+  if ("status" in input && input.status !== undefined) {
+    next.status = input.status;
+  }
+
+  if ("priority" in input && input.priority !== undefined) {
+    next.priority = input.priority;
+  }
+
+  if ("dueDate" in input) {
+    next.dueDate = input.dueDate ?? null;
+  }
+
+  if ("assigneeId" in input) {
+    next.assignee = input.assigneeId
+      ? refs.members.find((member) => member.id === input.assigneeId) ??
+        task.assignee
+      : null;
+  }
+
+  if ("projectId" in input) {
+    next.project = input.projectId
+      ? refs.projects.find((project) => project.id === input.projectId) ??
+        task.project
+      : null;
+  }
+
+  return next;
 }
 
 function Field({

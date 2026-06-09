@@ -37,12 +37,32 @@ export function TaskRow({
   const remove = useDeleteTask();
   const [isUpdating, startUpdateTransition] = React.useTransition();
   const [isDeleting, startDeleteTransition] = React.useTransition();
-  const isClosed = STATUS_META[task.status].group === "closed";
+  const [deleteConfirmed, setDeleteConfirmed] = React.useState(false);
+  const [optimisticTask, addOptimisticTask] = React.useOptimistic(
+    task,
+    (
+      current,
+      change:
+        | { type: "status"; status: Task["status"] }
+        | { type: "delete" },
+    ): Task | null => {
+      if (change.type === "delete" || current === null) {
+        return null;
+      }
+
+      return { ...current, status: change.status };
+    },
+  );
+  const isClosed = optimisticTask
+    ? STATUS_META[optimisticTask.status].group === "closed"
+    : false;
 
   function handleDelete() {
     startDeleteTransition(async () => {
+      addOptimisticTask({ type: "delete" });
       try {
         await remove(task.id);
+        setDeleteConfirmed(true);
         toast.success("Task deleted");
         onDeleted?.(task.id);
       } catch (error) {
@@ -51,6 +71,10 @@ export function TaskRow({
         });
       }
     });
+  }
+
+  if (deleteConfirmed || !optimisticTask) {
+    return null;
   }
 
   return (
@@ -73,14 +97,15 @@ export function TaskRow({
         isClosed && "text-muted-foreground",
       )}
     >
-      <PriorityIcon priority={task.priority} className="shrink-0" />
+      <PriorityIcon priority={optimisticTask.priority} className="shrink-0" />
 
       <div onClick={(event) => event.stopPropagation()}>
         <StatusControl
           variant="icon"
-          value={task.status}
+          value={optimisticTask.status}
           onChange={(status) => {
             startUpdateTransition(async () => {
+              addOptimisticTask({ type: "status", status });
               try {
                 await update({ status });
               } catch (error) {
@@ -102,44 +127,48 @@ export function TaskRow({
             isClosed && "text-muted-foreground line-through decoration-1",
           )}
         >
-          {task.title}
+          {optimisticTask.title}
         </span>
-        {task.labels.length > 0 ? (
+        {optimisticTask.labels.length > 0 ? (
           <span className="flex flex-wrap items-center gap-1">
-            {task.labels.slice(0, 3).map((label) => (
+            {optimisticTask.labels.slice(0, 3).map((label) => (
               <LabelChip key={label.id} label={label} />
             ))}
-            {task.labels.length > 3 ? (
+            {optimisticTask.labels.length > 3 ? (
               <span className="text-[11px] text-muted-foreground">
-                +{task.labels.length - 3}
+                +{optimisticTask.labels.length - 3}
               </span>
             ) : null}
           </span>
         ) : null}
       </div>
 
-      {task.project ? (
+      {optimisticTask.project ? (
         <span className="hidden shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground md:inline-flex">
           <span
             className={cn(
               "size-1.5 rounded-full",
-              accent(task.project.color).dot,
+              accent(optimisticTask.project.color).dot,
             )}
           />
-          {task.project.key}
+          {optimisticTask.project.key}
         </span>
       ) : null}
 
       <div className="hidden w-16 shrink-0 justify-end sm:flex">
-        <DueBadge dueDate={task.dueDate} isClosed={isClosed} withIcon={false} />
+        <DueBadge
+          dueDate={optimisticTask.dueDate}
+          isClosed={isClosed}
+          withIcon={false}
+        />
       </div>
 
-      {task.assignee ? (
+      {optimisticTask.assignee ? (
         <Avatar
           size="sm"
-          initials={task.assignee.initials}
-          color={task.assignee.color}
-          title={task.assignee.name}
+          initials={optimisticTask.assignee.initials}
+          color={optimisticTask.assignee.color}
+          title={optimisticTask.assignee.name}
         />
       ) : (
         <span

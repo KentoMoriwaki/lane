@@ -1,11 +1,11 @@
 "use client";
 
-import type { TaskFilters } from "@/api/endpoints";
+import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";
 import { useInsights } from "@/api/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { accent, type AccentToken } from "@/lib/accent";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import * as React from "react";
 
 type InsightCard = {
@@ -17,8 +17,10 @@ type InsightCard = {
 };
 
 export function InsightStrip({
+  filters,
   viewHref,
 }: {
+  filters: TaskFilters;
   viewHref: (view: Partial<TaskFilters>) => string;
 }) {
   const { promise } = useInsights();
@@ -40,6 +42,7 @@ export function InsightStrip({
           key={card.key}
           card={card}
           href={viewHref(card.view)}
+          isActive={isInsightViewActive(filters, card.view)}
         />
       ))}
       <OpenTrend
@@ -55,15 +58,42 @@ export function InsightStrip({
 function InsightCardButton({
   card,
   href,
+  isActive,
 }: {
   card: InsightCard;
   href: string;
+  isActive: boolean;
 }) {
   return (
     <Link
       href={href}
       scroll={false}
-      className="group flex min-w-[124px] flex-1 flex-col gap-1 rounded-lg border border-border bg-surface px-3 py-2 text-left transition hover:border-foreground/20 hover:bg-accent/50"
+      prefetch={false}
+      className="group min-w-[124px] flex-1 rounded-lg"
+    >
+      <InsightCardContent card={card} isActive={isActive} />
+    </Link>
+  );
+}
+
+function InsightCardContent({
+  card,
+  isActive,
+}: {
+  card: InsightCard;
+  isActive: boolean;
+}) {
+  const { pending } = useLinkStatus();
+  const active = isActive || pending;
+
+  return (
+    <span
+      className={cn(
+        "flex flex-col gap-1 rounded-lg border px-3 py-2 text-left transition",
+        active
+          ? "border-foreground/20 bg-accent/65"
+          : "border-border bg-surface group-hover:border-foreground/20 group-hover:bg-accent/50",
+      )}
     >
       <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         <span className={cn("size-2 rounded-full", accent(card.tone).dot)} />
@@ -72,7 +102,30 @@ function InsightCardButton({
       <span className="text-2xl font-semibold tabular-nums text-foreground">
         {card.value}
       </span>
-    </Link>
+    </span>
+  );
+}
+
+function isInsightViewActive(
+  filters: TaskFilters,
+  view: Partial<TaskFilters>,
+): boolean {
+  const target = { ...EMPTY_FILTERS, ...view };
+  return (
+    filters.scope === target.scope &&
+    filters.q === target.q &&
+    filters.projectId === target.projectId &&
+    filters.labelId === target.labelId &&
+    filters.due === target.due &&
+    sameValues(filters.status, target.status) &&
+    sameValues(filters.priority, target.priority)
+  );
+}
+
+function sameValues<T>(left: T[], right: T[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
   );
 }
 

@@ -1,8 +1,12 @@
 "use client";
 
 import { Check, ChevronsUpDown, Users } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import * as React from "react";
 import { useTeams } from "@/api/hooks";
+import { TEAM_SCOPED_KEYS } from "@/api/query-options";
+import { buildWorkspaceHref, EMPTY_VIEW_STATE } from "@/api/url-state";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,10 +27,28 @@ function teamInitials(name: string) {
 }
 
 export function TeamSwitcher() {
-  const { activeTeamId, switchTeam } = useWorkspace();
+  const pathname = usePathname();
+  const { activeTeamId, lane } = useWorkspace();
   const teams = React.use(useTeams().promise);
 
   const active = teams.find((team) => team.id === activeTeamId) ?? teams[0];
+  const hrefForTeam = React.useCallback(
+    (teamId: string) =>
+      buildWorkspaceHref(pathname, EMPTY_VIEW_STATE, { teamId }),
+    [pathname],
+  );
+  const prepareTeamSwitch = React.useCallback(
+    (teamId: string) => {
+      if (teamId === activeTeamId) {
+        return;
+      }
+
+      for (const key of TEAM_SCOPED_KEYS) {
+        lane.removeAll(key);
+      }
+    },
+    [activeTeamId, lane],
+  );
 
   return (
     <DropdownMenu>
@@ -50,24 +72,31 @@ export function TeamSwitcher() {
         {teams.map((team) => (
           <DropdownMenuItem
             key={team.id}
-            onClick={() => switchTeam(team.id)}
+            asChild
             className="gap-2.5"
           >
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-sage/15 text-[11px] font-bold text-sage">
-              {teamInitials(team.name)}
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-sm font-medium text-foreground">
-                {team.name}
+            <Link
+              href={hrefForTeam(team.id)}
+              prefetch={false}
+              scroll={false}
+              onClick={() => prepareTeamSwitch(team.id)}
+            >
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-sage/15 text-[11px] font-bold text-sage">
+                {teamInitials(team.name)}
               </span>
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Users className="size-3" />
-                {team.memberCount} · {team.role}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-medium text-foreground">
+                  {team.name}
+                </span>
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Users className="size-3" />
+                  {team.memberCount} · {team.role}
+                </span>
               </span>
-            </span>
-            {team.id === active?.id ? (
-              <Check className="size-4 text-cobalt" />
-            ) : null}
+              {team.id === active?.id ? (
+                <Check className="size-4 text-cobalt" />
+              ) : null}
+            </Link>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

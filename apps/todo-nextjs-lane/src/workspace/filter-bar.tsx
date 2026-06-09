@@ -1,20 +1,19 @@
 "use client";
 
-import type { TaskPriority, TaskScope, TaskStatus } from "@lane/todo-api";
-import { ChevronDown, ListFilter, RotateCw, X } from "lucide-react";
+import { Check, ChevronDown, ListFilter, RotateCw, X } from "lucide-react";
+import Link, { useLinkStatus } from "next/link";
 import * as React from "react";
-import type { TaskFilters } from "@/api/endpoints";
+import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";
 import { useLabels, useProjects, useTasks } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { accent } from "@/lib/accent";
 import {
   PRIORITY_META,
@@ -26,19 +25,17 @@ import { cn } from "@/lib/utils";
 
 export function FilterBar({
   filters,
-  onScopeChange,
-  onToggleStatus,
-  onTogglePriority,
-  onPatch,
-  onResetAll,
+  filterHref,
+  resetHref,
 }: {
   filters: TaskFilters;
-  onScopeChange: (scope: TaskScope) => void;
-  onToggleStatus: (status: TaskStatus) => void;
-  onTogglePriority: (priority: TaskPriority) => void;
-  onPatch: (patch: Partial<TaskFilters>) => void;
-  onResetAll: () => void;
+  filterHref: (filters: TaskFilters) => string;
+  resetHref: string;
 }) {
+  const [optimisticFilters, addOptimisticFilterPatch] = React.useOptimistic(
+    filters,
+    (current, patch: Partial<TaskFilters>) => ({ ...current, ...patch }),
+  );
   const projectsResult = useProjects();
   const labelsResult = useLabels();
   const tasksResult = useTasks(filters);
@@ -46,42 +43,72 @@ export function FilterBar({
   const labels = React.use(labelsResult.promise);
   const tasks = React.use(tasksResult.promise);
 
-  const project = projects?.find((item) => item.id === filters.projectId);
-  const label = labels?.find((item) => item.id === filters.labelId);
+  const project = projects?.find(
+    (item) => item.id === optimisticFilters.projectId,
+  );
+  const label = labels?.find((item) => item.id === optimisticFilters.labelId);
   const dueLabel =
-    filters.due === "overdue"
+    optimisticFilters.due === "overdue"
       ? "Overdue"
-      : filters.due === "week"
+      : optimisticFilters.due === "week"
         ? "Due this week"
-        : filters.due === "today"
+        : optimisticFilters.due === "today"
           ? "Due today"
           : null;
 
   const hasActiveFilters =
-    filters.scope !== "all" ||
-    filters.status.length > 0 ||
-    filters.priority.length > 0 ||
-    Boolean(filters.projectId) ||
-    Boolean(filters.labelId) ||
-    Boolean(filters.due) ||
-    filters.q.trim().length > 0;
+    optimisticFilters.scope !== "all" ||
+    optimisticFilters.status.length > 0 ||
+    optimisticFilters.priority.length > 0 ||
+    Boolean(optimisticFilters.projectId) ||
+    Boolean(optimisticFilters.labelId) ||
+    Boolean(optimisticFilters.due) ||
+    optimisticFilters.q.trim().length > 0;
+
+  const hrefForPatch = React.useCallback(
+    (patch: Partial<TaskFilters>) =>
+      filterHref({ ...optimisticFilters, ...patch }),
+    [filterHref, optimisticFilters],
+  );
+
+  const applyPatch = React.useCallback(
+    (patch: Partial<TaskFilters>) => {
+      React.startTransition(() => {
+        addOptimisticFilterPatch(patch);
+      });
+    },
+    [addOptimisticFilterPatch],
+  );
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-      <Tabs
-        value={filters.scope}
-        onValueChange={(value) => onScopeChange(value as TaskScope)}
-      >
-        <TabsList className="h-8">
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="mine">My tasks</TabsTrigger>
-          <TabsTrigger value="unassigned">Unassigned</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <div className="inline-flex h-8 items-center gap-1 rounded-lg bg-muted p-1 text-muted-foreground">
+        <ScopeLink
+          href={hrefForPatch({ scope: "all" })}
+          isActive={optimisticFilters.scope === "all"}
+          onNavigate={() => applyPatch({ scope: "all" })}
+        >
+          All
+        </ScopeLink>
+        <ScopeLink
+          href={hrefForPatch({ scope: "mine" })}
+          isActive={optimisticFilters.scope === "mine"}
+          onNavigate={() => applyPatch({ scope: "mine" })}
+        >
+          My tasks
+        </ScopeLink>
+        <ScopeLink
+          href={hrefForPatch({ scope: "unassigned" })}
+          isActive={optimisticFilters.scope === "unassigned"}
+          onNavigate={() => applyPatch({ scope: "unassigned" })}
+        >
+          Unassigned
+        </ScopeLink>
+      </div>
 
       <FilterDropdown
         label="Status"
-        count={filters.status.length}
+        count={optimisticFilters.status.length}
         icon={<ListFilter className="size-3.5" />}
       >
         <DropdownMenuLabel>Filter by status</DropdownMenuLabel>
@@ -89,40 +116,39 @@ export function FilterBar({
         {STATUS_ORDER.map((status) => {
           const meta = STATUS_META[status];
           const Icon = meta.icon;
+          const nextStatus = toggleValue(optimisticFilters.status, status);
           return (
-            <DropdownMenuCheckboxItem
+            <FilterOptionLink
               key={status}
-              checked={filters.status.includes(status)}
-              onSelect={(event) => {
-                event.preventDefault();
-                onToggleStatus(status);
-              }}
-            >
-              <Icon className={cn("size-4", accent(meta.accent).text)} />
-              {meta.label}
-            </DropdownMenuCheckboxItem>
+              checked={optimisticFilters.status.includes(status)}
+              href={hrefForPatch({ status: nextStatus })}
+              icon={<Icon className={cn("size-4", accent(meta.accent).text)} />}
+              label={meta.label}
+              onNavigate={() => applyPatch({ status: nextStatus })}
+            />
           );
         })}
       </FilterDropdown>
 
-      <FilterDropdown label="Priority" count={filters.priority.length}>
+      <FilterDropdown label="Priority" count={optimisticFilters.priority.length}>
         <DropdownMenuLabel>Filter by priority</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {PRIORITY_ORDER.map((priority) => {
           const meta = PRIORITY_META[priority];
           const Icon = meta.icon;
+          const nextPriority = toggleValue(
+            optimisticFilters.priority,
+            priority,
+          );
           return (
-            <DropdownMenuCheckboxItem
+            <FilterOptionLink
               key={priority}
-              checked={filters.priority.includes(priority)}
-              onSelect={(event) => {
-                event.preventDefault();
-                onTogglePriority(priority);
-              }}
-            >
-              <Icon className={cn("size-4", accent(meta.accent).text)} />
-              {meta.label}
-            </DropdownMenuCheckboxItem>
+              checked={optimisticFilters.priority.includes(priority)}
+              href={hrefForPatch({ priority: nextPriority })}
+              icon={<Icon className={cn("size-4", accent(meta.accent).text)} />}
+              label={meta.label}
+              onNavigate={() => applyPatch({ priority: nextPriority })}
+            />
           );
         })}
       </FilterDropdown>
@@ -131,28 +157,41 @@ export function FilterBar({
         <Chip
           dotClass={accent(project.color).dot}
           label={project.name}
-          onRemove={() => onPatch({ projectId: null })}
+          removeHref={hrefForPatch({ projectId: null })}
+          onNavigate={() => applyPatch({ projectId: null })}
         />
       ) : null}
       {label ? (
         <Chip
           dotClass={accent(label.color).dot}
           label={label.name}
-          onRemove={() => onPatch({ labelId: null })}
+          removeHref={hrefForPatch({ labelId: null })}
+          onNavigate={() => applyPatch({ labelId: null })}
         />
       ) : null}
       {dueLabel ? (
-        <Chip label={dueLabel} onRemove={() => onPatch({ due: null })} />
+        <Chip
+          label={dueLabel}
+          removeHref={hrefForPatch({ due: null })}
+          onNavigate={() => applyPatch({ due: null })}
+        />
       ) : null}
 
       {hasActiveFilters ? (
         <Button
+          asChild
           variant="ghost"
           size="xs"
-          onClick={onResetAll}
           className="text-muted-foreground"
         >
-          Clear
+          <Link
+            href={resetHref}
+            prefetch={false}
+            scroll={false}
+            onClick={() => applyPatch(EMPTY_FILTERS)}
+          >
+            <ClearLabel />
+          </Link>
         </Button>
       ) : null}
 
@@ -168,6 +207,112 @@ export function FilterBar({
         </span>
       </div>
     </div>
+  );
+}
+
+function toggleValue<T>(values: T[], value: T): T[] {
+  return values.includes(value)
+    ? values.filter((item) => item !== value)
+    : [...values, value];
+}
+
+function ScopeLink({
+  href,
+  isActive,
+  onNavigate,
+  children,
+}: {
+  href: string;
+  isActive: boolean;
+  onNavigate: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      prefetch={false}
+      scroll={false}
+      className="rounded-md"
+      onClick={onNavigate}
+    >
+      <ScopeLinkContent isActive={isActive}>{children}</ScopeLinkContent>
+    </Link>
+  );
+}
+
+function ScopeLinkContent({
+  isActive,
+  children,
+}: {
+  isActive: boolean;
+  children: React.ReactNode;
+}) {
+  const { pending } = useLinkStatus();
+  const active = isActive || pending;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-[13px] font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+        active ? "bg-surface text-foreground shadow-sm" : undefined,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ClearLabel() {
+  const { pending } = useLinkStatus();
+
+  return <span className={cn(pending && "text-foreground")}>Clear</span>;
+}
+
+function FilterOptionLink({
+  href,
+  checked,
+  icon,
+  label,
+  onNavigate,
+}: {
+  href: string;
+  checked: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onNavigate: () => void;
+}) {
+  return (
+    <DropdownMenuItem
+      asChild
+      onSelect={(event) => event.preventDefault()}
+      className="gap-2.5"
+    >
+      <Link href={href} prefetch={false} scroll={false} onClick={onNavigate}>
+        <FilterOptionContent checked={checked} icon={icon} label={label} />
+      </Link>
+    </DropdownMenuItem>
+  );
+}
+
+function FilterOptionContent({
+  checked,
+  icon,
+  label,
+}: {
+  checked: boolean;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <>
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        {checked ? <Check className="size-4 text-cobalt" /> : null}
+      </span>
+      {icon}
+      <span className={cn(checked && "font-medium text-foreground")}>
+        {label}
+      </span>
+    </>
   );
 }
 
@@ -211,11 +356,13 @@ function FilterDropdown({
 function Chip({
   dotClass,
   label,
-  onRemove,
+  removeHref,
+  onNavigate,
 }: {
   dotClass?: string;
   label: string;
-  onRemove: () => void;
+  removeHref: string;
+  onNavigate: () => void;
 }) {
   return (
     <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 text-sm text-foreground">
@@ -223,14 +370,24 @@ function Chip({
         <span className={cn("size-2 rounded-full", dotClass)} />
       ) : null}
       {label}
-      <button
-        type="button"
-        onClick={onRemove}
+      <Link
+        href={removeHref}
+        prefetch={false}
+        scroll={false}
+        onClick={onNavigate}
         className="rounded-full p-0.5 text-muted-foreground hover:text-rose"
         aria-label={`Remove ${label} filter`}
       >
-        <X className="size-3.5" />
-      </button>
+        <ChipRemoveIcon />
+      </Link>
     </span>
+  );
+}
+
+function ChipRemoveIcon() {
+  const { pending } = useLinkStatus();
+
+  return (
+    <X className={cn("size-3.5", pending ? "text-rose" : undefined)} />
   );
 }

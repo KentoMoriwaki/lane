@@ -78,6 +78,16 @@ export function buildWorkspaceSearch(state: WorkspaceUrlState): string {
   return params.toString();
 }
 
+export function buildWorkspaceHref(
+  pathname: string,
+  state: WorkspaceUrlState,
+  next: Partial<WorkspaceUrlState>,
+): string {
+  const merged = { ...state, ...next };
+  const search = buildWorkspaceSearch(merged);
+  return search ? `${pathname}?${search}` : pathname;
+}
+
 /** Convenience for the Server Component, whose `searchParams` is a record. */
 export function getterFromRecord(
   record: Record<string, string | string[] | undefined> | undefined,

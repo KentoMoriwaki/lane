@@ -5,7 +5,7 @@ import * as React from "react";
 import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";
 import {
   type WorkspaceUrlState,
-  buildWorkspaceSearch,
+  buildWorkspaceHref,
   parseWorkspaceState,
 } from "@/api/url-state";
 
@@ -26,18 +26,9 @@ export function useWorkspaceUrl() {
     [searchString],
   );
 
-  const hrefFor = React.useCallback(
-    (next: Partial<WorkspaceUrlState>) => {
-      const merged = { ...state, ...next };
-      const search = buildWorkspaceSearch(merged);
-      return search ? `${pathname}?${search}` : pathname;
-    },
-    [pathname, state],
-  );
-
   const write = React.useCallback(
     (next: Partial<WorkspaceUrlState>, mode: HistoryMode) => {
-      const href = hrefFor(next);
+      const href = buildWorkspaceHref(pathname, state, next);
       startTransition(() => {
         if (mode === "push") {
           router.push(href, { scroll: false });
@@ -46,13 +37,7 @@ export function useWorkspaceUrl() {
         }
       });
     },
-    [hrefFor, router, startTransition],
-  );
-
-  const viewHref = React.useCallback(
-    (view: Partial<TaskFilters>) =>
-      hrefFor({ filters: { ...EMPTY_FILTERS, ...view } }),
-    [hrefFor],
+    [pathname, router, startTransition, state],
   );
 
   // Discrete filter/view actions push a history entry so Back returns to the
@@ -77,6 +62,8 @@ export function useWorkspaceUrl() {
   );
 
   return {
+    pathname,
+    state,
     teamId: state.teamId,
     filters: state.filters,
     isPending,
@@ -84,6 +71,5 @@ export function useWorkspaceUrl() {
     patchFilters,
     resetFilters,
     selectTask,
-    viewHref,
   };
 }

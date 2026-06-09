@@ -1,9 +1,10 @@
 "use client";
 
-import type { TaskPriority, TaskScope, TaskStatus } from "@lane/todo-api";
 import * as React from "react";
+import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";
 import { useWorkspaceRefresh } from "@/api/hooks";
 import { queryKeys } from "@/api/query-options";
+import { buildWorkspaceHref } from "@/api/url-state";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { SectionError } from "./feedback";
 import { FilterBar } from "./filter-bar";
@@ -17,12 +18,6 @@ import { Topbar } from "./topbar";
 import { useWorkspaceUrl } from "./use-workspace-url";
 import { useWorkspace, useWorkspaceLane } from "./workspace-provider";
 
-function toggle<T>(values: T[], value: T): T[] {
-  return values.includes(value)
-    ? values.filter((item) => item !== value)
-    : [...values, value];
-}
-
 export function Workspace() {
   const { isSignedIn } = useWorkspace();
 
@@ -35,17 +30,40 @@ export function Workspace() {
 
 function WorkspaceShell() {
   const {
+    pathname,
+    state: urlState,
     filters,
     selectedTaskId,
     patchFilters,
     resetFilters,
     selectTask,
-    viewHref,
     isPending: isViewPending,
   } = useWorkspaceUrl();
   const [createOpen, setCreateOpen] = React.useState(false);
   const lane = useWorkspaceLane();
   const { refresh, isRefreshing } = useWorkspaceRefresh();
+
+  const viewHref = React.useCallback(
+    (view: Partial<TaskFilters>) =>
+      buildWorkspaceHref(pathname, urlState, {
+        filters: { ...EMPTY_FILTERS, ...view },
+      }),
+    [pathname, urlState],
+  );
+  const filterHref = React.useCallback(
+    (nextFilters: TaskFilters) =>
+      buildWorkspaceHref(pathname, urlState, {
+        filters: nextFilters,
+      }),
+    [pathname, urlState],
+  );
+  const resetFiltersHref = React.useMemo(
+    () =>
+      buildWorkspaceHref(pathname, urlState, {
+        filters: { ...EMPTY_FILTERS },
+      }),
+    [pathname, urlState],
+  );
 
   const hasActiveFilters =
     filters.scope !== "all" ||
@@ -115,7 +133,7 @@ function WorkspaceShell() {
               )}
             >
               <React.Suspense fallback={<InsightStripSkeleton />}>
-                <InsightStrip viewHref={viewHref} />
+                <InsightStrip filters={filters} viewHref={viewHref} />
               </React.Suspense>
             </LaneErrorBoundary>
             <LaneErrorBoundary
@@ -138,17 +156,8 @@ function WorkspaceShell() {
               <React.Suspense fallback={<FilterBarSkeleton />}>
                 <FilterBar
                   filters={filters}
-                  onScopeChange={(scope: TaskScope) => patchFilters({ scope })}
-                  onToggleStatus={(status: TaskStatus) =>
-                    patchFilters({ status: toggle(filters.status, status) })
-                  }
-                  onTogglePriority={(priority: TaskPriority) =>
-                    patchFilters({
-                      priority: toggle(filters.priority, priority),
-                    })
-                  }
-                  onPatch={patchFilters}
-                  onResetAll={resetFilters}
+                  filterHref={filterHref}
+                  resetHref={resetFiltersHref}
                 />
               </React.Suspense>
             </LaneErrorBoundary>

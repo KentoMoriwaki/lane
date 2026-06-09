@@ -2,14 +2,10 @@
 
 import { createLane, type Lane } from "@lane/lane";
 import type { CurrentUser } from "@lane/todo-api";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import * as React from "react";
 import type { WorkspaceCtx } from "@/api/client";
-import {
-  TEAM_SCOPED_KEYS,
-  type WorkspaceSeeds,
-  workspaceSeedEntries,
-} from "@/api/query-options";
+import { type WorkspaceSeeds, workspaceSeedEntries } from "@/api/query-options";
 
 type WorkspaceContextValue = {
   ctx: WorkspaceCtx;
@@ -18,7 +14,6 @@ type WorkspaceContextValue = {
   sessionUser: CurrentUser;
   activeTeamId: string;
   isSignedIn: boolean;
-  switchTeam: (teamId: string) => void;
   signOut: () => void;
   signIn: () => void;
 };
@@ -39,27 +34,10 @@ export function WorkspaceProvider({
   const [lane] = React.useState(() => createLane());
   lane.seedMany(workspaceSeedEntries(initialSeeds));
 
-  const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [userId] = React.useState(initialUser.id);
   const [isSignedIn, setIsSignedIn] = React.useState(true);
   const activeTeamId = searchParams.get("team")?.trim() || initialTeamId;
-
-  const switchTeam = React.useCallback(
-    (teamId: string) => {
-      if (teamId === activeTeamId) {
-        return;
-      }
-
-      for (const key of TEAM_SCOPED_KEYS) {
-        lane.removeAll(key);
-      }
-
-      router.push(`${pathname}?team=${encodeURIComponent(teamId)}`);
-    },
-    [activeTeamId, lane, pathname, router],
-  );
 
   const signOut = React.useCallback(() => {
     lane.removeAll(() => true);
@@ -84,7 +62,6 @@ export function WorkspaceProvider({
       sessionUser: initialUser,
       signIn,
       signOut,
-      switchTeam,
       userId,
     }),
     [
@@ -95,7 +72,6 @@ export function WorkspaceProvider({
       lane,
       signIn,
       signOut,
-      switchTeam,
       userId,
     ],
   );

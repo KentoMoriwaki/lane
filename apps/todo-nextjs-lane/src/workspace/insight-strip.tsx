@@ -68,7 +68,10 @@ function InsightCardButton({
           onApplyView(card.view);
         });
       }}
-      className="group flex min-w-[124px] flex-1 flex-col gap-1 rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-foreground/20 hover:bg-accent/50"
+      className={cn(
+        "group flex min-w-[124px] flex-1 flex-col gap-1 rounded-lg border border-border bg-surface px-3 py-2 text-left transition hover:border-foreground/20 hover:bg-accent/50",
+        isPending && "border-cobalt/40 opacity-60 ring-1 ring-cobalt/25",
+      )}
     >
       <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         <span className={cn("size-2 rounded-full", accent(card.tone).dot)} />
@@ -76,14 +79,6 @@ function InsightCardButton({
       </span>
       <span className="text-2xl font-semibold tabular-nums text-foreground">
         {card.value}
-      </span>
-      <span
-        className={cn(
-          "text-[10px] font-semibold uppercase",
-          isPending ? "text-cobalt" : "text-muted-foreground",
-        )}
-      >
-        {isPending ? "pending" : "idle"}
       </span>
     </button>
   );

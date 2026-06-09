@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { Suspense } from "react";
 import {
   fetchCurrentUser,
   fetchInsights,
@@ -53,26 +52,24 @@ export default async function Page({ searchParams }: PageProps) {
   ]);
 
   return (
-    <Suspense fallback={<div className="min-h-screen bg-background" />}>
-      <WorkspaceProvider
-        initialUser={user}
-        initialTeamId={teamId}
-        initialSeeds={{
-          currentUser: user,
-          insights,
-          labels,
-          members,
-          projects,
-          selectedTask,
-          tasks: {
-            data: tasks,
-            filters: requested.filters,
-          },
-          teams,
-        }}
-      >
-        <Workspace />
-      </WorkspaceProvider>
-    </Suspense>
+    <WorkspaceProvider
+      initialUser={user}
+      initialTeamId={teamId}
+      initialSeeds={{
+        currentUser: user,
+        insights,
+        labels,
+        members,
+        projects,
+        selectedTask,
+        tasks: {
+          data: tasks,
+          filters: requested.filters,
+        },
+        teams,
+      }}
+    >
+      <Workspace />
+    </WorkspaceProvider>
   );
 }

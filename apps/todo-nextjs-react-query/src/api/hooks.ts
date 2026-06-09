@@ -41,6 +41,12 @@ import {
   tasksQueryOptions,
   teamsQueryOptions,
 } from "./query-options";
+import {
+  replaceTaskInList,
+  type TaskCacheStrategy,
+  taskCacheStrategies,
+  taskFiltersFromQueryKey,
+} from "./task-cache-sync";
 
 /* -------------------------------- Reads -------------------------------- */
 
@@ -132,6 +138,11 @@ type TaskSnapshot = {
   detail: Task | undefined;
 };
 
+type UpdateTaskMutation = {
+  input: UpdateTaskInput;
+  strategy: TaskCacheStrategy;
+};
+
 function snapshotTask(
   queryClient: QueryClient,
   taskId: string,
@@ -146,10 +157,21 @@ function applyTaskUpdate(
   queryClient: QueryClient,
   taskId: string,
   update: (task: Task) => Task,
+  strategy: TaskCacheStrategy,
 ) {
-  queryClient.setQueriesData<Task[]>({ queryKey: ["tasks"] }, (list) =>
-    list?.map((task) => (task.id === taskId ? update(task) : task)),
-  );
+  for (const [key, list] of queryClient.getQueriesData<Task[]>({
+    queryKey: ["tasks"],
+  })) {
+    const filters = taskFiltersFromQueryKey(key);
+    if (!list || !filters || strategy.shouldInvalidateTaskList(filters)) {
+      continue;
+    }
+
+    queryClient.setQueryData(
+      key,
+      list.map((task) => (task.id === taskId ? update(task) : task)),
+    );
+  }
 
   const detail = queryClient.getQueryData<Task>(queryKeys.task(taskId));
   if (detail) {
@@ -169,13 +191,75 @@ function restoreTask(
   queryClient.setQueryData(queryKeys.task(taskId), snapshot.detail);
 }
 
-function invalidateTaskViews(queryClient: QueryClient, taskId?: string) {
+function publishTask(
+  queryClient: QueryClient,
+  task: Task,
+  strategy: TaskCacheStrategy,
+) {
+  queryClient.setQueryData(queryKeys.task(task.id), task);
+
+  for (const [key, list] of queryClient.getQueriesData<Task[]>({
+    queryKey: ["tasks"],
+  })) {
+    const filters = taskFiltersFromQueryKey(key);
+    if (!list || !filters || strategy.shouldInvalidateTaskList(filters)) {
+      continue;
+    }
+
+    queryClient.setQueryData(key, replaceTaskInList(list, task));
+  }
+}
+
+function invalidateAllTaskLists(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: ["tasks"] });
+}
+
+function invalidateTaskLists(
+  queryClient: QueryClient,
+  strategy: TaskCacheStrategy,
+) {
+  queryClient.invalidateQueries({
+    predicate: (query) => {
+      const filters = taskFiltersFromQueryKey(query.queryKey);
+      return Boolean(filters && strategy.shouldInvalidateTaskList(filters));
+    },
+  });
+}
+
+function invalidateDerivedTaskViews(
+  queryClient: QueryClient,
+  refresh: { insights: boolean; projects: boolean },
+) {
+  if (refresh.insights) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.insights });
+  }
+
+  if (refresh.projects) {
+    queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+  }
+}
+
+function invalidateTaskViews(
+  queryClient: QueryClient,
+  strategy: TaskCacheStrategy,
+) {
+  invalidateTaskLists(queryClient, strategy);
+  invalidateDerivedTaskViews(queryClient, {
+    insights: strategy.refreshInsights,
+    projects: strategy.refreshProjects,
+  });
+}
+
+function removeTaskFromTaskLists(queryClient: QueryClient, taskId: string) {
+  queryClient.setQueriesData<Task[]>({ queryKey: ["tasks"] }, (list) =>
+    list?.filter((task) => task.id !== taskId),
+  );
+}
+
+function invalidateWorkspaceTaskViews(queryClient: QueryClient) {
+  invalidateAllTaskLists(queryClient);
   queryClient.invalidateQueries({ queryKey: queryKeys.insights });
   queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-  if (taskId) {
-    queryClient.invalidateQueries({ queryKey: queryKeys.task(taskId) });
-  }
 }
 
 /* ------------------------------ Mutations ------------------------------ */
@@ -188,8 +272,12 @@ export function useCreateTask() {
     mutationFn: (input: CreateTaskInput) => createTask(ctx, input),
     onSuccess: (task) => {
       queryClient.setQueryData(queryKeys.task(task.id), task);
+      invalidateAllTaskLists(queryClient);
+      invalidateDerivedTaskViews(queryClient, {
+        insights: true,
+        projects: Boolean(task.project),
+      });
     },
-    onSettled: () => invalidateTaskViews(queryClient),
   });
 }
 
@@ -198,19 +286,23 @@ export function useUpdateTask(taskId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (input: UpdateTaskInput) => updateTask(ctx, taskId, input),
-    onMutate: async (input) => {
+    mutationFn: ({ input }: UpdateTaskMutation) =>
+      updateTask(ctx, taskId, input),
+    onMutate: async ({ input, strategy }) => {
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       await queryClient.cancelQueries({ queryKey: queryKeys.task(taskId) });
       const snapshot = snapshotTask(queryClient, taskId);
       applyTaskUpdate(queryClient, taskId, (task) =>
         patchTask(task, input, queryClient),
+        strategy,
       );
       return snapshot;
     },
-    onError: (_error, _input, snapshot) =>
+    onError: (_error, _variables, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSettled: () => invalidateTaskViews(queryClient, taskId),
+    onSuccess: (task, { strategy }) => publishTask(queryClient, task, strategy),
+    onSettled: (_task, _error, { strategy }) =>
+      invalidateTaskViews(queryClient, strategy),
   });
 }
 
@@ -222,15 +314,20 @@ export function useDeleteTask() {
     mutationFn: (taskId: string) => deleteTask(ctx, taskId),
     onMutate: async (taskId) => {
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
+      await queryClient.cancelQueries({ queryKey: queryKeys.task(taskId) });
       const snapshot = snapshotTask(queryClient, taskId);
-      queryClient.setQueriesData<Task[]>({ queryKey: ["tasks"] }, (list) =>
-        list?.filter((task) => task.id !== taskId),
-      );
+      removeTaskFromTaskLists(queryClient, taskId);
       return snapshot;
     },
     onError: (_error, taskId, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSettled: () => invalidateTaskViews(queryClient),
+    onSuccess: (_data, taskId) => {
+      queryClient.removeQueries({ queryKey: queryKeys.task(taskId) });
+      invalidateDerivedTaskViews(queryClient, {
+        insights: true,
+        projects: true,
+      });
+    },
   });
 }
 
@@ -253,12 +350,15 @@ export function useAddTaskLabel(taskId: string) {
                 a.name.localeCompare(b.name),
               ),
             },
+        taskCacheStrategies.labels,
       );
       return snapshot;
     },
     onError: (_error, _label, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSettled: () => invalidateTaskViews(queryClient, taskId),
+    onSuccess: (task) =>
+      publishTask(queryClient, task, taskCacheStrategies.labels),
+    onSettled: () => invalidateTaskViews(queryClient, taskCacheStrategies.labels),
   });
 }
 
@@ -272,15 +372,22 @@ export function useRemoveTaskLabel(taskId: string) {
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       await queryClient.cancelQueries({ queryKey: queryKeys.task(taskId) });
       const snapshot = snapshotTask(queryClient, taskId);
-      applyTaskUpdate(queryClient, taskId, (task) => ({
-        ...task,
-        labels: task.labels.filter((label) => label.id !== labelId),
-      }));
+      applyTaskUpdate(
+        queryClient,
+        taskId,
+        (task) => ({
+          ...task,
+          labels: task.labels.filter((label) => label.id !== labelId),
+        }),
+        taskCacheStrategies.labels,
+      );
       return snapshot;
     },
     onError: (_error, _labelId, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSettled: () => invalidateTaskViews(queryClient, taskId),
+    onSuccess: (task) =>
+      publishTask(queryClient, task, taskCacheStrategies.labels),
+    onSettled: () => invalidateTaskViews(queryClient, taskCacheStrategies.labels),
   });
 }
 
@@ -321,9 +428,7 @@ export function useWorkspaceRefresh() {
   const fetchingCount = useIsFetching();
 
   const refresh = React.useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["tasks"] });
-    queryClient.invalidateQueries({ queryKey: queryKeys.insights });
-    queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    invalidateWorkspaceTaskViews(queryClient);
     queryClient.invalidateQueries({ queryKey: queryKeys.labels });
     queryClient.invalidateQueries({ queryKey: queryKeys.members });
   }, [queryClient]);

@@ -11,6 +11,7 @@ import {
   useTask,
   useUpdateTask,
 } from "@/api/hooks";
+import { taskCacheStrategies } from "@/api/task-cache-sync";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -170,7 +171,10 @@ function TaskDetail({
           value={task.title}
           isClosed={isClosed}
           onSave={(title) =>
-            update.mutate({ title }, { onError: onMutationError("Couldn't save title") })
+            update.mutate(
+              { input: { title }, strategy: taskCacheStrategies.searchText },
+              { onError: onMutationError("Couldn't save title") },
+            )
           }
         />
 
@@ -179,7 +183,10 @@ function TaskDetail({
           value={task.description}
           onSave={(description) =>
             update.mutate(
-              { description },
+              {
+                input: { description },
+                strategy: taskCacheStrategies.searchText,
+              },
               { onError: onMutationError("Couldn't save description") },
             )
           }
@@ -193,7 +200,7 @@ function TaskDetail({
               value={task.status}
               onChange={(status) =>
                 update.mutate(
-                  { status },
+                  { input: { status }, strategy: taskCacheStrategies.status },
                   { onError: onMutationError("Couldn't update status") },
                 )
               }
@@ -206,7 +213,10 @@ function TaskDetail({
               value={task.priority}
               onChange={(priority) =>
                 update.mutate(
-                  { priority },
+                  {
+                    input: { priority },
+                    strategy: taskCacheStrategies.priority,
+                  },
                   { onError: onMutationError("Couldn't update priority") },
                 )
               }
@@ -219,7 +229,10 @@ function TaskDetail({
               value={task.assignee?.id ?? null}
               onChange={(assigneeId) =>
                 update.mutate(
-                  { assigneeId },
+                  {
+                    input: { assigneeId },
+                    strategy: taskCacheStrategies.assignee,
+                  },
                   { onError: onMutationError("Couldn't update assignee") },
                 )
               }
@@ -232,7 +245,10 @@ function TaskDetail({
               value={task.project?.id ?? null}
               onChange={(projectId) =>
                 update.mutate(
-                  { projectId },
+                  {
+                    input: { projectId },
+                    strategy: taskCacheStrategies.project,
+                  },
                   { onError: onMutationError("Couldn't move task") },
                 )
               }
@@ -246,7 +262,12 @@ function TaskDetail({
               value={toDateInputValue(task.dueDate)}
               onChange={(event) =>
                 update.mutate(
-                  { dueDate: fromDateInputValue(event.target.value) },
+                  {
+                    input: {
+                      dueDate: fromDateInputValue(event.target.value),
+                    },
+                    strategy: taskCacheStrategies.dueDate,
+                  },
                   { onError: onMutationError("Couldn't update due date") },
                 )
               }

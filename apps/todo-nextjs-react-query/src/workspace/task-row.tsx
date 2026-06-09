@@ -4,6 +4,7 @@ import type { Task } from "@lane/todo-api";
 import { MoreHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useDeleteTask, useUpdateTask } from "@/api/hooks";
+import { taskCacheStrategies } from "@/api/task-cache-sync";
 import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -77,7 +78,7 @@ export function TaskRow({
           value={task.status}
           onChange={(status) =>
             update.mutate(
-              { status },
+              { input: { status }, strategy: taskCacheStrategies.status },
               {
                 onError: (error) =>
                   toast.error("Couldn't update status", {

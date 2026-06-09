@@ -67,9 +67,9 @@ const labelCreateDelayMs = Number(process.env.TODO_LABEL_CREATE_DELAY_MS ?? 3_00
 
 // Team task API delays. These keep pending/optimistic/transition states
 // observable in the React Query baseline without being annoying.
-const teamReadDelayMs = Number(process.env.TEAM_API_READ_DELAY_MS ?? 550);
-const teamWriteDelayMs = Number(process.env.TEAM_API_WRITE_DELAY_MS ?? 650);
-const teamPickerDelayMs = Number(process.env.TEAM_API_PICKER_DELAY_MS ?? 200);
+const teamReadDelayMs = Number(process.env.TEAM_API_READ_DELAY_MS ?? 100);
+const teamWriteDelayMs = Number(process.env.TEAM_API_WRITE_DELAY_MS ?? 100);
+const teamPickerDelayMs = Number(process.env.TEAM_API_PICKER_DELAY_MS ?? 100);
 
 app.use(
   "*",

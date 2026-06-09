@@ -1,5 +1,21 @@
 # Lane Core Design 01
 
+Status: historical first design. It is still useful for the original RSC-first
+label-search example and the promise-only mental model, but it is not the
+current implementation contract for the next Lane replacement work.
+
+For the current RSC-seeded client ownership implementation, use these documents
+as the source of truth:
+
+- `docs/lane-library-requirements-from-react-query-baseline.md`
+- `docs/lane-api-design-notes.md`
+- `docs/lane-use-lane-reference.md`
+
+In particular, the `get` / `refresh` / `subscribe` API in this document has been
+superseded by the newer `readOrCreate` / `invalidate` / `replace` / `remove`
+direction. `useLane` is the preferred public hook shape; `useLanePromise` may
+exist only as a thin wrapper.
+
 This note captures the first minimum design for Lane. The current target is the
 label search and creation flow in `apps/todo-nextjs-lane`.
 
@@ -11,11 +27,18 @@ transitions.
 The core value is that Lane is a transition-native client data loading layer
 that fits next to Server Components instead of competing with them.
 
+This note captures the first RSC-first design target. Lane also supports an
+RSC-seeded client ownership architecture, where Server Components load initial
+data and the client seeds Lane promises before taking over live reads and
+refreshes. See `docs/lane-supported-architectures.md` for the supported
+architecture matrix.
+
 Server Components should own data that must be server-rendered. That data should
 be updated through Server Functions, Server Actions, revalidation, or an RSC
 refresh. Lane should own data that only becomes relevant on the client: focused
-controls, client-only async islands, local optimistic workflows, and distant
-client consumers that need to observe the same promise refresh.
+controls, client-only async islands, and distant client consumers that need to
+observe the same promise invalidation. Optimistic state remains local React
+state, even when it lives next to a Lane-owned async read.
 
 Both sides keep the same mental model: React renders from promises.
 
@@ -86,13 +109,16 @@ This first design does not include:
 - Lane-owned mutation pending state
 - global Context state for all queries
 - subscriber notifications for resolved values
-- SSR hydration for Server Component-owned data
+- legacy SSR hydration through a global `window.__DATA__`-style payload
 
 Lane should not become an SWR-like external data store in the first version.
 It also should not become a React replacement layer. The point is to compose
 with React primitives, not to wrap them in less transition-compatible copies.
-Lane also should not hydrate Server Component data into a client cache by
-default; that creates two owners for the same data.
+In the RSC-first architecture, Lane should not hydrate Server Component-owned
+route data into a client cache by default; that creates two owners for the same
+data. In the RSC-seeded client ownership architecture, the ownership transfer is
+intentional: Server Components provide initial data, then Lane owns live client
+reads and invalidation-driven re-reads after hydration.
 
 ## Why Promise Only
 

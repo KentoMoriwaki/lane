@@ -51,7 +51,7 @@ export function TaskDetailPanel({
 
   return (
     <DetailShell>
-      <TaskDetail taskId={taskId} onClose={onClose} />
+      <TaskDetail key={taskId} taskId={taskId} onClose={onClose} />
     </DetailShell>
   );
 }
@@ -77,6 +77,7 @@ function TaskDetail({
   const addLabel = useAddTaskLabel(taskId);
   const removeLabel = useRemoveTaskLabel(taskId);
   const remove = useDeleteTask();
+  const [isSavedVisible, showSavedNotice] = useSavedNotice();
 
   if (isPending) {
     return <DetailSkeleton />;
@@ -100,6 +101,8 @@ function TaskDetail({
   }
 
   const isClosed = STATUS_META[task.status].group === "closed";
+  const isSaving =
+    update.isPending || addLabel.isPending || removeLabel.isPending;
 
   const onMutationError = (message: string) => (mutationError: unknown) =>
     toast.error(message, {
@@ -134,15 +137,15 @@ function TaskDetail({
           ) : (
             <span>No project</span>
           )}
-          {update.isPending ? (
+          {isSaving ? (
             <span className="inline-flex items-center gap-1 text-cobalt">
               <InlineSpinner className="size-3" /> Saving…
             </span>
-          ) : (
+          ) : isSavedVisible ? (
             <span className="inline-flex items-center gap-1 text-sage">
               <Check className="size-3" /> Saved
             </span>
-          )}
+          ) : null}
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -173,7 +176,10 @@ function TaskDetail({
           onSave={(title) =>
             update.mutate(
               { input: { title }, strategy: taskCacheStrategies.searchText },
-              { onError: onMutationError("Couldn't save title") },
+              {
+                onError: onMutationError("Couldn't save title"),
+                onSuccess: showSavedNotice,
+              },
             )
           }
         />
@@ -187,7 +193,10 @@ function TaskDetail({
                 input: { description },
                 strategy: taskCacheStrategies.searchText,
               },
-              { onError: onMutationError("Couldn't save description") },
+              {
+                onError: onMutationError("Couldn't save description"),
+                onSuccess: showSavedNotice,
+              },
             )
           }
         />
@@ -201,7 +210,10 @@ function TaskDetail({
               onChange={(status) =>
                 update.mutate(
                   { input: { status }, strategy: taskCacheStrategies.status },
-                  { onError: onMutationError("Couldn't update status") },
+                  {
+                    onError: onMutationError("Couldn't update status"),
+                    onSuccess: showSavedNotice,
+                  },
                 )
               }
               pending={update.isPending}
@@ -217,7 +229,10 @@ function TaskDetail({
                     input: { priority },
                     strategy: taskCacheStrategies.priority,
                   },
-                  { onError: onMutationError("Couldn't update priority") },
+                  {
+                    onError: onMutationError("Couldn't update priority"),
+                    onSuccess: showSavedNotice,
+                  },
                 )
               }
               pending={update.isPending}
@@ -233,7 +248,10 @@ function TaskDetail({
                     input: { assigneeId },
                     strategy: taskCacheStrategies.assignee,
                   },
-                  { onError: onMutationError("Couldn't update assignee") },
+                  {
+                    onError: onMutationError("Couldn't update assignee"),
+                    onSuccess: showSavedNotice,
+                  },
                 )
               }
               pending={update.isPending}
@@ -249,7 +267,10 @@ function TaskDetail({
                     input: { projectId },
                     strategy: taskCacheStrategies.project,
                   },
-                  { onError: onMutationError("Couldn't move task") },
+                  {
+                    onError: onMutationError("Couldn't move task"),
+                    onSuccess: showSavedNotice,
+                  },
                 )
               }
               pending={update.isPending}
@@ -268,7 +289,10 @@ function TaskDetail({
                     },
                     strategy: taskCacheStrategies.dueDate,
                   },
-                  { onError: onMutationError("Couldn't update due date") },
+                  {
+                    onError: onMutationError("Couldn't update due date"),
+                    onSuccess: showSavedNotice,
+                  },
                 )
               }
               className="h-9"
@@ -300,6 +324,7 @@ function TaskDetail({
                   onClick={() =>
                     removeLabel.mutate(label.id, {
                       onError: onMutationError("Couldn't remove label"),
+                      onSuccess: showSavedNotice,
                     })
                   }
                   className="rounded-full p-0.5 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-rose"
@@ -314,11 +339,13 @@ function TaskDetail({
               onAdd={(label) =>
                 addLabel.mutate(label, {
                   onError: onMutationError("Couldn't add label"),
+                  onSuccess: showSavedNotice,
                 })
               }
               onRemove={(labelId) =>
                 removeLabel.mutate(labelId, {
                   onError: onMutationError("Couldn't remove label"),
+                  onSuccess: showSavedNotice,
                 })
               }
             />
@@ -348,6 +375,33 @@ function Field({
       <div className="min-w-0">{children}</div>
     </div>
   );
+}
+
+function useSavedNotice(): [boolean, () => void] {
+  const [isVisible, setIsVisible] = React.useState(false);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const show = React.useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    setIsVisible(true);
+    timerRef.current = setTimeout(() => {
+      setIsVisible(false);
+      timerRef.current = null;
+    }, 1200);
+  }, []);
+
+  return [isVisible, show];
 }
 
 function TitleEditor({

@@ -59,7 +59,7 @@ export function TaskDetailPanel({
 
   return (
     <DetailShell>
-      <React.Suspense fallback={<DetailSkeleton />}>
+      <React.Suspense key={taskId} fallback={<DetailSkeleton />}>
         <TaskDetail taskId={taskId} onClose={onClose} />
       </React.Suspense>
     </DetailShell>
@@ -88,6 +88,7 @@ function TaskDetail({
   const addLabel = useAddTaskLabel(taskId);
   const removeLabel = useRemoveTaskLabel(taskId);
   const remove = useDeleteTask();
+  const [isSavedVisible, showSavedNotice] = useSavedNotice();
   const [optimisticTask, addOptimisticTask] = React.useOptimistic(
     task,
     (current, change: OptimisticTaskChange) =>
@@ -117,6 +118,7 @@ function TaskDetail({
       addOptimisticTask({ type: "update", input });
       dispatchSaveAction({
         errorMessage: "Couldn't save title",
+        onSuccess: showSavedNotice,
         run: () => update(input, taskCacheStrategies.searchText),
       });
     });
@@ -128,6 +130,7 @@ function TaskDetail({
       addOptimisticTask({ type: "update", input });
       dispatchSaveAction({
         errorMessage: "Couldn't save description",
+        onSuccess: showSavedNotice,
         run: () => update(input, taskCacheStrategies.searchText),
       });
     });
@@ -139,6 +142,7 @@ function TaskDetail({
       addOptimisticTask({ type: "update", input });
       dispatchSaveAction({
         errorMessage: "Couldn't update status",
+        onSuccess: showSavedNotice,
         run: () => update(input, taskCacheStrategies.status),
       });
     });
@@ -150,6 +154,7 @@ function TaskDetail({
       addOptimisticTask({ type: "update", input });
       dispatchSaveAction({
         errorMessage: "Couldn't update priority",
+        onSuccess: showSavedNotice,
         run: () => update(input, taskCacheStrategies.priority),
       });
     });
@@ -161,6 +166,7 @@ function TaskDetail({
       addOptimisticTask({ type: "update", input });
       dispatchSaveAction({
         errorMessage: "Couldn't update assignee",
+        onSuccess: showSavedNotice,
         run: () => update(input, taskCacheStrategies.assignee),
       });
     });
@@ -172,6 +178,7 @@ function TaskDetail({
       addOptimisticTask({ type: "update", input });
       dispatchSaveAction({
         errorMessage: "Couldn't move task",
+        onSuccess: showSavedNotice,
         run: () => update(input, taskCacheStrategies.project),
       });
     });
@@ -183,6 +190,7 @@ function TaskDetail({
       addOptimisticTask({ type: "update", input });
       dispatchSaveAction({
         errorMessage: "Couldn't update due date",
+        onSuccess: showSavedNotice,
         run: () => update(input, taskCacheStrategies.dueDate),
       });
     });
@@ -193,6 +201,7 @@ function TaskDetail({
       addOptimisticTask({ type: "addLabel", label });
       dispatchSaveAction({
         errorMessage: "Couldn't add label",
+        onSuccess: showSavedNotice,
         run: () => addLabel(label),
       });
     });
@@ -203,6 +212,7 @@ function TaskDetail({
       addOptimisticTask({ type: "removeLabel", labelId });
       dispatchSaveAction({
         errorMessage: "Couldn't remove label",
+        onSuccess: showSavedNotice,
         run: () => removeLabel(labelId),
       });
     });
@@ -242,11 +252,11 @@ function TaskDetail({
             <span className="inline-flex items-center gap-1 text-cobalt">
               <InlineSpinner className="size-3" /> Saving…
             </span>
-          ) : (
+          ) : isSavedVisible ? (
             <span className="inline-flex items-center gap-1 text-sage">
               <Check className="size-3" /> Saved
             </span>
-          )}
+          ) : null}
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -386,6 +396,33 @@ type SaveAction = {
   run: () => Promise<unknown>;
   onSuccess?: () => void;
 };
+
+function useSavedNotice(): [boolean, () => void] {
+  const [isVisible, setIsVisible] = React.useState(false);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const show = React.useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    setIsVisible(true);
+    timerRef.current = setTimeout(() => {
+      setIsVisible(false);
+      timerRef.current = null;
+    }, 1200);
+  }, []);
+
+  return [isVisible, show];
+}
 
 function applyOptimisticTaskChange(
   task: Task,

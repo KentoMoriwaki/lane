@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";
 import {
@@ -13,6 +13,7 @@ type HistoryMode = "push" | "replace";
 
 export function useWorkspaceUrl() {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const searchString = searchParams.toString();
   const [isPending, startTransition] = React.useTransition();
@@ -25,20 +26,33 @@ export function useWorkspaceUrl() {
     [searchString],
   );
 
+  const hrefFor = React.useCallback(
+    (next: Partial<WorkspaceUrlState>) => {
+      const merged = { ...state, ...next };
+      const search = buildWorkspaceSearch(merged);
+      return search ? `${pathname}?${search}` : pathname;
+    },
+    [pathname, state],
+  );
+
   const write = React.useCallback(
     (next: Partial<WorkspaceUrlState>, mode: HistoryMode) => {
-      const merged: WorkspaceUrlState = { ...state, ...next };
-      const search = buildWorkspaceSearch(merged);
-      const url = search ? `${pathname}?${search}` : pathname;
+      const href = hrefFor(next);
       startTransition(() => {
         if (mode === "push") {
-          window.history.pushState(null, "", url);
+          router.push(href, { scroll: false });
         } else {
-          window.history.replaceState(null, "", url);
+          router.replace(href, { scroll: false });
         }
       });
     },
-    [pathname, startTransition, state],
+    [hrefFor, router, startTransition],
+  );
+
+  const viewHref = React.useCallback(
+    (view: Partial<TaskFilters>) =>
+      hrefFor({ filters: { ...EMPTY_FILTERS, ...view } }),
+    [hrefFor],
   );
 
   // Discrete filter/view actions push a history entry so Back returns to the
@@ -48,14 +62,6 @@ export function useWorkspaceUrl() {
     (patch: Partial<TaskFilters>, mode: HistoryMode = "push") =>
       write({ filters: { ...state.filters, ...patch } }, mode),
     [state.filters, write],
-  );
-
-  // A view (sidebar item, insight card) replaces the filters but keeps the
-  // active team and the currently open task.
-  const applyView = React.useCallback(
-    (view: Partial<TaskFilters>) =>
-      write({ filters: { ...EMPTY_FILTERS, ...view } }, "push"),
-    [write],
   );
 
   const resetFilters = React.useCallback(
@@ -76,8 +82,8 @@ export function useWorkspaceUrl() {
     isPending,
     selectedTaskId: state.selectedTaskId,
     patchFilters,
-    applyView,
     resetFilters,
     selectTask,
+    viewHref,
   };
 }

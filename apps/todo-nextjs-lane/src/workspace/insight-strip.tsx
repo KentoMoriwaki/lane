@@ -5,6 +5,7 @@ import { useInsights } from "@/api/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { accent, type AccentToken } from "@/lib/accent";
 import { cn } from "@/lib/utils";
+import Link from "next/link";
 import * as React from "react";
 
 type InsightCard = {
@@ -16,9 +17,9 @@ type InsightCard = {
 };
 
 export function InsightStrip({
-  onApplyView,
+  viewHref,
 }: {
-  onApplyView: (view: Partial<TaskFilters>) => void;
+  viewHref: (view: Partial<TaskFilters>) => string;
 }) {
   const { promise } = useInsights();
   const data = React.use(promise);
@@ -38,7 +39,7 @@ export function InsightStrip({
         <InsightCardButton
           key={card.key}
           card={card}
-          onApplyView={onApplyView}
+          href={viewHref(card.view)}
         />
       ))}
       <OpenTrend
@@ -53,25 +54,16 @@ export function InsightStrip({
 
 function InsightCardButton({
   card,
-  onApplyView,
+  href,
 }: {
   card: InsightCard;
-  onApplyView: (view: Partial<TaskFilters>) => void;
+  href: string;
 }) {
-  const [isPending, startTransition] = React.useTransition();
-
   return (
-    <button
-      type="button"
-      onClick={() => {
-        startTransition(() => {
-          onApplyView(card.view);
-        });
-      }}
-      className={cn(
-        "group flex min-w-[124px] flex-1 flex-col gap-1 rounded-lg border border-border bg-surface px-3 py-2 text-left transition hover:border-foreground/20 hover:bg-accent/50",
-        isPending && "border-cobalt/40 opacity-60 ring-1 ring-cobalt/25",
-      )}
+    <Link
+      href={href}
+      scroll={false}
+      className="group flex min-w-[124px] flex-1 flex-col gap-1 rounded-lg border border-border bg-surface px-3 py-2 text-left transition hover:border-foreground/20 hover:bg-accent/50"
     >
       <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         <span className={cn("size-2 rounded-full", accent(card.tone).dot)} />
@@ -80,7 +72,7 @@ function InsightCardButton({
       <span className="text-2xl font-semibold tabular-nums text-foreground">
         {card.value}
       </span>
-    </button>
+    </Link>
   );
 }
 

@@ -11,6 +11,7 @@ import {
   UserCircle2,
   UserX,
 } from "lucide-react";
+import Link from "next/link";
 import * as React from "react";
 import type { TaskFilters } from "@/api/endpoints";
 import {
@@ -55,10 +56,10 @@ function activeKey(f: TaskFilters): string {
 
 export function Sidebar({
   filters,
-  onApplyView,
+  viewHref,
 }: {
   filters: TaskFilters;
-  onApplyView: (view: Partial<TaskFilters>) => void;
+  viewHref: (view: Partial<TaskFilters>) => string;
 }) {
   const active = activeKey(filters);
   const user = React.use(useCurrentUser().promise);
@@ -88,21 +89,21 @@ export function Sidebar({
             icon={Inbox}
             label="All tasks"
             isActive={active === "all"}
-            onClick={() => onApplyView(EMPTY_FILTERS)}
+            href={viewHref(EMPTY_FILTERS)}
           />
           <NavItem
             icon={UserCircle2}
             label="My tasks"
             count={insights.assignedToMe}
             isActive={active === "mine"}
-            onClick={() => onApplyView({ scope: "mine" })}
+            href={viewHref({ scope: "mine" })}
           />
           <NavItem
             icon={UserX}
             label="Unassigned"
             count={insights.unassigned}
             isActive={active === "unassigned"}
-            onClick={() => onApplyView({ scope: "unassigned" })}
+            href={viewHref({ scope: "unassigned" })}
           />
           <NavItem
             icon={AlertTriangle}
@@ -110,21 +111,21 @@ export function Sidebar({
             count={insights.overdue}
             tone="rose"
             isActive={active === "overdue"}
-            onClick={() => onApplyView({ due: "overdue" })}
+            href={viewHref({ due: "overdue" })}
           />
           <NavItem
             icon={CalendarClock}
             label="Due soon"
             count={insights.dueSoon}
             isActive={active === "due-soon"}
-            onClick={() => onApplyView({ due: "week" })}
+            href={viewHref({ due: "week" })}
           />
           <NavItem
             icon={CircleCheck}
             label="Completed"
             count={insights.completed}
             isActive={active === "completed"}
-            onClick={() => onApplyView({ status: ["done"] })}
+            href={viewHref({ status: ["done"] })}
           />
         </NavGroup>
 
@@ -141,7 +142,7 @@ export function Sidebar({
                 label={project.name}
                 count={project.taskCount}
                 isActive={active === `project:${project.id}`}
-                onClick={() => onApplyView({ projectId: project.id })}
+                href={viewHref({ projectId: project.id })}
               />
             ))
           )}
@@ -159,7 +160,7 @@ export function Sidebar({
                 dotClass={accent(label.color).dot}
                 label={label.name}
                 isActive={active === `label:${label.id}`}
-                onClick={() => onApplyView({ labelId: label.id })}
+                href={viewHref({ labelId: label.id })}
               />
             ))
           )}
@@ -225,7 +226,7 @@ function NavItem({
   count,
   tone,
   isActive,
-  onClick,
+  href,
 }: {
   icon?: LucideIcon;
   dotClass?: string;
@@ -233,12 +234,12 @@ function NavItem({
   count?: number;
   tone?: "rose";
   isActive?: boolean;
-  onClick: () => void;
+  href: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Link
+      href={href}
+      scroll={false}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
         isActive
@@ -262,6 +263,6 @@ function NavItem({
           {count}
         </span>
       ) : null}
-    </button>
+    </Link>
   );
 }

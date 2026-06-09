@@ -38,9 +38,9 @@ function WorkspaceShell() {
     filters,
     selectedTaskId,
     patchFilters,
-    applyView,
     resetFilters,
     selectTask,
+    viewHref,
     isPending: isViewPending,
   } = useWorkspaceUrl();
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -84,7 +84,7 @@ function WorkspaceShell() {
         )}
       >
         <React.Suspense fallback={<SidebarSkeleton />}>
-          <Sidebar filters={filters} onApplyView={applyView} />
+          <Sidebar filters={filters} viewHref={viewHref} />
         </React.Suspense>
       </LaneErrorBoundary>
 
@@ -115,7 +115,7 @@ function WorkspaceShell() {
               )}
             >
               <React.Suspense fallback={<InsightStripSkeleton />}>
-                <InsightStrip onApplyView={applyView} />
+                <InsightStrip viewHref={viewHref} />
               </React.Suspense>
             </LaneErrorBoundary>
             <LaneErrorBoundary

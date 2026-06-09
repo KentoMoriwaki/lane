@@ -26,6 +26,12 @@ import {
   TEAM_SCOPED_KEYS,
 } from "./query-options";
 import {
+  replaceTaskInList,
+  type TaskCacheStrategy,
+  taskCacheStrategies,
+  taskFiltersFromEntry,
+} from "./task-cache-sync";
+import {
   fetchCurrentUser,
   fetchInsights,
   fetchLabels,
@@ -95,7 +101,11 @@ export function useCreateTask() {
   return React.useCallback(async (input: CreateTaskInput): Promise<Task> => {
     const task = await createTask(ctx, input);
     lane.set(queryKeys.task(task.id), task);
-    scheduleDerivedWorkspaceRefresh(lane);
+    lane.invalidateAll(["tasks"]);
+    scheduleDerivedWorkspaceRefresh(lane, {
+      insights: true,
+      projects: Boolean(task.project),
+    });
     return task;
   }, [ctx, lane]);
 }
@@ -104,9 +114,12 @@ export function useUpdateTask(taskId: string) {
   const ctx = useWorkspaceCtx();
   const lane = useWorkspaceLane();
 
-  return React.useCallback(async (input: UpdateTaskInput): Promise<Task> => {
+  return React.useCallback(async (
+    input: UpdateTaskInput,
+    strategy: TaskCacheStrategy,
+  ): Promise<Task> => {
     const task = await updateTask(ctx, taskId, input);
-    publishTask(lane, task);
+    publishTask(lane, task, strategy);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -119,7 +132,10 @@ export function useDeleteTask() {
     await deleteTask(ctx, taskId);
     lane.remove(queryKeys.task(taskId));
     removeTaskFromTaskLists(lane, taskId);
-    scheduleDerivedWorkspaceRefresh(lane);
+    scheduleDerivedWorkspaceRefresh(lane, {
+      insights: true,
+      projects: true,
+    });
   }, [ctx, lane]);
 }
 
@@ -129,7 +145,7 @@ export function useAddTaskLabel(taskId: string) {
 
   return React.useCallback(async (label: TeamLabel): Promise<Task> => {
     const task = await addTaskLabel(ctx, taskId, label.id);
-    publishTask(lane, task);
+    publishTask(lane, task, taskCacheStrategies.labels);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -140,7 +156,7 @@ export function useRemoveTaskLabel(taskId: string) {
 
   return React.useCallback(async (labelId: string): Promise<Task> => {
     const task = await removeTaskLabel(ctx, taskId, labelId);
-    publishTask(lane, task);
+    publishTask(lane, task, taskCacheStrategies.labels);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -193,12 +209,24 @@ export function useWorkspaceRefresh() {
 function publishTask(
   lane: ReturnType<typeof useWorkspaceLane>,
   task: Task,
+  strategy: TaskCacheStrategy,
 ) {
   lane.set(queryKeys.task(task.id), task);
-  lane.updateAll<Task[]>(["tasks"], (tasks) =>
-    tasks.map((item) => (item.id === task.id ? task : item)),
+  lane.updateAll<Task[]>(
+    (entry) => {
+      const filters = taskFiltersFromEntry(entry);
+      return Boolean(filters && !strategy.shouldInvalidateTaskList(filters));
+    },
+    (tasks) => replaceTaskInList(tasks, task),
   );
-  scheduleDerivedWorkspaceRefresh(lane);
+  lane.invalidateAll((entry) => {
+    const filters = taskFiltersFromEntry(entry);
+    return Boolean(filters && strategy.shouldInvalidateTaskList(filters));
+  });
+  scheduleDerivedWorkspaceRefresh(lane, {
+    insights: strategy.refreshInsights,
+    projects: strategy.refreshProjects,
+  });
 }
 
 function removeTaskFromTaskLists(
@@ -212,10 +240,20 @@ function removeTaskFromTaskLists(
 
 function scheduleDerivedWorkspaceRefresh(
   lane: ReturnType<typeof useWorkspaceLane>,
+  refresh: { insights: boolean; projects: boolean },
 ) {
+  if (!refresh.insights && !refresh.projects) {
+    return;
+  }
+
   React.startTransition(() => {
-    lane.invalidate(queryKeys.insights);
-    lane.invalidate(queryKeys.projects);
+    if (refresh.insights) {
+      lane.invalidate(queryKeys.insights);
+    }
+
+    if (refresh.projects) {
+      lane.invalidate(queryKeys.projects);
+    }
   });
 }
 

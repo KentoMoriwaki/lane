@@ -24,14 +24,14 @@ import { InlineSpinner } from "./feedback";
 
 export function LabelPicker({
   selectedIds,
-  onAdd,
-  onRemove,
+  addAction,
+  removeAction,
   disabled,
   triggerLabel = "Add label",
 }: {
   selectedIds: string[];
-  onAdd: (label: TeamLabel) => void;
-  onRemove: (labelId: string) => void;
+  addAction: (label: TeamLabel) => void;
+  removeAction: (labelId: string) => void;
   disabled?: boolean;
   triggerLabel?: string;
 }) {
@@ -50,9 +50,9 @@ export function LabelPicker({
 
   function toggle(label: TeamLabel) {
     if (selected.has(label.id)) {
-      onRemove(label.id);
+      removeAction(label.id);
     } else {
-      onAdd(label);
+      addAction(label);
     }
   }
 
@@ -60,7 +60,7 @@ export function LabelPicker({
     startCreateTransition(async () => {
       try {
         const label = await createLabel({ name: trimmed });
-        onAdd(label);
+        addAction(label);
         setSearch("");
         toast.success(`Label “${label.name}” created`);
       } catch (error) {

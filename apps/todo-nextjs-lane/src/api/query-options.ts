@@ -7,7 +7,7 @@ import type {
   TeamMember,
   TeamSummary,
 } from "@lane/todo-api";
-import type { LaneEntrySeed } from "@lane/lane";
+import type { LaneHydrationSnapshots, LaneSnapshot } from "@lane/lane";
 import type { TaskFilters } from "./endpoints";
 
 export const queryKeys = {
@@ -44,25 +44,25 @@ export type WorkspaceSeeds = {
   insights: Insights;
 };
 
-export function workspaceSeedEntries(
+export function workspaceSnapshots(
   seeds: WorkspaceSeeds,
-): LaneEntrySeed[] {
-  const entries: LaneEntrySeed[] = [
-    [queryKeys.currentUser, seeds.currentUser],
-    [queryKeys.teams, seeds.teams],
-    [queryKeys.tasks(seeds.tasks.filters), seeds.tasks.data],
-    [queryKeys.projects, seeds.projects],
-    [queryKeys.labels, seeds.labels],
-    [queryKeys.members, seeds.members],
-    [queryKeys.insights, seeds.insights],
+): LaneHydrationSnapshots {
+  const entries: LaneSnapshot[] = [
+    { data: seeds.currentUser, key: queryKeys.currentUser },
+    { data: seeds.teams, key: queryKeys.teams },
+    { data: seeds.tasks.data, key: queryKeys.tasks(seeds.tasks.filters) },
+    { data: seeds.projects, key: queryKeys.projects },
+    { data: seeds.labels, key: queryKeys.labels },
+    { data: seeds.members, key: queryKeys.members },
+    { data: seeds.insights, key: queryKeys.insights },
   ];
 
   if (seeds.selectedTask) {
-    entries.push([
-      queryKeys.task(seeds.selectedTask.id),
-      seeds.selectedTask,
-    ]);
+    entries.push({
+      data: seeds.selectedTask,
+      key: queryKeys.task(seeds.selectedTask.id),
+    });
   }
 
-  return entries;
+  return { entries };
 }

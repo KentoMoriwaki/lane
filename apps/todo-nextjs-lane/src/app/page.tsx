@@ -14,6 +14,7 @@ import {
   getterFromRecord,
   parseWorkspaceState,
 } from "@/api/url-state";
+import { workspaceSnapshots } from "@/api/query-options";
 import { Workspace } from "@/workspace/workspace";
 import { WorkspaceProvider } from "@/workspace/workspace-provider";
 
@@ -55,7 +56,7 @@ export default async function Page({ searchParams }: PageProps) {
     <WorkspaceProvider
       initialUser={user}
       initialTeamId={teamId}
-      initialSeeds={{
+      snapshots={workspaceSnapshots({
         currentUser: user,
         insights,
         labels,
@@ -67,7 +68,7 @@ export default async function Page({ searchParams }: PageProps) {
           filters: requested.filters,
         },
         teams,
-      }}
+      })}
     >
       <Workspace />
     </WorkspaceProvider>

@@ -19,6 +19,15 @@ export type LaneEntrySeed<T = unknown> = readonly [
   valueOrPromise: LaneValue<T>,
 ];
 
+export type LaneSnapshot<T = unknown> = {
+  key: LaneKey;
+  data: T;
+};
+
+export type LaneHydrationSnapshots = {
+  entries: readonly LaneSnapshot[];
+};
+
 export type LaneSubscription = () => void;
 
 export type LaneEntryInfo = {
@@ -39,6 +48,7 @@ export type LaneInvalidateOptions = {
 export type Lane = {
   seed<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<T>;
   seedMany(entries: readonly LaneEntrySeed[]): void;
+  hydrateMany(snapshots: LaneHydrationSnapshots): void;
   readOrCreate<T>(key: LaneKey, loader: () => Promise<T>): Promise<T>;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
@@ -100,6 +110,15 @@ export function createLane(): Lane {
   function seedMany(seedEntries: readonly LaneEntrySeed[]): void {
     for (const [key, valueOrPromise] of seedEntries) {
       seed(key, valueOrPromise);
+    }
+  }
+
+  function hydrateMany(snapshots: LaneHydrationSnapshots): void {
+    for (const snapshot of snapshots.entries) {
+      const keyId = serializeKey(snapshot.key);
+      const entry = getOrCreateEntry(snapshot.key, keyId);
+
+      setEntryCache(entry, snapshot.data);
     }
   }
 
@@ -217,6 +236,7 @@ export function createLane(): Lane {
   }
 
   return {
+    hydrateMany,
     invalidate,
     invalidateAll,
     onInvalidate,

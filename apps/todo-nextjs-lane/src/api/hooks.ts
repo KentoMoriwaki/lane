@@ -59,7 +59,10 @@ export function useTeams() {
 export function useTasks(filters: TaskFilters) {
   const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.tasks(filters), () => fetchTasks(ctx, filters));
+  return useLane(lane, queryKeys.tasks(filters), () => fetchTasks(ctx, filters), {
+    refetchOnMount: true,
+    staleTime: 1_000,
+  });
 }
 
 export function useTask(taskId: string) {

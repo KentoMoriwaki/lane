@@ -8,7 +8,6 @@ import type {
   TeamLabel,
   UpdateTaskInput,
 } from "@lane/todo-api";
-import type { Lane } from "@lane/lane";
 import { useLane } from "@lane/lane";
 import * as React from "react";
 import { useWorkspaceCtx, useWorkspaceLane } from "@/workspace/workspace-provider";
@@ -95,8 +94,8 @@ export function useCreateTask() {
 
   return React.useCallback(async (input: CreateTaskInput): Promise<Task> => {
     const task = await createTask(ctx, input);
-    lane.replace(queryKeys.task(task.id), task);
-    invalidateTaskViews(lane);
+    lane.set(queryKeys.task(task.id), task);
+    scheduleDerivedWorkspaceRefresh(lane);
     return task;
   }, [ctx, lane]);
 }
@@ -107,8 +106,7 @@ export function useUpdateTask(taskId: string) {
 
   return React.useCallback(async (input: UpdateTaskInput): Promise<Task> => {
     const task = await updateTask(ctx, taskId, input);
-    lane.replace(queryKeys.task(task.id), task);
-    invalidateTaskViews(lane, task.id);
+    publishTask(lane, task);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -120,7 +118,8 @@ export function useDeleteTask() {
   return React.useCallback(async (taskId: string): Promise<void> => {
     await deleteTask(ctx, taskId);
     lane.remove(queryKeys.task(taskId));
-    invalidateTaskViews(lane);
+    removeTaskFromTaskLists(lane, taskId);
+    scheduleDerivedWorkspaceRefresh(lane);
   }, [ctx, lane]);
 }
 
@@ -130,8 +129,7 @@ export function useAddTaskLabel(taskId: string) {
 
   return React.useCallback(async (label: TeamLabel): Promise<Task> => {
     const task = await addTaskLabel(ctx, taskId, label.id);
-    lane.replace(queryKeys.task(task.id), task);
-    invalidateTaskViews(lane, task.id);
+    publishTask(lane, task);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -142,8 +140,7 @@ export function useRemoveTaskLabel(taskId: string) {
 
   return React.useCallback(async (labelId: string): Promise<Task> => {
     const task = await removeTaskLabel(ctx, taskId, labelId);
-    lane.replace(queryKeys.task(task.id), task);
-    invalidateTaskViews(lane, task.id);
+    publishTask(lane, task);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -193,17 +190,33 @@ export function useWorkspaceRefresh() {
   return { refresh, isRefreshing };
 }
 
-function invalidateTaskViews(
-  lane: Lane,
-  taskId?: string,
+function publishTask(
+  lane: ReturnType<typeof useWorkspaceLane>,
+  task: Task,
 ) {
-  lane.invalidateAll(["tasks"]);
-  lane.invalidate(queryKeys.insights);
-  lane.invalidate(queryKeys.projects);
+  lane.set(queryKeys.task(task.id), task);
+  lane.updateAll<Task[]>(["tasks"], (tasks) =>
+    tasks.map((item) => (item.id === task.id ? task : item)),
+  );
+  scheduleDerivedWorkspaceRefresh(lane);
+}
 
-  if (taskId) {
-    lane.invalidate(queryKeys.task(taskId));
-  }
+function removeTaskFromTaskLists(
+  lane: ReturnType<typeof useWorkspaceLane>,
+  taskId: string,
+) {
+  lane.updateAll<Task[]>(["tasks"], (tasks) =>
+    tasks.filter((item) => item.id !== taskId),
+  );
+}
+
+function scheduleDerivedWorkspaceRefresh(
+  lane: ReturnType<typeof useWorkspaceLane>,
+) {
+  React.startTransition(() => {
+    lane.invalidate(queryKeys.insights);
+    lane.invalidate(queryKeys.projects);
+  });
 }
 
 export function clearTeamScopedLaneEntries(

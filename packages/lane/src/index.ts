@@ -21,13 +21,25 @@ export type LaneEntrySeed<T = unknown> = readonly [
 
 export type LaneSubscription = () => void;
 
+export type LaneEntryInfo = {
+  key: LaneKey;
+  keyId: string;
+};
+
+export type LaneUpdater<T> = (
+  current: T,
+  entry: LaneEntryInfo,
+) => LaneValue<T>;
+
 export type Lane = {
   seed<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<T>;
   seedMany(entries: readonly LaneEntrySeed[]): void;
   readOrCreate<T>(key: LaneKey, loader: () => Promise<T>): Promise<T>;
   invalidate(key: LaneKey): void;
   invalidateAll(scope: LaneScope): void;
-  replace<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<T>;
+  set<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<T>;
+  update<T>(key: LaneKey, updater: LaneUpdater<T>): Promise<T> | undefined;
+  updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<T>[];
   remove(key: LaneKey): void;
   removeAll(scope: LaneScope): void;
   onInvalidate(key: LaneKey, listener: LaneSubscription): LaneSubscription;
@@ -45,6 +57,10 @@ type LaneEntry = {
   keyId: string;
   promise: Promise<unknown>;
   invalidated: boolean;
+  status: "pending" | "fulfilled" | "rejected";
+  value: unknown;
+  error: unknown;
+  version: number;
 };
 
 type ListenerMap = Map<string, Set<LaneSubscription>>;
@@ -62,15 +78,10 @@ export function createLane(): Lane {
       return existing.promise as Promise<T>;
     }
 
-    const promise = normalizePromise(valueOrPromise);
-    entries.set(keyId, {
-      invalidated: false,
-      key,
-      keyId,
-      promise,
-    });
+    const entry = createEntry(key, keyId, valueOrPromise);
+    entries.set(keyId, entry);
 
-    return promise;
+    return entry.promise as Promise<T>;
   }
 
   function seedMany(seedEntries: readonly LaneEntrySeed[]): void {
@@ -90,15 +101,10 @@ export function createLane(): Lane {
       return existing.promise as Promise<T>;
     }
 
-    const promise = createLoaderPromise(loader);
-    entries.set(keyId, {
-      invalidated: false,
-      key,
-      keyId,
-      promise,
-    });
+    const entry = createEntry(key, keyId, createLoaderPromise(loader));
+    entries.set(keyId, entry);
 
-    return promise;
+    return entry.promise as Promise<T>;
   }
 
   function invalidate(key: LaneKey): void {
@@ -120,22 +126,41 @@ export function createLane(): Lane {
     }
   }
 
-  function replace<T>(
+  function set<T>(
     key: LaneKey,
     valueOrPromise: LaneValue<T>,
   ): Promise<T> {
     const keyId = serializeKey(key);
-    const promise = normalizePromise(valueOrPromise);
+    const entry = createEntry(key, keyId, valueOrPromise);
 
-    entries.set(keyId, {
-      invalidated: false,
-      key,
-      keyId,
-      promise,
-    });
+    entries.set(keyId, entry);
     notify(invalidateListeners, keyId);
 
-    return promise;
+    return entry.promise as Promise<T>;
+  }
+
+  function update<T>(
+    key: LaneKey,
+    updater: LaneUpdater<T>,
+  ): Promise<T> | undefined {
+    const keyId = serializeKey(key);
+    const entry = entries.get(keyId);
+
+    if (!entry) {
+      return undefined;
+    }
+
+    return updateEntry(entry, updater);
+  }
+
+  function updateAll<T>(
+    scope: LaneScope,
+    updater: LaneUpdater<T>,
+  ): Promise<T>[] {
+    return matchingEntries(entries, scope).flatMap((entry) => {
+      const promise = updateEntry(entry, updater);
+      return promise ? [promise] : [];
+    });
   }
 
   function remove(key: LaneKey): void {
@@ -177,10 +202,32 @@ export function createLane(): Lane {
     readOrCreate,
     remove,
     removeAll,
-    replace,
     seed,
     seedMany,
+    set,
+    update,
+    updateAll,
   };
+
+  function updateEntry<T>(
+    entry: LaneEntry,
+    updater: LaneUpdater<T>,
+  ): Promise<T> | undefined {
+    if (entry.status === "rejected") {
+      return undefined;
+    }
+
+    const info = { key: entry.key, keyId: entry.keyId };
+    const valueOrPromise =
+      entry.status === "fulfilled"
+        ? updater(entry.value as T, info)
+        : entry.promise.then((current) => updater(current as T, info));
+    const updated = resetEntry(entry, valueOrPromise);
+
+    notify(invalidateListeners, entry.keyId);
+
+    return updated as Promise<T>;
+  }
 }
 
 export function useLane<T>(
@@ -315,6 +362,80 @@ function normalizePromise<T>(valueOrPromise: LaneValue<T>): Promise<T> {
 
 function createLoaderPromise<T>(loader: () => Promise<T>): Promise<T> {
   return Promise.resolve().then(loader);
+}
+
+function createEntry<T>(
+  key: LaneKey,
+  keyId: string,
+  valueOrPromise: LaneValue<T>,
+): LaneEntry {
+  const entry: LaneEntry = {
+    error: undefined,
+    invalidated: false,
+    key,
+    keyId,
+    promise: Promise.resolve(undefined),
+    status: "pending",
+    value: undefined,
+    version: 0,
+  };
+
+  resetEntry(entry, valueOrPromise);
+
+  return entry;
+}
+
+function resetEntry<T>(
+  entry: LaneEntry,
+  valueOrPromise: LaneValue<T>,
+): Promise<T> {
+  const version = entry.version + 1;
+  const promise = normalizePromise(valueOrPromise);
+
+  entry.error = undefined;
+  entry.invalidated = false;
+  entry.promise = promise;
+  entry.version = version;
+
+  if (isPromiseLike(valueOrPromise)) {
+    entry.status = "pending";
+    entry.value = undefined;
+  } else {
+    entry.status = "fulfilled";
+    entry.value = valueOrPromise;
+  }
+
+  promise.then(
+    (value) => {
+      if (entry.version !== version) {
+        return;
+      }
+
+      entry.error = undefined;
+      entry.status = "fulfilled";
+      entry.value = value;
+    },
+    (error) => {
+      if (entry.version !== version) {
+        return;
+      }
+
+      entry.error = error;
+      entry.status = "rejected";
+      entry.value = undefined;
+    },
+  );
+
+  return promise;
+}
+
+function isPromiseLike<T>(value: LaneValue<T>): value is Promise<T> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as { then: unknown }).then === "function"
+  );
 }
 
 function stableStringify(value: unknown): string {

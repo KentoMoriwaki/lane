@@ -117,7 +117,9 @@ lane.seedMany(entries)
 lane.readOrCreate(keyId, loader)
 lane.invalidate(keyId)
 lane.invalidateAll(prefixOrPredicate)
-lane.replace(keyId, valueOrPromise)
+lane.set(keyId, valueOrPromise)
+lane.update(keyId, updater)
+lane.updateAll(prefixOrPredicate, updater)
 lane.remove(keyId)
 lane.removeAll(prefixOrPredicate)
 lane.onInvalidate(keyId, listener)
@@ -136,7 +138,7 @@ string prefix checks.
   the entry valid
 - if an entry already exists, do nothing
 - repeated seed calls must not overwrite data created by later client reads,
-  invalidations, or replacements
+  invalidations, sets, or updates
 
 `seedMany` should apply the same set-only-if-absent rule to each exact entry.
 
@@ -232,13 +234,13 @@ The important point is that Lane core does not need to remember the loader in
 order to refetch later. The reader that currently owns the async read provides
 the loader.
 
-## Replacement Behavior
+## Set Behavior
 
-On replacement:
+On set:
 
 ```txt
 application has authoritative next value or promise
--> lane.replace(keyId, valueOrPromise)
+-> lane.set(keyId, valueOrPromise)
 -> Lane normalizes it to a promise and stores it in the entry
 -> Lane notifies invalidation subscribers
 -> useLane handles it through the same transition path as invalidation
@@ -246,8 +248,22 @@ application has authoritative next value or promise
 -> component renders from the authoritative promise
 ```
 
-Replacement is not an optimistic update mechanism. It is a prefilled
-invalidation for authoritative data.
+Set is not an optimistic update mechanism. It is authoritative data publication.
+
+## Update Behavior
+
+On update:
+
+```txt
+application has a patch for an existing value
+-> lane.update(keyId, updater) or lane.updateAll(prefixOrPredicate, updater)
+-> fulfilled entries apply the updater immediately
+-> pending entries chain the updater onto the current promise
+-> rejected or missing entries are not changed
+-> Lane notifies invalidation subscribers for changed entries
+-> readOrCreate returns the already stored updated promise
+-> component renders from the updated promise
+```
 
 ## Removal Behavior
 

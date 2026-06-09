@@ -226,7 +226,9 @@ lane.seedMany(entries); // exact entries, set only if absent
 lane.invalidate(key); // exact
 lane.invalidateAll(prefixOrPredicate); // scoped
 
-lane.replace(key, valueOrPromise); // exact, prefilled invalidation
+lane.set(key, valueOrPromise); // exact, authoritative value publication
+lane.update(key, updater); // exact, update from the current fulfilled value
+lane.updateAll(prefixOrPredicate, updater); // scoped, patch existing entries
 
 lane.remove(key); // exact
 lane.removeAll(prefixOrPredicate); // scoped
@@ -237,6 +239,11 @@ The names are provisional, but the distinction is intentional:
 - exact operations affect one key
 - scoped operations affect existing entries matched by prefix or predicate
 - application code decides which operation is correct for the domain event
+
+`set` is for authoritative values already in hand and does not depend on the
+previous value. `update` and `updateAll` derive the next value from an existing
+entry: fulfilled entries update immediately, pending entries chain the updater
+onto the current promise, and rejected or missing entries are left alone.
 
 `remove` is different from invalidation. It means the entry no longer belongs in
 the current client state, such as after sign out, team switch, or deleting a

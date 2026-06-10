@@ -8,9 +8,9 @@ import type {
   TeamLabel,
   UpdateTaskInput,
 } from "@lane/todo-api";
-import { useLane } from "@lane/lane";
+import { useLane, useLaneInstance, type Lane } from "@lane/lane";
 import * as React from "react";
-import { useWorkspaceCtx, useWorkspaceLane } from "@/workspace/workspace-provider";
+import { useWorkspaceCtx } from "@/workspace/workspace-provider";
 import {
   addTaskLabel,
   createLabel,
@@ -45,58 +45,54 @@ import {
 /* -------------------------------- Reads -------------------------------- */
 
 export function useCurrentUser() {
-  const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.currentUser, () => fetchCurrentUser(ctx));
+  return useLane(queryKeys.currentUser, () => fetchCurrentUser(ctx));
 }
 
 export function useTeams() {
-  const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.teams, () => fetchTeams(ctx));
+  return useLane(queryKeys.teams, () => fetchTeams(ctx));
 }
 
 export function useTasks(filters: TaskFilters) {
-  const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.tasks(filters), () => fetchTasks(ctx, filters));
+  return useLane(queryKeys.tasks(filters), () => fetchTasks(ctx, filters), {
+    refetchOnFocus: true,
+    refetchOnMount: true,
+    staleTime: 1_000,
+  });
 }
 
 export function useTask(taskId: string) {
-  const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.task(taskId), () => fetchTask(ctx, taskId));
+  return useLane(queryKeys.task(taskId), () => fetchTask(ctx, taskId));
 }
 
 export function useProjects() {
-  const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.projects, () => fetchProjects(ctx));
+  return useLane(queryKeys.projects, () => fetchProjects(ctx));
 }
 
 export function useLabels() {
-  const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.labels, () => fetchLabels(ctx));
+  return useLane(queryKeys.labels, () => fetchLabels(ctx));
 }
 
 export function useMembers() {
-  const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.members, () => fetchMembers(ctx));
+  return useLane(queryKeys.members, () => fetchMembers(ctx));
 }
 
 export function useInsights() {
-  const lane = useWorkspaceLane();
   const ctx = useWorkspaceCtx();
-  return useLane(lane, queryKeys.insights, () => fetchInsights(ctx));
+  return useLane(queryKeys.insights, () => fetchInsights(ctx));
 }
 
 /* ------------------------------ Mutations ------------------------------ */
 
 export function useCreateTask() {
   const ctx = useWorkspaceCtx();
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
 
   return React.useCallback(async (input: CreateTaskInput): Promise<Task> => {
     const task = await createTask(ctx, input);
@@ -112,7 +108,7 @@ export function useCreateTask() {
 
 export function useUpdateTask(taskId: string) {
   const ctx = useWorkspaceCtx();
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
 
   return React.useCallback(async (
     input: UpdateTaskInput,
@@ -126,7 +122,7 @@ export function useUpdateTask(taskId: string) {
 
 export function useDeleteTask() {
   const ctx = useWorkspaceCtx();
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
 
   return React.useCallback(async (taskId: string): Promise<void> => {
     await deleteTask(ctx, taskId);
@@ -141,7 +137,7 @@ export function useDeleteTask() {
 
 export function useAddTaskLabel(taskId: string) {
   const ctx = useWorkspaceCtx();
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
 
   return React.useCallback(async (label: TeamLabel): Promise<Task> => {
     const task = await addTaskLabel(ctx, taskId, label.id);
@@ -152,7 +148,7 @@ export function useAddTaskLabel(taskId: string) {
 
 export function useRemoveTaskLabel(taskId: string) {
   const ctx = useWorkspaceCtx();
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
 
   return React.useCallback(async (labelId: string): Promise<Task> => {
     const task = await removeTaskLabel(ctx, taskId, labelId);
@@ -163,7 +159,7 @@ export function useRemoveTaskLabel(taskId: string) {
 
 export function useCreateLabel() {
   const ctx = useWorkspaceCtx();
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
 
   return React.useCallback(async (
     input: CreateLabelInput,
@@ -176,7 +172,7 @@ export function useCreateLabel() {
 
 export function useCreateProject() {
   const ctx = useWorkspaceCtx();
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
 
   return React.useCallback(async (
     input: CreateProjectInput,
@@ -190,7 +186,7 @@ export function useCreateProject() {
 /* ------------------------------- Refresh ------------------------------- */
 
 export function useWorkspaceRefresh() {
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
   const [isRefreshing, startRefresh] = React.useTransition();
 
   const refresh = React.useCallback(() => {
@@ -207,7 +203,7 @@ export function useWorkspaceRefresh() {
 }
 
 function publishTask(
-  lane: ReturnType<typeof useWorkspaceLane>,
+  lane: Lane,
   task: Task,
   strategy: TaskCacheStrategy,
 ) {
@@ -230,7 +226,7 @@ function publishTask(
 }
 
 function removeTaskFromTaskLists(
-  lane: ReturnType<typeof useWorkspaceLane>,
+  lane: Lane,
   taskId: string,
 ) {
   lane.updateAll<Task[]>(["tasks"], (tasks) =>
@@ -239,7 +235,7 @@ function removeTaskFromTaskLists(
 }
 
 function scheduleDerivedWorkspaceRefresh(
-  lane: ReturnType<typeof useWorkspaceLane>,
+  lane: Lane,
   refresh: { insights: boolean; projects: boolean },
 ) {
   if (!refresh.insights && !refresh.projects) {
@@ -258,7 +254,7 @@ function scheduleDerivedWorkspaceRefresh(
 }
 
 export function clearTeamScopedLaneEntries(
-  lane: ReturnType<typeof useWorkspaceLane>,
+  lane: Lane,
 ) {
   for (const key of TEAM_SCOPED_KEYS) {
     lane.removeAll(key);

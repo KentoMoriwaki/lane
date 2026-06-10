@@ -27,10 +27,10 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const { userId } = useWorkspace();
-  const { promise, isPending } = useTasks(filters);
+  const { promise, isTransitionPending } = useTasks(filters);
   const tasks = React.use(promise);
 
-  const dimmed = isPending;
+  const dimmed = isTransitionPending;
 
   if (tasks.length === 0) {
     return hasActiveFilters ? (

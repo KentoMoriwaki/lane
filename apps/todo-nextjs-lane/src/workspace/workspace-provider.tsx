@@ -1,15 +1,13 @@
 "use client";
 
-import { createLane, type Lane } from "@lane/lane";
+import { useLaneInstance } from "@lane/lane";
 import type { CurrentUser } from "@lane/todo-api";
 import { useSearchParams } from "next/navigation";
 import * as React from "react";
 import type { WorkspaceCtx } from "@/api/client";
-import { type WorkspaceSeeds, workspaceSeedEntries } from "@/api/query-options";
 
 type WorkspaceContextValue = {
   ctx: WorkspaceCtx;
-  lane: Lane;
   userId: string;
   sessionUser: CurrentUser;
   activeTeamId: string;
@@ -23,17 +21,13 @@ const WorkspaceContext = React.createContext<WorkspaceContextValue | null>(null)
 export function WorkspaceProvider({
   initialUser,
   initialTeamId,
-  initialSeeds,
   children,
 }: {
   initialUser: CurrentUser;
   initialTeamId: string;
-  initialSeeds: WorkspaceSeeds;
   children: React.ReactNode;
 }) {
-  const [lane] = React.useState(() => createLane());
-  lane.seedMany(workspaceSeedEntries(initialSeeds));
-
+  const lane = useLaneInstance();
   const searchParams = useSearchParams();
   const [userId] = React.useState(initialUser.id);
   const [isSignedIn, setIsSignedIn] = React.useState(true);
@@ -58,7 +52,6 @@ export function WorkspaceProvider({
       activeTeamId,
       ctx,
       isSignedIn,
-      lane,
       sessionUser: initialUser,
       signIn,
       signOut,
@@ -69,7 +62,6 @@ export function WorkspaceProvider({
       ctx,
       initialUser,
       isSignedIn,
-      lane,
       signIn,
       signOut,
       userId,
@@ -93,8 +85,4 @@ export function useWorkspace(): WorkspaceContextValue {
 
 export function useWorkspaceCtx(): WorkspaceCtx {
   return useWorkspace().ctx;
-}
-
-export function useWorkspaceLane(): Lane {
-  return useWorkspace().lane;
 }

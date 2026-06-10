@@ -5,6 +5,7 @@ import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";
 import { useWorkspaceRefresh } from "@/api/hooks";
 import { queryKeys } from "@/api/query-options";
 import { buildWorkspaceHref } from "@/api/url-state";
+import { useLaneInstance } from "@lane/lane";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { SectionError } from "./feedback";
 import { FilterBar } from "./filter-bar";
@@ -16,7 +17,7 @@ import { TaskDetailPanel } from "./task-detail-panel";
 import { TaskList, TaskListSkeleton } from "./task-list";
 import { Topbar } from "./topbar";
 import { useWorkspaceUrl } from "./use-workspace-url";
-import { useWorkspace, useWorkspaceLane } from "./workspace-provider";
+import { useWorkspace } from "./workspace-provider";
 
 export function Workspace() {
   const { isSignedIn } = useWorkspace();
@@ -40,7 +41,7 @@ function WorkspaceShell() {
     isPending: isViewPending,
   } = useWorkspaceUrl();
   const [createOpen, setCreateOpen] = React.useState(false);
-  const lane = useWorkspaceLane();
+  const lane = useLaneInstance();
   const { refresh, isRefreshing } = useWorkspaceRefresh();
 
   const viewHref = React.useCallback(

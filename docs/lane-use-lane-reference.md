@@ -19,7 +19,7 @@ The hook should:
 - keep the current promise in React state
 - detect key changes during render and switch to the new key's promise
 - subscribe to invalidation events for the current key
-- reload from the latest component-provided loader when invalidated
+- re-read with the latest component-provided loader when invalidated
 - never return `data`, `error`, `isLoading`, or query-status result objects
 - avoid storing optimistic values in Lane
 - avoid requiring Lane core to store every loader for later eager refetch
@@ -33,10 +33,21 @@ type LaneResult<T> = {
   invalidate: () => void;
 };
 
+type LaneUseOptions = {
+  staleTime?: number;
+  refetchOnMount?: boolean | "always";
+};
+
+type LaneInvalidateOptions = {
+  staleTime?: number;
+  onlyIf?: "stale" | "settled";
+};
+
 function useLane<T>(
   lane: Lane,
   key: LaneKey,
   loader: () => Promise<T>,
+  options?: LaneUseOptions,
 ): LaneResult<T> {
   const keyId = serializeKey(key);
   const [isPending, startTransition] = useTransition();
@@ -96,8 +107,9 @@ function useLanePromise<T>(
   lane: Lane,
   key: LaneKey,
   loader: () => Promise<T>,
+  options?: LaneUseOptions,
 ): Promise<T> {
-  return useLane(lane, key, loader).promise;
+  return useLane(lane, key, loader, options).promise;
 }
 ```
 
@@ -107,6 +119,12 @@ wrapper for call sites that only need the promise.
 The hook should not return resolved data or error state. Data is read with
 `use(promise)`, and errors are handled by Error Boundaries.
 
+`refetchOnMount` is a lifecycle policy over the same promise cache. It should
+not require Lane core to store loaders globally or expose a low-level reload API.
+The hook can first render from `readOrCreate`, then ask Lane to conditionally
+invalidate the cached promise. If the cache is cleared, mounted readers re-read
+through the same subscription path.
+
 ## Lane Store Assumptions
 
 The reference hook assumes a small Lane store contract:
@@ -115,8 +133,8 @@ The reference hook assumes a small Lane store contract:
 lane.seed(keyId, valueOrPromise)
 lane.seedMany(entries)
 lane.readOrCreate(keyId, loader)
-lane.invalidate(keyId)
-lane.invalidateAll(prefixOrPredicate)
+lane.invalidate(keyId, options?)
+lane.invalidateAll(prefixOrPredicate, options?)
 lane.set(keyId, valueOrPromise)
 lane.update(keyId, updater)
 lane.updateAll(prefixOrPredicate, updater)
@@ -134,36 +152,50 @@ string prefix checks.
 
 `seed` should behave like initialization:
 
-- if no entry exists, wrap the value or promise in a promise, store it, and leave
-  the entry valid
-- if an entry already exists, do nothing
+- if no cache exists for the key, wrap the value or promise in a promise and
+  store it
+- if a cache already exists for the key, do nothing
 - repeated seed calls must not overwrite data created by later client reads,
   invalidations, sets, or updates
 
-`seedMany` should apply the same set-only-if-absent rule to each exact entry.
+`seedMany` should apply the same set-only-if-no-cache rule to each exact entry.
 
 `readOrCreate` should behave like this:
 
-- if no entry exists, call `loader`, store the promise, and return it
-- if an entry exists and is valid, return the existing promise
-- if an entry exists and is invalidated, call `loader`, store the next promise,
-  clear the invalidated state, and return the next promise
+- if the key's entry has a cache, return the cached promise
+- if the key's entry has no cache, call `loader`, store the promise, and return
+  it
 
-`invalidate` should not call the loader. It should mark the entry invalid and
-notify subscribers. The subscribed `useLane` reader owns the current loader and
-creates the next promise when it handles the invalidation.
+It should not perform stale-time, invalidation, or reload policy. It only reads
+or creates the cached promise.
+
+`invalidate` should behave like this:
+
+- if no entry exists, do nothing
+- if an entry exists and the invalidation policy does not match, do nothing
+- if an entry exists and the policy matches, clear `entry.cache` and notify
+  subscribers
+
+The subscribed `useLane` reader owns the current loader and creates the next
+promise when it handles the invalidation through `readOrCreate`. Multiple
+readers for the same key are naturally deduped because the first reader creates
+the new cache and later readers return it.
 
 Invalidating an absent entry can be a no-op. Lane does not need to create an
 invalid placeholder for a key that has never been read or seeded.
 
-`replace` should behave like a prefilled invalidation: store the authoritative
-next promise first, clear any invalidated state for that entry, then notify
-invalidation subscribers. The `useLane` reader can handle it through the same
-invalidation path.
+`set` should behave like a prefilled invalidation: store the authoritative next
+promise first, then notify invalidation subscribers. The `useLane` reader can
+handle it through the same re-read path; `readOrCreate` returns the already
+stored promise.
 
 `remove` should delete the entry and notify remove subscribers. Remove is urgent:
 the reader should not preserve the removed promise through a transition.
 Removing an absent entry can be a no-op.
+
+If subscribers exist for the key, Lane can keep the key slot alive and clear only
+`entry.cache`. This preserves exact-key subscriptions while ensuring the removed
+promise is no longer cached.
 
 `invalidateAll` and `removeAll` should only operate on entries that already
 exist. They should notify the exact-key subscribers for each matching entry.
@@ -223,7 +255,7 @@ On invalidation:
 ```txt
 mutation confirms source changed
 -> lane.invalidate(keyId) or lane.invalidateAll(scope)
--> Lane marks matching entries invalid and notifies current subscribers
+-> Lane clears cache for matching entries and notifies current subscribers
 -> useLane receives the invalidation event
 -> startTransition schedules promise replacement
 -> readOrCreate uses the latest loader from this component
@@ -244,7 +276,7 @@ application has authoritative next value or promise
 -> Lane normalizes it to a promise and stores it in the entry
 -> Lane notifies invalidation subscribers
 -> useLane handles it through the same transition path as invalidation
--> readOrCreate returns the already stored promise
+-> readOrCreate returns the already stored promise on the next read
 -> component renders from the authoritative promise
 ```
 
@@ -257,13 +289,16 @@ On update:
 ```txt
 application has a patch for an existing value
 -> lane.update(keyId, updater) or lane.updateAll(prefixOrPredicate, updater)
--> fulfilled entries apply the updater immediately
--> pending entries chain the updater onto the current promise
--> rejected or missing entries are not changed
+-> Lane chains the updater onto the current cached promise
+-> known rejected or missing entries are not changed
 -> Lane notifies invalidation subscribers for changed entries
--> readOrCreate returns the already stored updated promise
+-> readOrCreate returns the already stored updated promise on the next read
 -> component renders from the updated promise
 ```
+
+Lane does not need to keep a resolved value store to support `update`. The update
+operation can replace the cached promise with a derived promise from
+`entry.cache.promise.then(current => updater(current, entryInfo))`.
 
 ## Removal Behavior
 
@@ -272,14 +307,14 @@ On removal:
 ```txt
 entry no longer belongs in current client state
 -> lane.remove(keyId) or lane.removeAll(scope)
--> Lane deletes matching entries and notifies current subscribers
+-> Lane clears cache for matching entries and notifies current subscribers
 -> useLane handles removal urgently, without startTransition
 -> mounted reader stops using the removed promise immediately
 ```
 
 If the component still renders the same read after removal, it may create a fresh
-promise from the current loader. If the surrounding UI unmounts the read, the
-entry simply remains absent.
+promise from the current loader. If the surrounding UI unmounts the read and no
+cache exists, the key slot can be deleted.
 
 ## React Compiler Constraint
 
@@ -316,13 +351,14 @@ replacement work depends on it:
 - exact lookup by canonical key id
 - scoped matching over existing entries by structural prefix or predicate
 - `seed` / `seedMany` set only absent entries
-- `readOrCreate` returns the existing valid promise for the same key
-- invalidated entries create the next promise only when read with a loader
+- `readOrCreate` returns the existing cached promise for the same key
+- invalidation clears the cached promise and mounted readers create the next
+  promise by re-reading with their current loader
 - exact invalidation notifies only subscribers for that exact key
 - scoped invalidation notifies exact subscribers for each matching existing entry
-- `replace` stores an authoritative promise and then uses the invalidation
+- `set` stores an authoritative promise and then uses the invalidation
   subscriber path
-- `remove` deletes entries and notifies remove subscribers urgently
+- `remove` clears cache and notifies remove subscribers urgently
 - `useLane` keeps the current promise in React state and returns no query-result
   fields
 - `useLane` does not defer keys internally

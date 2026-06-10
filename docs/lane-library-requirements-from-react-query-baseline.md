@@ -18,7 +18,7 @@ Lane library responsibilities:
 
 - own promise identity for keyed async reads
 - let React render from those promises
-- notify exact-key subscribers when entries are invalidated, replaced, or removed
+- notify exact-key subscribers when entries are invalidated, set, or removed
 - support initial seeding for RSC-seeded client ownership
 - support invalidating promise entries when source data changes
 - support publishing already available authoritative data
@@ -58,8 +58,8 @@ differs.
 
 ### Promise Entry Creation
 
-Lane must return a stable promise for a key until the entry is explicitly
-invalidated, replaced, or removed.
+Lane must return a stable promise for a key until the entry cache is explicitly
+invalidated, set to an authoritative promise, or removed.
 
 If no entry exists, Lane may call the provided loader, store the returned
 promise, and return it. React components should be able to unwrap the returned
@@ -188,12 +188,13 @@ whole-store clear.
 ### Subscriptions
 
 Lane must support exact-key subscriptions. Subscribers for a key need to be
-notified when that key is invalidated, removed, or replaced.
+notified when that key is invalidated, removed, or set to an authoritative
+promise.
 
 For invalidation, the notification lets mounted readers re-render and create the
-next promise from their current loader. For replacement, subscribers can take the
-same invalidation path after the next authoritative promise has already been
-stored. For removal, subscribers need to stop using the removed promise. This
+next promise from their current loader. For authoritative `set`, subscribers can
+take the same invalidation path after the next promise has already been stored.
+For removal, subscribers need to stop using the removed promise. This
 lets distant client consumers converge without sharing a global resolved-value
 store.
 
@@ -210,9 +211,10 @@ a transition.
 Lane does not need a `keepPreviousData` option if its promise identity updates
 work correctly with Suspense boundaries and transitions.
 
-## Explicit Non-Requirements
+## Outside The Initial Baseline Scope
 
-Lane library core does not need to provide:
+Lane library core does not need to provide the following capabilities to replace
+the current React Query todo baseline:
 
 - `useQuery`-style result objects
 - `data` / `error` / `isLoading` hook fields
@@ -224,13 +226,26 @@ Lane library core does not need to provide:
 - URL state behavior
 - task/team/session semantics
 - toast or form error behavior
-- automatic stale-time refetch
-- focus refetch
-- polling
-- garbage collection policy
 - global devtools
-- generalized retry policy
 - synchronous resolved-value reads
 
 Some of these may be implemented later, but they are not required to replace
 the current React Query baseline.
+
+The following React Query lifecycle capabilities are also outside this initial
+baseline scope, but that should not be read as a permanent Lane non-goal:
+
+- freshness tracking such as `staleTime`, `dataUpdatedAt`, or `isStale`
+- mount-triggered reload, such as `refetchOnMount`
+- focus-triggered reload, such as `refetchOnWindowFocus`
+- reconnect-triggered reload, such as `refetchOnReconnect`
+- polling, such as `refetchInterval`
+- garbage collection for inactive entries, such as `gcTime`
+- generalized retry policy, such as `retry`, `retryDelay`, and `retryOnMount`
+
+If Lane adds these later, they should be designed as query lifecycle behavior on
+top of keyed promise entries rather than as mutation state, optimistic state, or
+`useQuery`-style result objects.
+
+See `docs/lane-query-lifecycle-requirements.md` for the user-facing
+requirements and core boundary for these lifecycle capabilities.

@@ -1,5 +1,6 @@
 "use client";
 
+import { useLaneInstance } from "@lane/lane";
 import { Check, ChevronsUpDown, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -28,7 +29,8 @@ function teamInitials(name: string) {
 
 export function TeamSwitcher() {
   const pathname = usePathname();
-  const { activeTeamId, lane } = useWorkspace();
+  const { activeTeamId } = useWorkspace();
+  const lane = useLaneInstance();
   const teams = React.use(useTeams().promise);
 
   const active = teams.find((team) => team.id === activeTeamId) ?? teams[0];

@@ -1,5 +1,8 @@
+"use client";
+
 import * as React from "react";
 import { hydrateMany } from "./core";
+import { useLaneInstance } from "./provider";
 import type { Lane, LaneHydrationSnapshots } from "./types";
 
 const hydrationResources = new WeakMap<
@@ -8,14 +11,14 @@ const hydrationResources = new WeakMap<
 >();
 
 export function LaneHydration({
-  lane,
   snapshots,
   children,
 }: {
-  lane: Lane;
   snapshots: LaneHydrationSnapshots;
   children: React.ReactNode;
 }) {
+  const lane = useLaneInstance();
+
   React.use(getHydrationPromise(lane, snapshots));
 
   return children;

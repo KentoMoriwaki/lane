@@ -1,3 +1,4 @@
+import { LaneHydration, LaneProvider } from "@lane/lane";
 import { redirect } from "next/navigation";
 import {
   fetchCurrentUser,
@@ -51,26 +52,27 @@ export default async function Page({ searchParams }: PageProps) {
       ? fetchTask(ctx, requested.selectedTaskId).catch(() => null)
       : Promise.resolve(null),
   ]);
+  const snapshots = workspaceSnapshots({
+    currentUser: user,
+    insights,
+    labels,
+    members,
+    projects,
+    selectedTask,
+    tasks: {
+      data: tasks,
+      filters: requested.filters,
+    },
+    teams,
+  });
 
   return (
-    <WorkspaceProvider
-      initialUser={user}
-      initialTeamId={teamId}
-      snapshots={workspaceSnapshots({
-        currentUser: user,
-        insights,
-        labels,
-        members,
-        projects,
-        selectedTask,
-        tasks: {
-          data: tasks,
-          filters: requested.filters,
-        },
-        teams,
-      })}
-    >
-      <Workspace />
-    </WorkspaceProvider>
+    <LaneProvider>
+      <WorkspaceProvider initialUser={user} initialTeamId={teamId}>
+        <LaneHydration snapshots={snapshots}>
+          <Workspace />
+        </LaneHydration>
+      </WorkspaceProvider>
+    </LaneProvider>
   );
 }

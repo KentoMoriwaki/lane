@@ -1,3 +1,5 @@
+"use client";
+
 import {
   useCallback,
   useEffect,
@@ -12,6 +14,7 @@ import {
   readOrCreate,
 } from "./core";
 import { serializeKey } from "./keys";
+import { useLaneInstance } from "./provider";
 import type {
   Lane,
   LaneInvalidateOptions,
@@ -21,11 +24,11 @@ import type {
 } from "./types";
 
 export function useLane<T>(
-  lane: Lane,
   key: LaneKey,
   loader: () => Promise<T>,
   options: LaneUseOptions = {},
 ): LaneResult<T> {
+  const lane = useLaneInstance();
   const keyId = serializeKey(key);
   const [isPending, startTransition] = useTransition();
   const [promise, setPromise] = useState<Promise<T>>(() =>
@@ -96,12 +99,11 @@ export function useLane<T>(
 }
 
 export function useLanePromise<T>(
-  lane: Lane,
   key: LaneKey,
   loader: () => Promise<T>,
   options?: LaneUseOptions,
 ): Promise<T> {
-  return useLane(lane, key, loader, options).promise;
+  return useLane(key, loader, options).promise;
 }
 
 function invalidateOptionsForRefetchOnMount(

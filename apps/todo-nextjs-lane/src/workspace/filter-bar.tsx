@@ -196,10 +196,15 @@ export function FilterBar({
       ) : null}
 
       <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-        {tasksResult.isPending ? (
+        {tasksResult.isTransitionPending ? (
           <span className="inline-flex items-center gap-1 text-cobalt">
             <RotateCw className="size-3 animate-spin" />
             Updating
+          </span>
+        ) : tasksResult.isBackgroundPending ? (
+          <span className="inline-flex items-center gap-1 text-muted-foreground">
+            <RotateCw className="size-3 animate-spin" />
+            Syncing
           </span>
         ) : null}
         <span className="tabular-nums">

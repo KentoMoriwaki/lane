@@ -10,6 +10,7 @@ export type {
   LaneHydrationSnapshots,
   LaneInvalidateOptions,
   LaneKey,
+  LaneRefetchOnFocus,
   LaneRefetchOnMount,
   LaneResult,
   LaneScope,

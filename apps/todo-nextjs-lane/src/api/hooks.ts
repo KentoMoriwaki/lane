@@ -57,6 +57,7 @@ export function useTeams() {
 export function useTasks(filters: TaskFilters) {
   const ctx = useWorkspaceCtx();
   return useLane(queryKeys.tasks(filters), () => fetchTasks(ctx, filters), {
+    refetchOnFocus: true,
     refetchOnMount: true,
     staleTime: 1_000,
   });

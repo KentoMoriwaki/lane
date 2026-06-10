@@ -9,10 +9,10 @@ import {
 } from "react";
 import {
   invalidateEntry,
-  onInvalidate as subscribeInvalidate,
-  onRemove as subscribeRemove,
   readOrCreate,
+  subscribeLane,
 } from "./core";
+import type { LaneInvalidationSource } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneInstance } from "./provider";
 import type {
@@ -30,7 +30,8 @@ export function useLane<T>(
 ): LaneResult<T> {
   const lane = useLaneInstance();
   const keyId = serializeKey(key);
-  const [isPending, startTransition] = useTransition();
+  const [isTransitionPending, startTransition] = useTransition();
+  const [isBackgroundPending, startBackgroundTransition] = useTransition();
   const [promise, setPromise] = useState<Promise<T>>(() =>
     readOrCreate(lane, key, loader),
   );
@@ -46,14 +47,25 @@ export function useLane<T>(
     setPromise(nextPromise);
   }
 
-  const onInvalidate = useEffectEvent((targetKey: LaneKey) => {
-    startTransition(() => {
-      setPromise(readOrCreate(lane, targetKey, loader));
-    });
+  const onInvalidate = useEffectEvent((
+    targetLane: Lane,
+    targetKey: LaneKey,
+    source: LaneInvalidationSource,
+  ) => {
+    const updatePromise = () => {
+      setPromise(readOrCreate(targetLane, targetKey, loader));
+    };
+
+    if (source === "background") {
+      startBackgroundTransition(updatePromise);
+      return;
+    }
+
+    startTransition(updatePromise);
   });
 
-  const onRemove = useEffectEvent((targetKey: LaneKey) => {
-    const nextPromise = readOrCreate(lane, targetKey, loader);
+  const onRemove = useEffectEvent((targetLane: Lane, targetKey: LaneKey) => {
+    const nextPromise = readOrCreate(targetLane, targetKey, loader);
     setPromise(nextPromise);
   });
 
@@ -65,23 +77,29 @@ export function useLane<T>(
         return;
       }
 
-      invalidateEntry(targetLane, targetKeyId, invalidateOptions);
+      invalidateEntry(
+        targetLane,
+        targetKeyId,
+        invalidateOptions,
+        "background",
+      );
     },
   );
 
   useEffect(() => {
-    const unsubscribeInvalidate = subscribeInvalidate(lane, keyId, (entry) => {
-      onInvalidate(entry.key);
+    return subscribeLane(lane, keyId, {
+      onInvalidate: (entry, source) => {
+        onInvalidate(lane, entry.key, source);
+      },
+      onRemove: (entry) => {
+        onRemove(lane, entry.key);
+      },
+      options: {
+        refetchOnFocus: options.refetchOnFocus,
+        staleTime: options.staleTime,
+      },
     });
-    const unsubscribeRemove = subscribeRemove(lane, keyId, (entry) => {
-      onRemove(entry.key);
-    });
-
-    return () => {
-      unsubscribeInvalidate();
-      unsubscribeRemove();
-    };
-  }, [lane, keyId]);
+  }, [lane, keyId, options.refetchOnFocus, options.staleTime]);
 
   useEffect(() => {
     refetchOnMount(lane, keyId);
@@ -92,8 +110,9 @@ export function useLane<T>(
   }, [lane, keyId]);
 
   return {
+    isBackgroundPending,
+    isTransitionPending,
     invalidate,
-    isPending,
     promise: effectivePromise,
   };
 }

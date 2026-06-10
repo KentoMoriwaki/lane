@@ -7,10 +7,24 @@ import type {
   LaneKey,
   LaneScope,
   LaneUpdater,
+  LaneUseOptions,
   LaneValue,
 } from "./types";
 
-type LaneSubscription = (entry: LaneEntryInfo) => void;
+export type LaneInvalidationSource = "background" | "transition";
+
+type LaneSubscription = (
+  entry: LaneEntryInfo,
+  source: LaneInvalidationSource,
+) => void;
+
+type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
+
+type LaneSubscriber = {
+  onInvalidate?: LaneSubscription;
+  onRemove?: LaneRemoveSubscription;
+  options: Pick<LaneUseOptions, "refetchOnFocus" | "staleTime">;
+};
 
 type LaneState = {
   entries: Map<string, LaneEntry>;
@@ -31,8 +45,7 @@ type LaneEntry = {
   key: LaneKey;
   keyId: string;
   cache: LanePromiseCache | undefined;
-  invalidateListeners: Set<LaneSubscription>;
-  removeListeners: Set<LaneSubscription>;
+  subscribers: Set<LaneSubscriber>;
 };
 
 const laneStates = new WeakMap<Lane, LaneState>();
@@ -73,7 +86,7 @@ export function createLane(): Lane {
     const entry = getOrCreateEntry(state, key, keyId);
     const promise = setEntryCache(entry, valueOrPromise);
 
-    notify(entry.invalidateListeners, entry);
+    notifyInvalidate(entry, "transition");
 
     return promise;
   }
@@ -111,14 +124,14 @@ export function createLane(): Lane {
     }
 
     removeEntryCache(entry);
-    notify(entry.removeListeners, entry);
+    notifyRemove(entry);
     cleanupEntry(entry);
   }
 
   function removeAll(scope: LaneScope): void {
     for (const entry of matchingEntries(state.entries, scope)) {
       removeEntryCache(entry);
-      notify(entry.removeListeners, entry);
+      notifyRemove(entry);
       cleanupEntry(entry);
     }
   }
@@ -153,7 +166,7 @@ export function createLane(): Lane {
     );
     const updated = setEntryCache(entry, valueOrPromise);
 
-    notify(entry.invalidateListeners, entry);
+    notifyInvalidate(entry, "transition");
 
     return updated as Promise<T>;
   }
@@ -167,16 +180,12 @@ export function createLane(): Lane {
     }
 
     removeEntryCache(entry);
-    notify(entry.invalidateListeners, entry);
+    notifyInvalidate(entry, "transition");
     cleanupEntry(entry);
   }
 
   function cleanupEntry(entry: LaneEntry): void {
-    if (
-      entry.cache ||
-      entry.invalidateListeners.size > 0 ||
-      entry.removeListeners.size > 0
-    ) {
+    if (entry.cache || entry.subscribers.size > 0) {
       return;
     }
 
@@ -218,6 +227,7 @@ export function invalidateEntry(
   lane: Lane,
   keyId: string,
   options: LaneInvalidateOptions = {},
+  source: LaneInvalidationSource = "transition",
 ): void {
   const entry = getExistingEntry(lane, keyId);
 
@@ -230,8 +240,44 @@ export function invalidateEntry(
   }
 
   removeEntryCache(entry);
-  notify(entry.invalidateListeners, entry);
+  notifyInvalidate(entry, source);
   cleanupExistingEntry(lane, entry);
+}
+
+export function refetchOnFocus(lane: Lane): void {
+  const state = getLaneState(lane);
+
+  for (const entry of [...state.entries.values()]) {
+    const options = invalidateOptionsForFocus(entry);
+
+    if (!options) {
+      continue;
+    }
+
+    if (!shouldInvalidateEntry(entry, options)) {
+      continue;
+    }
+
+    removeEntryCache(entry);
+    notifyInvalidate(entry, "background");
+    cleanupExistingEntry(lane, entry);
+  }
+}
+
+export function subscribeLane(
+  lane: Lane,
+  keyId: string,
+  subscriber: LaneSubscriber,
+): () => void {
+  const entry = getExistingEntry(lane, keyId);
+
+  if (!entry) {
+    return noop;
+  }
+
+  return subscribe(entry.subscribers, subscriber, () =>
+    cleanupExistingEntry(lane, entry),
+  );
 }
 
 export function onInvalidate(
@@ -239,51 +285,52 @@ export function onInvalidate(
   keyId: string,
   listener: LaneSubscription,
 ): () => void {
-  const entry = getExistingEntry(lane, keyId);
-
-  if (!entry) {
-    return noop;
-  }
-
-  return subscribe(entry.invalidateListeners, listener, () =>
-    cleanupExistingEntry(lane, entry),
-  );
+  return subscribeLane(lane, keyId, {
+    onInvalidate: listener,
+    options: {},
+  });
 }
 
 export function onRemove(
   lane: Lane,
   keyId: string,
-  listener: LaneSubscription,
+  listener: LaneRemoveSubscription,
 ): () => void {
-  const entry = getExistingEntry(lane, keyId);
-
-  if (!entry) {
-    return noop;
-  }
-
-  return subscribe(entry.removeListeners, listener, () =>
-    cleanupExistingEntry(lane, entry),
-  );
+  return subscribeLane(lane, keyId, {
+    onRemove: listener,
+    options: {},
+  });
 }
 
 function subscribe(
-  listeners: Set<LaneSubscription>,
-  listener: LaneSubscription,
+  subscribers: Set<LaneSubscriber>,
+  subscriber: LaneSubscriber,
   cleanup: () => void,
 ): () => void {
-  listeners.add(listener);
+  subscribers.add(subscriber);
 
   return () => {
-    listeners.delete(listener);
+    subscribers.delete(subscriber);
     cleanup();
   };
 }
 
-function notify(listeners: Set<LaneSubscription>, entry: LaneEntry): void {
+function notifyInvalidate(
+  entry: LaneEntry,
+  source: LaneInvalidationSource,
+): void {
   const info = entryInfo(entry);
 
-  for (const listener of [...listeners]) {
-    listener(info);
+  for (const subscriber of [...entry.subscribers]) {
+    subscriber.onInvalidate?.(info, source);
+  }
+}
+
+function notifyRemove(entry: LaneEntry): void {
+  const info = entryInfo(entry);
+
+  for (const subscriber of [...entry.subscribers]) {
+    subscriber.onRemove?.(info);
   }
 }
 
@@ -311,11 +358,7 @@ function getExistingEntry(lane: Lane, keyId: string): LaneEntry | undefined {
 function cleanupExistingEntry(lane: Lane, entry: LaneEntry): void {
   const state = getLaneState(lane);
 
-  if (
-    entry.cache ||
-    entry.invalidateListeners.size > 0 ||
-    entry.removeListeners.size > 0
-  ) {
+  if (entry.cache || entry.subscribers.size > 0) {
     return;
   }
 
@@ -340,6 +383,37 @@ function entryInfo(entry: LaneEntry): LaneEntryInfo {
 }
 
 function noop(): void {}
+
+function invalidateOptionsForFocus(
+  entry: LaneEntry,
+): LaneInvalidateOptions | undefined {
+  let staleTime: number | undefined;
+  let shouldRefetchStale = false;
+
+  for (const subscriber of entry.subscribers) {
+    const refetchOnFocus = subscriber.options.refetchOnFocus ?? false;
+
+    if (refetchOnFocus === "always") {
+      return { onlyIf: "settled" };
+    }
+
+    if (refetchOnFocus !== true) {
+      continue;
+    }
+
+    shouldRefetchStale = true;
+    staleTime = Math.min(
+      staleTime ?? Infinity,
+      subscriber.options.staleTime ?? 0,
+    );
+  }
+
+  if (!shouldRefetchStale) {
+    return undefined;
+  }
+
+  return { onlyIf: "stale", staleTime };
+}
 
 function matchingEntries(
   entries: Map<string, LaneEntry>,
@@ -369,10 +443,9 @@ function createEntry(
 ): LaneEntry {
   return {
     cache: undefined,
-    invalidateListeners: new Set(),
     key,
     keyId,
-    removeListeners: new Set(),
+    subscribers: new Set(),
   };
 }
 

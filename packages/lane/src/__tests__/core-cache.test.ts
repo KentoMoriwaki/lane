@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hydrateMany, readOrCreate } from "../core";
+import { hydrateMany, readOrCreate, refetchOnFocus } from "../core";
 import { createLane } from "../index";
 import { serializeKey } from "../keys";
 import {
@@ -8,6 +8,7 @@ import {
   settlePromiseHandlers,
   subscribeInvalidate,
   subscribeRemove,
+  subscribeWithOptions,
 } from "./test-utils";
 
 afterEach(resetVitest);
@@ -202,10 +203,13 @@ describe("invalidate", () => {
     lane.invalidate(["tasks"]);
 
     expect(tasksListener).toHaveBeenCalledTimes(1);
-    expect(tasksListener).toHaveBeenCalledWith({
-      key: ["tasks"],
-      keyId: serializeKey(["tasks"]),
-    });
+    expect(tasksListener).toHaveBeenCalledWith(
+      {
+        key: ["tasks"],
+        keyId: serializeKey(["tasks"]),
+      },
+      "transition",
+    );
     expect(teamsListener).not.toHaveBeenCalled();
   });
 
@@ -414,5 +418,110 @@ describe("conditional invalidation", () => {
 
     pending.resolve("done");
     await expect(pending.promise).resolves.toBe("done");
+  });
+});
+
+describe("focus refetch", () => {
+  it("invalidates each focused stale entry once using the most aggressive staleTime", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+
+    const lane = createLane();
+    const loader = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("reloaded");
+    const observed: Promise<string>[] = [];
+    const firstListener = vi.fn(() => {
+      observed.push(readOrCreate(lane, ["tasks"], loader));
+    });
+    const secondListener = vi.fn(() => {
+      observed.push(readOrCreate(lane, ["tasks"], loader));
+    });
+
+    lane.set(["tasks"], "cached");
+    subscribeWithOptions(
+      lane,
+      ["tasks"],
+      {
+        refetchOnFocus: true,
+        staleTime: 10_000,
+      },
+      firstListener,
+    );
+    subscribeWithOptions(
+      lane,
+      ["tasks"],
+      {
+        refetchOnFocus: true,
+        staleTime: 1_000,
+      },
+      secondListener,
+    );
+
+    vi.setSystemTime(1_999);
+    refetchOnFocus(lane);
+
+    expect(firstListener).not.toHaveBeenCalled();
+    expect(secondListener).not.toHaveBeenCalled();
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "too-early"),
+    ).resolves.toBe("cached");
+
+    vi.setSystemTime(2_000);
+    refetchOnFocus(lane);
+
+    expect(firstListener).toHaveBeenCalledTimes(1);
+    expect(secondListener).toHaveBeenCalledTimes(1);
+    expect(observed).toHaveLength(2);
+    expect(observed[1]).toBe(observed[0]);
+    await expect(observed[0]).resolves.toBe("reloaded");
+    expect(loader).toHaveBeenCalledTimes(1);
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe(
+      "reloaded",
+    );
+  });
+
+  it("always-focused subscribers invalidate settled cache even when it is fresh", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+
+    const lane = createLane();
+    const listener = vi.fn();
+
+    lane.set(["tasks"], "cached");
+    subscribeWithOptions(
+      lane,
+      ["tasks"],
+      {
+        refetchOnFocus: "always",
+        staleTime: 60_000,
+      },
+      listener,
+    );
+
+    refetchOnFocus(lane);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "reloaded"),
+    ).resolves.toBe("reloaded");
+  });
+
+  it("does not invalidate entries without focus subscribers", async () => {
+    const lane = createLane();
+    const listener = vi.fn();
+
+    lane.set(["tasks"], "cached");
+    subscribeWithOptions(lane, ["tasks"], {
+      refetchOnFocus: false,
+      staleTime: 0,
+    }, listener);
+
+    refetchOnFocus(lane);
+
+    expect(listener).not.toHaveBeenCalled();
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "reloaded"),
+    ).resolves.toBe("cached");
   });
 });

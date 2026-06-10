@@ -42,13 +42,17 @@ export type Lane = {
 
 export type LaneResult<T> = {
   promise: Promise<T>;
-  isPending: boolean;
+  isBackgroundPending: boolean;
+  isTransitionPending: boolean;
   invalidate: () => void;
 };
 
 export type LaneRefetchOnMount = boolean | "always";
 
+export type LaneRefetchOnFocus = boolean | "always";
+
 export type LaneUseOptions = {
   staleTime?: number;
+  refetchOnFocus?: LaneRefetchOnFocus;
   refetchOnMount?: LaneRefetchOnMount;
 };

@@ -10,6 +10,7 @@
     "dev:todo-nextjs-lane": "pnpm --filter @lane/todo-nextjs-lane dev",
     "dev:todo-nextjs-react-query": "pnpm --filter @lane/todo-nextjs-react-query dev",
     "build": "pnpm -r build",
+    "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {

@@ -61,11 +61,15 @@ export type LaneRefetchOnMount = boolean | "always";
 
 export type LaneRefetchOnFocus = boolean | "always";
 
+export type LaneRefetchOnReconnect = boolean | "always";
+
 export type LaneUseOptions = {
   staleTime?: number;
   gcTime?: number;
   retry?: number;
   retryDelay?: LaneRetryDelay;
+  refetchInterval?: number;
   refetchOnFocus?: LaneRefetchOnFocus;
   refetchOnMount?: LaneRefetchOnMount;
+  refetchOnReconnect?: LaneRefetchOnReconnect;
 };

@@ -31,8 +31,17 @@ type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
 type LaneSubscriber = {
   onInvalidate?: LaneSubscription;
   onRemove?: LaneRemoveSubscription;
-  options: Pick<LaneUseOptions, "refetchOnFocus" | "staleTime" | "gcTime">;
+  options: Pick<
+    LaneUseOptions,
+    | "gcTime"
+    | "refetchInterval"
+    | "refetchOnFocus"
+    | "refetchOnReconnect"
+    | "staleTime"
+  >;
 };
+
+type LaneRevalidateTrigger = boolean | "always" | undefined;
 
 type LaneState = {
   entries: Map<string, LaneEntry>;
@@ -59,6 +68,8 @@ type LaneEntry = {
   lastFulfilled: { value: unknown; at: number } | undefined;
   gcTime: number | undefined;
   gcTimer: ReturnType<typeof setTimeout> | undefined;
+  pollInterval: number | undefined;
+  pollTimer: ReturnType<typeof setInterval> | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -194,10 +205,21 @@ export function invalidateEntry(
 }
 
 export function refetchOnFocus(lane: Lane): void {
+  revalidateEntries(lane, (options) => options.refetchOnFocus);
+}
+
+export function refetchOnReconnect(lane: Lane): void {
+  revalidateEntries(lane, (options) => options.refetchOnReconnect);
+}
+
+function revalidateEntries(
+  lane: Lane,
+  pick: (options: LaneSubscriber["options"]) => LaneRevalidateTrigger,
+): void {
   const state = getLaneState(lane);
 
   for (const entry of [...state.entries.values()]) {
-    const options = invalidateOptionsForFocus(entry);
+    const options = invalidateOptionsForTrigger(entry, pick);
 
     if (!options) {
       continue;
@@ -222,9 +244,11 @@ export function subscribeLane(
 
   disarmGc(entry);
   entry.subscribers.add(subscriber);
+  recomputePolling(state, entry);
 
   return () => {
     entry.subscribers.delete(subscriber);
+    recomputePolling(state, entry);
 
     if (entry.subscribers.size > 0) {
       return;
@@ -327,6 +351,7 @@ function cleanupEntry(state: LaneState, entry: LaneEntry): void {
   }
 
   disarmGc(entry);
+  disarmPolling(entry);
   state.entries.delete(entry.keyId);
 }
 
@@ -385,20 +410,21 @@ function entryInfo(entry: LaneEntry): LaneEntryInfo {
 
 function noop(): void {}
 
-function invalidateOptionsForFocus(
+function invalidateOptionsForTrigger(
   entry: LaneEntry,
+  pick: (options: LaneSubscriber["options"]) => LaneRevalidateTrigger,
 ): LaneInvalidateOptions | undefined {
   let staleTime: number | undefined;
   let shouldRefetchStale = false;
 
   for (const subscriber of entry.subscribers) {
-    const refetchOnFocus = subscriber.options.refetchOnFocus ?? false;
+    const trigger = pick(subscriber.options) ?? false;
 
-    if (refetchOnFocus === "always") {
+    if (trigger === "always") {
       return { onlyIf: "settled" };
     }
 
-    if (refetchOnFocus !== true) {
+    if (trigger !== true) {
       continue;
     }
 
@@ -493,6 +519,8 @@ function createEntry(
     key,
     keyId,
     lastFulfilled: undefined,
+    pollInterval: undefined,
+    pollTimer: undefined,
     subscribers: new Set(),
   };
 }
@@ -630,6 +658,64 @@ function disarmGc(entry: LaneEntry): void {
 
   clearTimeout(entry.gcTimer);
   entry.gcTimer = undefined;
+}
+
+/**
+ * Keeps one interval timer per entry, driven by the smallest positive
+ * refetchInterval across current subscribers. Ticks go through the regular
+ * settled-only invalidation, so pending reads dedupe naturally and readers
+ * converge through their background transition.
+ */
+function recomputePolling(state: LaneState, entry: LaneEntry): void {
+  const interval = pollIntervalFor(entry);
+
+  if (interval === entry.pollInterval) {
+    return;
+  }
+
+  disarmPolling(entry);
+  entry.pollInterval = interval;
+
+  if (interval === undefined) {
+    return;
+  }
+
+  const timer = setInterval(() => {
+    invalidateLaneEntry(state, entry, { onlyIf: "settled" }, "background");
+  }, interval);
+
+  entry.pollTimer = timer;
+  unrefTimer(timer);
+}
+
+function pollIntervalFor(entry: LaneEntry): number | undefined {
+  let interval: number | undefined;
+
+  for (const subscriber of entry.subscribers) {
+    const candidate = subscriber.options.refetchInterval;
+
+    if (
+      candidate === undefined ||
+      candidate <= 0 ||
+      !Number.isFinite(candidate)
+    ) {
+      continue;
+    }
+
+    interval = Math.min(interval ?? Infinity, candidate);
+  }
+
+  return interval;
+}
+
+function disarmPolling(entry: LaneEntry): void {
+  if (entry.pollTimer === undefined) {
+    return;
+  }
+
+  clearInterval(entry.pollTimer);
+  entry.pollTimer = undefined;
+  entry.pollInterval = undefined;
 }
 
 function unrefTimer(timer: unknown): void {

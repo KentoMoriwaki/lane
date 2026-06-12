@@ -44,7 +44,14 @@ export function subscribeRemove(
 export function subscribeWithOptions(
   lane: Lane,
   key: LaneKey,
-  options: Pick<LaneUseOptions, "refetchOnFocus" | "staleTime" | "gcTime">,
+  options: Pick<
+    LaneUseOptions,
+    | "gcTime"
+    | "refetchInterval"
+    | "refetchOnFocus"
+    | "refetchOnReconnect"
+    | "staleTime"
+  >,
   listener: TestSubscription = vi.fn(),
 ): () => void {
   return subscribeLane(lane, key, {

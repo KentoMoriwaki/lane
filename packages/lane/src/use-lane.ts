@@ -122,7 +122,9 @@ export function useLane<T>(
       },
       options: {
         gcTime: options.gcTime,
+        refetchInterval: options.refetchInterval,
         refetchOnFocus: options.refetchOnFocus,
+        refetchOnReconnect: options.refetchOnReconnect,
         staleTime: options.staleTime,
       },
     });
@@ -130,7 +132,15 @@ export function useLane<T>(
     syncAfterSubscribe(lane, key);
 
     return unsubscribe;
-  }, [lane, keyId, options.gcTime, options.refetchOnFocus, options.staleTime]);
+  }, [
+    lane,
+    keyId,
+    options.gcTime,
+    options.refetchInterval,
+    options.refetchOnFocus,
+    options.refetchOnReconnect,
+    options.staleTime,
+  ]);
 
   useEffect(() => {
     refetchOnMount(lane, keyId);

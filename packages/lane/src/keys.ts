@@ -35,6 +35,11 @@ function stableStringify(value: unknown): string {
     return `${value.toString()}n`;
   }
 
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isNaN(time) ? "Date(invalid)" : `Date(${value.toISOString()})`;
+  }
+
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableStringify(item)).join(",")}]`;
   }

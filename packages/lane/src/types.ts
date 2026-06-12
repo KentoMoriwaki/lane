@@ -2,6 +2,15 @@ export type LaneKey = readonly unknown[];
 
 export type LaneValue<T> = T | Promise<T>;
 
+export type LaneLoaderContext = {
+  key: LaneKey;
+  signal: AbortSignal;
+};
+
+export type LaneLoader<T> = (context: LaneLoaderContext) => Promise<T>;
+
+export type LaneRetryDelay = (attempt: number, error: unknown) => number;
+
 export type LaneScope =
   | LaneKey
   | ((entry: { key: LaneKey; keyId: string }) => boolean);
@@ -42,6 +51,7 @@ export type Lane = {
 
 export type LaneResult<T> = {
   promise: Promise<T>;
+  refreshError: unknown;
   isBackgroundPending: boolean;
   isTransitionPending: boolean;
   invalidate: () => void;
@@ -53,6 +63,9 @@ export type LaneRefetchOnFocus = boolean | "always";
 
 export type LaneUseOptions = {
   staleTime?: number;
+  gcTime?: number;
+  retry?: number;
+  retryDelay?: LaneRetryDelay;
   refetchOnFocus?: LaneRefetchOnFocus;
   refetchOnMount?: LaneRefetchOnMount;
 };

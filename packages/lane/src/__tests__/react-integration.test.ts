@@ -10,10 +10,13 @@ import {
   LaneProvider,
   useLane,
 } from "../index";
+import { serializeKey } from "../keys";
 import type {
   Lane,
   LaneHydrationSnapshots,
   LaneKey,
+  LaneLoader,
+  LaneLoaderContext,
   LaneUseOptions,
 } from "../types";
 import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";
@@ -57,16 +60,16 @@ describe("React integration", () => {
       loader,
     });
 
-    await waitForText(app.container, "cached|background:0|transition:0");
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:none");
 
     await click(app.container, "invalidate");
 
-    await waitForText(app.container, "cached|background:0|transition:1");
+    await waitForText(app.container, "cached|background:0|transition:1|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
 
     await resolveReload(reload, "reloaded");
 
-    await waitForText(app.container, "reloaded|background:0|transition:0");
+    await waitForText(app.container, "reloaded|background:0|transition:0|refresh:none");
   });
 
   it("marks focus refetch as background pending", async () => {
@@ -85,19 +88,19 @@ describe("React integration", () => {
       },
     });
 
-    await waitForText(app.container, "cached|background:0|transition:0");
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:none");
 
     await act(async () => {
       window.dispatchEvent(new Event("focus"));
       await settlePromiseHandlers();
     });
 
-    await waitForText(app.container, "cached|background:1|transition:0");
+    await waitForText(app.container, "cached|background:1|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
 
     await resolveReload(reload, "focused");
 
-    await waitForText(app.container, "focused|background:0|transition:0");
+    await waitForText(app.container, "focused|background:0|transition:0|refresh:none");
   });
 
   it("marks refetchOnMount as background pending", async () => {
@@ -116,12 +119,12 @@ describe("React integration", () => {
       },
     });
 
-    await waitForText(app.container, "cached|background:1|transition:0");
+    await waitForText(app.container, "cached|background:1|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
 
     await resolveReload(reload, "mounted");
 
-    await waitForText(app.container, "mounted|background:0|transition:0");
+    await waitForText(app.container, "mounted|background:0|transition:0|refresh:none");
   });
 
   it("does not immediately refetch freshly hydrated data on mount", async () => {
@@ -134,26 +137,10 @@ describe("React integration", () => {
       entries: [{ key: ["tasks"], data: "server" }],
     };
     const app = await render(
-      React.createElement(
-        LaneProvider,
-        {
-          lane,
-          children: React.createElement(
-            React.Suspense,
-            { fallback: "loading" },
-            React.createElement(LaneHydration, {
-              snapshots,
-              children: React.createElement(Probe, {
-                loader,
-                options: {
-                  refetchOnMount: true,
-                  staleTime: 1_000,
-                },
-              }),
-            }),
-          ),
-        },
-      ),
+      hydrationApp(lane, snapshots, loader, {
+        refetchOnMount: true,
+        staleTime: 1_000,
+      }),
     );
 
     await waitForText(app.container, "loading");
@@ -163,10 +150,267 @@ describe("React integration", () => {
       await settlePromiseHandlers();
     });
 
-    await waitForText(app.container, "server|background:0|transition:0");
+    await waitForText(app.container, "server|background:0|transition:0|refresh:none");
     expect(loader).not.toHaveBeenCalled();
   });
+
+  it("re-hydration with new snapshots overwrites and updates mounted readers", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "reloaded");
+    const first: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-1" }],
+    };
+    const second: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-2" }],
+    };
+
+    const app = await render(hydrationApp(lane, first, loader));
+
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    await waitForText(app.container, "server-1|background:0|transition:0|refresh:none");
+
+    await act(async () => {
+      app.root.render(hydrationApp(lane, second, loader));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "server-2|background:0|transition:0|refresh:none");
+    expect(loader).not.toHaveBeenCalled();
+  });
+
+  it("converges after an invalidation lands while the initial read is suspended", async () => {
+    const lane = createLane();
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const loader = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+
+    const app = await renderLaneApp({ lane, loader });
+
+    await waitForText(app.container, "loading");
+
+    // The reader is suspended, so it has not subscribed yet. This
+    // invalidation reaches no subscriber and even drops the entry.
+    await act(async () => {
+      lane.invalidate(["tasks"]);
+      await settlePromiseHandlers();
+    });
+
+    await act(async () => {
+      first.resolve("stale");
+      await settlePromiseHandlers();
+    });
+
+    // Either through a fresh initial render or the post-subscribe catch-up,
+    // a second read must start instead of rendering the dropped promise
+    // forever.
+    for (let i = 0; i < 20 && loader.mock.calls.length < 2; i += 1) {
+      await flushReact();
+    }
+    expect(loader).toHaveBeenCalledTimes(2);
+
+    await resolveReload(second, "fresh");
+
+    await waitForText(app.container, "fresh|background:0|transition:0|refresh:none");
+  });
+
+  it("catches up with invalidations missed during a suspended key switch", async () => {
+    const lane = createLane();
+    const staleB = deferred<string>();
+    const freshB = deferred<string>();
+    const bReads = [() => staleB.promise, () => freshB.promise];
+    const loader = vi.fn((context: LaneLoaderContext) => {
+      if (serializeKey(context.key) === serializeKey(["a"])) {
+        return Promise.resolve("value-a");
+      }
+
+      const nextRead = bReads.shift();
+      return nextRead ? nextRead() : Promise.resolve("unexpected-extra");
+    });
+
+    const app = await render(keyedApp(lane, ["a"], loader));
+    await waitForText(app.container, "value-a|background:0|transition:0|refresh:none");
+
+    // Switching keys re-reads during render and suspends; the subscription
+    // effect for the new key cannot run until the read settles. React keeps
+    // the previous content hidden in the DOM next to the fallback.
+    await act(async () => {
+      app.root.render(keyedApp(lane, ["b"], loader));
+      await settlePromiseHandlers();
+    });
+    await waitForText(
+      app.container,
+      "value-a|background:0|transition:0|refresh:noneloading",
+    );
+
+    // The reader of ["b"] is not subscribed yet, so this invalidation drops
+    // the entry without reaching anyone.
+    await act(async () => {
+      lane.invalidate(["b"]);
+      await settlePromiseHandlers();
+    });
+
+    await act(async () => {
+      staleB.resolve("stale-b");
+      await settlePromiseHandlers();
+    });
+
+    // The dropped entry must force a second ["b"] read — either through a
+    // re-read of the still-uncommitted render or through the post-subscribe
+    // catch-up — instead of leaving the reader stuck on the dropped promise.
+    for (let i = 0; i < 20 && bReads.length > 0; i += 1) {
+      await flushReact();
+    }
+    expect(bReads).toHaveLength(0);
+
+    await resolveReload(freshB, "fresh-b");
+
+    await waitForText(app.container, "fresh-b|background:0|transition:0|refresh:none");
+  });
+
+  it("keeps showing previous data when a refetch rejects and exposes refreshError", async () => {
+    const lane = createLane();
+    const failing = deferred<string>();
+    const recovering = deferred<string>();
+    const loader = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(() => failing.promise)
+      .mockImplementationOnce(() => recovering.promise);
+
+    lane.set(["tasks"], "cached");
+
+    const app = await renderLaneApp({ lane, loader });
+
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:none");
+
+    await click(app.container, "invalidate");
+    await waitForText(app.container, "cached|background:0|transition:1|refresh:none");
+
+    await act(async () => {
+      failing.reject(new Error("offline"));
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:offline");
+
+    await click(app.container, "invalidate");
+    await resolveReload(recovering, "recovered");
+
+    await waitForText(app.container, "recovered|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("initial load rejections reach the error boundary", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const lane = createLane();
+    const loader = vi.fn(async () => {
+      throw new Error("boom");
+    });
+
+    const app = await render(
+      React.createElement(LaneProvider, {
+        lane,
+        children: React.createElement(
+          CatchBoundary,
+          null,
+          React.createElement(
+            React.Suspense,
+            { fallback: "loading" },
+            React.createElement(Probe, { loader }),
+          ),
+        ),
+      }),
+    );
+
+    await waitForText(app.container, "caught:boom");
+  });
+
+  it("collects the cache after unmount once gcTime elapses", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "loaded");
+
+    const app = await renderLaneApp({
+      lane,
+      loader,
+      options: { gcTime: 200 },
+    });
+    await waitForText(app.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    unmountApp(app);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+
+    const remounted = await renderLaneApp({
+      lane,
+      loader,
+      options: { gcTime: 200 },
+    });
+    await waitForText(remounted.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the cache for remounts within gcTime", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "loaded");
+
+    const app = await renderLaneApp({
+      lane,
+      loader,
+      options: { gcTime: 200 },
+    });
+    await waitForText(app.container, "loaded|background:0|transition:0|refresh:none");
+
+    unmountApp(app);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    const remounted = await renderLaneApp({
+      lane,
+      loader,
+      options: { gcTime: 200 },
+    });
+    await waitForText(remounted.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
 });
+
+class CatchBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return React.createElement("div", null, `caught:${this.state.error.message}`);
+    }
+
+    return this.props.children;
+  }
+}
 
 function Probe({
   cacheKey = ["tasks"],
@@ -174,11 +418,17 @@ function Probe({
   options,
 }: {
   cacheKey?: LaneKey;
-  loader: () => Promise<string>;
+  loader: LaneLoader<string>;
   options?: LaneUseOptions;
 }) {
   const result = useLane(cacheKey, loader, options);
   const value = React.use(result.promise);
+  const refresh =
+    result.refreshError === undefined
+      ? "none"
+      : result.refreshError instanceof Error
+        ? result.refreshError.message
+        : String(result.refreshError);
 
   return React.createElement(
     "button",
@@ -189,8 +439,42 @@ function Probe({
     },
     `${value}|background:${flag(result.isBackgroundPending)}|transition:${flag(
       result.isTransitionPending,
-    )}`,
+    )}|refresh:${refresh}`,
   );
+}
+
+function keyedApp(
+  lane: Lane,
+  cacheKey: LaneKey,
+  loader: LaneLoader<string>,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: "loading" },
+      React.createElement(Probe, { cacheKey, loader }),
+    ),
+  });
+}
+
+function hydrationApp(
+  lane: Lane,
+  snapshots: LaneHydrationSnapshots,
+  loader: LaneLoader<string>,
+  options?: LaneUseOptions,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: "loading" },
+      React.createElement(LaneHydration, {
+        snapshots,
+        children: React.createElement(Probe, { loader, options }),
+      }),
+    ),
+  });
 }
 
 async function renderLaneApp({
@@ -199,7 +483,7 @@ async function renderLaneApp({
   options,
 }: {
   lane: Lane;
-  loader: () => Promise<string>;
+  loader: LaneLoader<string>;
   options?: LaneUseOptions;
 }): Promise<RenderedApp> {
   return render(
@@ -230,6 +514,18 @@ async function render(element: React.ReactElement): Promise<RenderedApp> {
   });
 
   return { container, root };
+}
+
+function unmountApp(app: RenderedApp): void {
+  const index = roots.indexOf(app.root);
+
+  if (index >= 0) {
+    roots.splice(index, 1);
+  }
+
+  act(() => {
+    app.root.unmount();
+  });
 }
 
 async function click(

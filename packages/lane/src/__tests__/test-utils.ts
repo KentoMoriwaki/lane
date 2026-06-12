@@ -1,6 +1,5 @@
 import { vi } from "vitest";
 import { onInvalidate, onRemove, subscribeLane } from "../core";
-import { serializeKey } from "../keys";
 import type { Lane, LaneEntryInfo, LaneKey, LaneUseOptions } from "../types";
 
 type TestSubscription = (entry: LaneEntryInfo) => void;
@@ -31,7 +30,7 @@ export function subscribeInvalidate(
   key: LaneKey,
   listener: TestSubscription,
 ): () => void {
-  return onInvalidate(lane, serializeKey(key), listener);
+  return onInvalidate(lane, key, listener);
 }
 
 export function subscribeRemove(
@@ -39,16 +38,16 @@ export function subscribeRemove(
   key: LaneKey,
   listener: TestSubscription,
 ): () => void {
-  return onRemove(lane, serializeKey(key), listener);
+  return onRemove(lane, key, listener);
 }
 
 export function subscribeWithOptions(
   lane: Lane,
   key: LaneKey,
-  options: Pick<LaneUseOptions, "refetchOnFocus" | "staleTime">,
+  options: Pick<LaneUseOptions, "refetchOnFocus" | "staleTime" | "gcTime">,
   listener: TestSubscription = vi.fn(),
 ): () => void {
-  return subscribeLane(lane, serializeKey(key), {
+  return subscribeLane(lane, key, {
     onInvalidate: listener,
     options,
   });

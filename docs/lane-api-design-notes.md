@@ -39,31 +39,26 @@ invalidated and fetch the next promise when they are read again.
 See `docs/lane-use-lane-reference.md` for the reference starting point for the
 hook that connects invalidation events to React state.
 
-## Initial Seeding
+## Hydration Overwrites
 
-Lane needs an explicit initial seeding operation for the RSC-seeded client
-ownership architecture.
+Lane hydration applies server snapshots as authoritative values.
 
-Seeding is initialization, not mutation convergence. A Server Component can load
-initial data, pass it to a Client Component, and that client boundary can seed
-Lane before normal client reads begin.
+`hydrateMany` (and the `LaneHydration` boundary built on it) overwrites existing
+entries and notifies invalidate subscribers. Navigation is the reason: when a
+route transition re-hydrates the same keys with fresh server data, mounted
+readers must converge to the new data. A set-only-if-absent seed would keep
+rendering the previous page's data after navigation. (An earlier revision of
+this note described seed as "set only if absent"; that was a design mistake.)
 
-Possible API shape:
+Idempotency lives at the boundary, not in the store operation. `LaneHydration`
+applies a given snapshots instance to a given lane at most once, so repeated
+provider renders and Strict Mode re-renders do not re-publish the same
+snapshot. A new snapshots instance produced by a new server render is
+intentionally authoritative and replaces client entries for those exact keys.
 
-```ts
-lane.seed(key, valueOrPromise); // exact, set only if absent
-lane.seedMany(entries); // exact entries, set only if absent
-```
-
-Seed must be idempotent:
-
-- if no entry exists, store a promise for the seeded value
-- if an entry already exists, do nothing
-- repeated provider renders and Strict Mode behavior must not overwrite newer
-  client-owned entries
-
-Seed should not be used as cache patching after mutations. Once the client owns
-the read, convergence should use invalidation or confirmed value publication.
+Hydration should not be used as cache patching after mutations. Once the client
+owns the read, convergence should use invalidation or confirmed value
+publication.
 
 ## Confirmed Value Publication Is Secondary
 
@@ -123,6 +118,12 @@ This is an intentional design tradeoff:
 - distant consumers do not observe speculative data
 - application-wide consistency comes from confirmed data, not optimistic patches
 
+For the same reason, Lane intentionally ships no mutation helper. Mutations are
+written with React primitives — `useActionState`, `useOptimistic`, and
+transitions — exactly as they are next to Server Components and Server
+Functions. Keeping one mental model is worth more long-term than a convenient
+wrapper that diverges from it.
+
 ## Hook Result Shape
 
 The preferred public hook name is `useLane`.
@@ -132,7 +133,9 @@ It may return promise-oriented helpers:
 ```ts
 type LaneResult<T> = {
   promise: Promise<T>;
-  isPending: boolean;
+  refreshError: unknown;
+  isBackgroundPending: boolean;
+  isTransitionPending: boolean;
   invalidate: () => void;
 };
 ```
@@ -149,6 +152,56 @@ It should not return query-result fields:
 Data should be read by React with `use(promise)`. Errors should be handled by
 Error Boundaries. Loading should be handled by Suspense fallback and transition
 pending state.
+
+`refreshError` is deliberately not `error`. Initial-load failures still reject
+the promise and reach the Error Boundary. `refreshError` only reports a failed
+refresh of an entry that already has data; the promise keeps resolving with the
+last fulfilled value so the UI does not lose good data (see "Refresh Errors
+Serve Stale Data").
+
+## Refresh Errors Serve Stale Data
+
+A failed refresh must not destroy data the user is already looking at.
+
+When an entry has a last fulfilled value and its next read rejects — after an
+invalidation, a focus refetch, or an authoritative `set` of a rejecting
+promise — the cache falls back:
+
+- the cached promise resolves with the last fulfilled value, so `use(promise)`
+  keeps rendering data instead of throwing to the Error Boundary
+- the failure is exposed separately as `refreshError` on the hook result
+- freshness keeps the original fulfillment time, so staleness policies
+  (`staleTime`, focus refetch, mount refetch) still treat the data as old and
+  retry naturally
+- the next successful read clears `refreshError`
+
+Only initial loads — reads with no previous fulfilled value — reject the cached
+promise and reach the Error Boundary. This preserves the boundary model for
+"there is nothing to show" while keeping "there is something to show" rendered
+during background failures.
+
+## Query Lifecycle Hardening
+
+Lifecycle behaviors that keep the promise model production-safe:
+
+- **Garbage collection.** An entry with no subscribers is collected `gcTime`
+  milliseconds after its last subscriber leaves (default five minutes,
+  `Infinity` opts out). This also collects entries created by renders that
+  never committed.
+- **Abort.** Loaders receive `{ key, signal }`. The signal aborts when the
+  in-flight read is discarded: invalidation, removal, an authoritative `set`
+  over a pending read, or garbage collection. `update` adopts the in-flight
+  result, so it does not abort.
+- **Retry.** `retry` and `retryDelay` options retry failed loads (default: no
+  retries, exponential backoff capped at 30s when enabled). Aborts stop the
+  retry loop.
+- **Structural sharing.** When a reload resolves with data deeply equal to the
+  previous value, the previous references are reused so memoized consumers do
+  not re-render for identical data.
+- **Subscription catch-up.** Subscribing creates the entry when missing, and
+  the hook reconciles with the store right after subscribing. Invalidations
+  that land while a reader is suspended (and therefore not yet subscribed)
+  converge instead of leaving the reader on a dropped promise.
 
 ## Deferred Key Changes
 
@@ -220,9 +273,6 @@ not raw string prefixes.
 Possible API shape:
 
 ```ts
-lane.seed(key, valueOrPromise); // exact, set only if absent
-lane.seedMany(entries); // exact entries, set only if absent
-
 lane.invalidate(key); // exact
 lane.invalidateAll(prefixOrPredicate); // scoped
 

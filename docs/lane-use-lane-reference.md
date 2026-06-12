@@ -130,8 +130,7 @@ through the same subscription path.
 The reference hook assumes a small Lane store contract:
 
 ```ts
-lane.seed(keyId, valueOrPromise)
-lane.seedMany(entries)
+lane.hydrateMany(entries)
 lane.readOrCreate(keyId, loader)
 lane.invalidate(keyId, options?)
 lane.invalidateAll(prefixOrPredicate, options?)
@@ -150,15 +149,17 @@ implementation still needs a canonical id for exact lookup and enough structural
 key information to perform prefix or predicate matching without relying on raw
 string prefix checks.
 
-`seed` should behave like initialization:
+`hydrateMany` should behave like authoritative publication for each entry:
 
-- if no cache exists for the key, wrap the value or promise in a promise and
-  store it
-- if a cache already exists for the key, do nothing
-- repeated seed calls must not overwrite data created by later client reads,
-  invalidations, sets, or updates
+- overwrite any existing cache with the snapshot value and notify invalidate
+  subscribers, so mounted readers converge when a navigation re-hydrates the
+  same keys with fresh server data
+- idempotency belongs to the hydration boundary: `LaneHydration` applies a
+  given snapshots instance to a given lane at most once, so repeated renders
+  and Strict Mode do not re-publish the same snapshot
 
-`seedMany` should apply the same set-only-if-no-cache rule to each exact entry.
+(An earlier revision described seeding as set-only-if-absent; that was a design
+mistake. Overwriting is required for page navigation to surface new data.)
 
 `readOrCreate` should behave like this:
 

@@ -33,6 +33,17 @@ Requires React 19.2+ (`useEffectEvent`).
   by `focusThrottleInterval` on the provider (default 5s)
 - `Date` key segments (serialized by timestamp, stable for invalid dates)
 
+## Build & publishing
+
+`pnpm build` (tsup) emits ESM + CJS bundles with type definitions to `dist/`,
+keeping the `"use client"` directive at the top of each bundle. Inside the
+workspace, the package resolves to `src/` directly; `publishConfig` switches
+the entry points to `dist/` when packing.
+
+The package is not published yet. To publish: pick the final npm name, remove
+`"private": true`, then `pnpm build && pnpm publish`. `pnpm pack` +
+[publint](https://publint.dev) validate the publish shape without publishing.
+
 Design notes:
 
 - `../../docs/lane-api-design-notes.md`

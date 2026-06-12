@@ -2,7 +2,7 @@
 
 `lane` is a monorepo for exploring a React Transition-friendly client data library.
 
-The library package is intentionally empty for now. The current workspace exists to provide comparable TODO applications against the same SQLite backend:
+The workspace pairs the `packages/lane` implementation with comparable TODO applications against the same SQLite backend:
 
 - `apps/todo-api`: shared backend backed by SQLite. It serves the original
   TODO endpoints and a richer team task API under `/api` (users, teams, tasks,
@@ -17,7 +17,10 @@ The library package is intentionally empty for now. The current workspace exists
   prefetch + dehydration, then a client query cache that owns reads, writes,
   optimistic updates, and retries). This is the UX/behaviour baseline Lane
   should be able to replace.
-- `packages/lane`: placeholder package for the future library implementation.
+- `apps/e2e`: Playwright suite that runs the user-facing success criteria
+  (reload restoration, search, mutation convergence, team switching, and the
+  stale-on-error refresh flow) against `todo-nextjs-lane`.
+- `packages/lane`: the Lane library implementation and its unit tests.
 
 The apps use Hono RPC by importing `AppType` from `@lane/todo-api` as a
 type-only dependency.
@@ -48,6 +51,22 @@ For read/error handling checks, the API can randomly fail requests:
 ```sh
 API_RANDOM_FAIL_RATE=0.35 pnpm dev:api
 ```
+
+## Testing
+
+```sh
+pnpm --filter @lane/lane test    # library unit and React integration tests
+pnpm test:e2e                    # Playwright success-criteria suite
+pnpm typecheck                   # all workspaces
+```
+
+The E2E suite boots its own API instance (port 4100, fresh
+`data/e2e-team-task.sqlite`, no artificial delays) and a dedicated
+`todo-nextjs-lane` dev server (port 3102), so a locally running dev setup is
+never touched. First run: `pnpm --filter @lane/e2e exec playwright install chromium`.
+
+CI runs unit tests, typechecks, and the E2E suite on every push and pull
+request (`.github/workflows/ci.yml`).
 
 `API_RANDOM_FAIL_RATE` is clamped between `0` and `1` and defaults to `0`.
 Failures return `{ error: "Random API failure", code: "random_failure" }` with

@@ -8,7 +8,7 @@ import type { TaskFilters } from "@/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PRIORITY_GROUP_ORDER, PRIORITY_META } from "@/lib/task-meta";
 import { useWorkspace } from "./workspace-provider";
-import { EmptyState } from "./feedback";
+import { EmptyState, RefreshErrorChip } from "./feedback";
 import { TaskRow } from "./task-row";
 
 export function TaskList({
@@ -27,33 +27,47 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const { userId } = useWorkspace();
-  const { promise, isTransitionPending } = useTasks(filters);
+  const { promise, isTransitionPending, refreshError, invalidate } =
+    useTasks(filters);
   const tasks = React.use(promise);
 
   const dimmed = isTransitionPending;
+  const refreshNotice = (
+    <RefreshErrorChip
+      refreshError={refreshError}
+      onRetry={invalidate}
+      isRetrying={isTransitionPending}
+      className="mx-4 mt-3"
+    />
+  );
 
   if (tasks.length === 0) {
-    return hasActiveFilters ? (
-      <EmptyState
-        icon={ListTodo}
-        title="No tasks match these filters"
-        message="Try widening your filters to see more of the team's work."
-        action={
-          <button
-            type="button"
-            onClick={onResetFilters}
-            className="text-sm font-medium text-cobalt hover:underline"
-          >
-            Clear filters
-          </button>
-        }
-      />
-    ) : (
-      <EmptyState
-        icon={Inbox}
-        title="No tasks yet"
-        message="Create the first task to get the team moving."
-      />
+    return (
+      <>
+        {refreshNotice}
+        {hasActiveFilters ? (
+          <EmptyState
+            icon={ListTodo}
+            title="No tasks match these filters"
+            message="Try widening your filters to see more of the team's work."
+            action={
+              <button
+                type="button"
+                onClick={onResetFilters}
+                className="text-sm font-medium text-cobalt hover:underline"
+              >
+                Clear filters
+              </button>
+            }
+          />
+        ) : (
+          <EmptyState
+            icon={Inbox}
+            title="No tasks yet"
+            message="Create the first task to get the team moving."
+          />
+        )}
+      </>
     );
   }
 
@@ -63,22 +77,25 @@ export function TaskList({
   })).filter((group) => group.items.length > 0);
 
   return (
-    <div
-      className="divide-y divide-border transition-opacity"
-      style={{ opacity: dimmed ? 0.6 : 1 }}
-    >
-      {groups.map((group) => (
-        <PriorityGroup
-          key={group.priority}
-          label={PRIORITY_META[group.priority].label}
-          items={group.items}
-          currentUserId={userId}
-          selectedTaskId={selectedTaskId}
-          onSelectTask={onSelectTask}
-          onClearSelection={onClearSelection}
-        />
-      ))}
-    </div>
+    <>
+      {refreshNotice}
+      <div
+        className="divide-y divide-border transition-opacity"
+        style={{ opacity: dimmed ? 0.6 : 1 }}
+      >
+        {groups.map((group) => (
+          <PriorityGroup
+            key={group.priority}
+            label={PRIORITY_META[group.priority].label}
+            items={group.items}
+            currentUserId={userId}
+            selectedTaskId={selectedTaskId}
+            onSelectTask={onSelectTask}
+            onClearSelection={onClearSelection}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 

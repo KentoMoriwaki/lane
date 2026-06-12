@@ -7,6 +7,7 @@ import { accent, type AccentToken } from "@/lib/accent";
 import { cn } from "@/lib/utils";
 import Link, { useLinkStatus } from "next/link";
 import * as React from "react";
+import { RefreshErrorChip } from "./feedback";
 
 type InsightCard = {
   key: string;
@@ -23,7 +24,8 @@ export function InsightStrip({
   filters: TaskFilters;
   viewHref: (view: Partial<TaskFilters>) => string;
 }) {
-  const { promise } = useInsights();
+  const { promise, refreshError, invalidate, isTransitionPending } =
+    useInsights();
   const data = React.use(promise);
 
   const cards: InsightCard[] = [
@@ -36,21 +38,29 @@ export function InsightStrip({
   ];
 
   return (
-    <div className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto border-b border-border px-4 py-3">
-      {cards.map((card) => (
-        <InsightCardButton
-          key={card.key}
-          card={card}
-          href={viewHref(card.view)}
-          isActive={isInsightViewActive(filters, card.view)}
-        />
-      ))}
-      <OpenTrend
-        open={data.open}
-        inProgress={data.inProgress}
-        inReview={data.inReview}
-        completed={data.completed}
+    <div className="border-b border-border">
+      <RefreshErrorChip
+        refreshError={refreshError}
+        onRetry={invalidate}
+        isRetrying={isTransitionPending}
+        className="mx-4 mt-3"
       />
+      <div className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3">
+        {cards.map((card) => (
+          <InsightCardButton
+            key={card.key}
+            card={card}
+            href={viewHref(card.view)}
+            isActive={isInsightViewActive(filters, card.view)}
+          />
+        ))}
+        <OpenTrend
+          open={data.open}
+          inProgress={data.inProgress}
+          inReview={data.inReview}
+          completed={data.completed}
+        />
+      </div>
     </div>
   );
 }

@@ -47,6 +47,50 @@ export function SectionError({
   );
 }
 
+/**
+ * Compact notice for a failed background refresh. Stale data stays rendered
+ * (lane's stale-on-error), so this only flags it instead of replacing the UI.
+ */
+export function RefreshErrorChip({
+  refreshError,
+  onRetry,
+  isRetrying,
+  className,
+}: {
+  refreshError: unknown;
+  onRetry: () => void;
+  isRetrying?: boolean;
+  className?: string;
+}) {
+  if (refreshError === undefined) {
+    return null;
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-md border border-rose/30 bg-rose/5 px-2.5 py-1.5 text-xs",
+        className,
+      )}
+    >
+      <AlertTriangle className="size-3.5 shrink-0 text-rose" />
+      <span className="font-medium text-rose">Couldn&apos;t refresh</span>
+      <span className="truncate text-muted-foreground">
+        Showing earlier data.
+      </span>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={isRetrying}
+        className="ml-auto inline-flex shrink-0 items-center gap-1 font-medium text-rose hover:underline disabled:opacity-60"
+      >
+        {isRetrying ? <Loader2 className="size-3 animate-spin" /> : null}
+        Retry
+      </button>
+    </div>
+  );
+}
+
 export function EmptyState({
   icon: Icon,
   title,

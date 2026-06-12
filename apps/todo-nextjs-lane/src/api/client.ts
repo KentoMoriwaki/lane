@@ -27,6 +27,7 @@ export function requestOptions(ctx: WorkspaceCtx) {
   // very first server request, before the current user is known.
   if (ctx.userId) headers["x-user-id"] = ctx.userId;
   if (ctx.teamId) headers["x-team-id"] = ctx.teamId;
+  if (typeof window === "undefined") headers["x-random-fail-bypass"] = "1";
 
   return {
     headers,

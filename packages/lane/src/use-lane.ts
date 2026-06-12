@@ -10,37 +10,43 @@ import {
 import {
   invalidateEntry,
   readOrCreate,
+  readRefreshError,
   subscribeLane,
 } from "./core";
-import type { LaneInvalidationSource } from "./core";
+import type { LaneInvalidationSource, LaneReadOptions } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneInstance } from "./provider";
 import type {
   Lane,
   LaneInvalidateOptions,
   LaneKey,
+  LaneLoader,
   LaneResult,
   LaneUseOptions,
 } from "./types";
 
 export function useLane<T>(
   key: LaneKey,
-  loader: () => Promise<T>,
+  loader: LaneLoader<T>,
   options: LaneUseOptions = {},
 ): LaneResult<T> {
   const lane = useLaneInstance();
   const keyId = serializeKey(key);
+  const readOptions: LaneReadOptions = {
+    retry: options.retry,
+    retryDelay: options.retryDelay,
+  };
   const [isTransitionPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
   const [promise, setPromise] = useState<Promise<T>>(() =>
-    readOrCreate(lane, key, loader),
+    readOrCreate(lane, key, loader, readOptions),
   );
   const [prevSource, setPrevSource] = useState(() => ({ keyId, lane }));
 
   let effectivePromise = promise;
 
   if (lane !== prevSource.lane || keyId !== prevSource.keyId) {
-    const nextPromise = readOrCreate(lane, key, loader);
+    const nextPromise = readOrCreate(lane, key, loader, readOptions);
     effectivePromise = nextPromise;
 
     setPrevSource({ keyId, lane });
@@ -53,7 +59,7 @@ export function useLane<T>(
     source: LaneInvalidationSource,
   ) => {
     const updatePromise = () => {
-      setPromise(readOrCreate(targetLane, targetKey, loader));
+      setPromise(readOrCreate(targetLane, targetKey, loader, readOptions));
     };
 
     if (source === "background") {
@@ -65,8 +71,28 @@ export function useLane<T>(
   });
 
   const onRemove = useEffectEvent((targetLane: Lane, targetKey: LaneKey) => {
-    const nextPromise = readOrCreate(targetLane, targetKey, loader);
+    const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
     setPromise(nextPromise);
+  });
+
+  // Invalidations and removals that happen between render and subscription
+  // reach no subscriber. This is common while the initial read keeps the
+  // component suspended, because effects only run after it unsuspends.
+  // Catching up right after subscribing keeps the hook converged with the
+  // store instead of rendering an abandoned promise forever.
+  const syncAfterSubscribe = useEffectEvent((
+    targetLane: Lane,
+    targetKey: LaneKey,
+  ) => {
+    const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
+
+    if (nextPromise === promise) {
+      return;
+    }
+
+    startBackgroundTransition(() => {
+      setPromise(nextPromise);
+    });
   });
 
   const refetchOnMount = useEffectEvent(
@@ -87,7 +113,7 @@ export function useLane<T>(
   );
 
   useEffect(() => {
-    return subscribeLane(lane, keyId, {
+    const unsubscribe = subscribeLane(lane, key, {
       onInvalidate: (entry, source) => {
         onInvalidate(lane, entry.key, source);
       },
@@ -95,11 +121,16 @@ export function useLane<T>(
         onRemove(lane, entry.key);
       },
       options: {
+        gcTime: options.gcTime,
         refetchOnFocus: options.refetchOnFocus,
         staleTime: options.staleTime,
       },
     });
-  }, [lane, keyId, options.refetchOnFocus, options.staleTime]);
+
+    syncAfterSubscribe(lane, key);
+
+    return unsubscribe;
+  }, [lane, keyId, options.gcTime, options.refetchOnFocus, options.staleTime]);
 
   useEffect(() => {
     refetchOnMount(lane, keyId);
@@ -110,16 +141,17 @@ export function useLane<T>(
   }, [lane, keyId]);
 
   return {
+    invalidate,
     isBackgroundPending,
     isTransitionPending,
-    invalidate,
     promise: effectivePromise,
+    refreshError: readRefreshError(lane, keyId),
   };
 }
 
 export function useLanePromise<T>(
   key: LaneKey,
-  loader: () => Promise<T>,
+  loader: LaneLoader<T>,
   options?: LaneUseOptions,
 ): Promise<T> {
   return useLane(key, loader, options).promise;

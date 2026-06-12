@@ -40,7 +40,7 @@ describe("readOrCreate", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
-  it("does not create a cache or entry for a missing subscription target", async () => {
+  it("subscribing before any read does not create a cache", async () => {
     const lane = createLane();
     const listener = vi.fn();
     const loader = vi.fn(async () => "loaded");
@@ -72,7 +72,7 @@ describe("readOrCreate", () => {
 });
 
 describe("hydrateMany", () => {
-  it("authoritatively replaces existing cache without notifying subscribers", async () => {
+  it("authoritatively overwrites existing cache and notifies invalidate subscribers", async () => {
     const lane = createLane();
     const invalidateListener = vi.fn();
     const removeListener = vi.fn();
@@ -86,7 +86,14 @@ describe("hydrateMany", () => {
       entries: [{ key: ["tasks"], data: "server" }],
     });
 
-    expect(invalidateListener).not.toHaveBeenCalled();
+    expect(invalidateListener).toHaveBeenCalledTimes(1);
+    expect(invalidateListener).toHaveBeenCalledWith(
+      {
+        key: ["tasks"],
+        keyId: serializeKey(["tasks"]),
+      },
+      "transition",
+    );
     expect(removeListener).not.toHaveBeenCalled();
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("server");
     expect(loader).not.toHaveBeenCalled();
@@ -213,6 +220,16 @@ describe("invalidate", () => {
     expect(teamsListener).not.toHaveBeenCalled();
   });
 
+  it("subscribers attached before the entry exists receive later notifications", () => {
+    const lane = createLane();
+    const listener = vi.fn();
+
+    subscribeInvalidate(lane, ["tasks"], listener);
+    lane.set(["tasks"], "value");
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it("does not call unsubscribed listeners", () => {
     const lane = createLane();
     const listener = vi.fn();
@@ -283,18 +300,16 @@ describe("conditional invalidation", () => {
     const pending = deferred<string>();
     const listener = vi.fn();
 
-    lane.set(["tasks"], pending.promise);
+    const cached = lane.set(["tasks"], pending.promise);
     subscribeInvalidate(lane, ["tasks"], listener);
 
     lane.invalidate(["tasks"], { onlyIf: "settled" });
 
     expect(listener).not.toHaveBeenCalled();
-    expect(readOrCreate(lane, ["tasks"], async () => "new")).toBe(
-      pending.promise,
-    );
+    expect(readOrCreate(lane, ["tasks"], async () => "new")).toBe(cached);
 
     pending.resolve("done");
-    await expect(pending.promise).resolves.toBe("done");
+    await expect(cached).resolves.toBe("done");
   });
 
   it("settled-only invalidation clears fulfilled and rejected cache", async () => {
@@ -395,7 +410,7 @@ describe("conditional invalidation", () => {
     const rejectedListener = vi.fn();
 
     rejected.catch(() => undefined);
-    lane.set(["pending"], pending.promise);
+    const cachedPending = lane.set(["pending"], pending.promise);
     lane.set(["rejected"], rejected);
     subscribeInvalidate(lane, ["pending"], pendingListener);
     subscribeInvalidate(lane, ["rejected"], rejectedListener);
@@ -410,14 +425,14 @@ describe("conditional invalidation", () => {
     expect(pendingListener).not.toHaveBeenCalled();
     expect(rejectedListener).not.toHaveBeenCalled();
     expect(readOrCreate(lane, ["pending"], async () => "new-pending")).toBe(
-      pending.promise,
+      cachedPending,
     );
     await expect(
       readOrCreate(lane, ["rejected"], async () => "new-rejected"),
     ).rejects.toThrow("network");
 
     pending.resolve("done");
-    await expect(pending.promise).resolves.toBe("done");
+    await expect(cachedPending).resolves.toBe("done");
   });
 });
 

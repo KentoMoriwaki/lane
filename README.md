@@ -42,3 +42,18 @@ baseline shows scoped pending, optimistic, and transition states. Tune them with
 `TEAM_API_READ_DELAY_MS`, `TEAM_API_WRITE_DELAY_MS`, and
 `TEAM_API_PICKER_DELAY_MS` (set to `0` to disable). The team task data is seeded
 into `data/team-task.sqlite` on first run.
+
+For read/error handling checks, the API can randomly fail requests:
+
+```sh
+API_RANDOM_FAIL_RATE=0.35 pnpm dev:api
+```
+
+`API_RANDOM_FAIL_RATE` is clamped between `0` and `1` and defaults to `0`.
+Failures return `{ error: "Random API failure", code: "random_failure" }` with
+status `503`. Use `API_RANDOM_FAIL_STATUS=500` to change the status, or
+`API_RANDOM_FAIL_PATHS=/api/tasks,/api/insights` to limit failures to path
+prefixes. Requests with `x-random-fail-bypass: 1` are never failed;
+`todo-nextjs-lane` adds this header for server prefetches so initial server
+render can succeed while client refreshes still exercise random failures.
+`/health` and `OPTIONS` requests are never failed.

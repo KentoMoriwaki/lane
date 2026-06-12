@@ -70,18 +70,43 @@ const labelCreateDelayMs = Number(process.env.TODO_LABEL_CREATE_DELAY_MS ?? 3_00
 const teamReadDelayMs = Number(process.env.TEAM_API_READ_DELAY_MS ?? 100);
 const teamWriteDelayMs = Number(process.env.TEAM_API_WRITE_DELAY_MS ?? 100);
 const teamPickerDelayMs = Number(process.env.TEAM_API_PICKER_DELAY_MS ?? 100);
+const randomFailRate = readRatio(process.env.API_RANDOM_FAIL_RATE);
+const randomFailStatus = readStatus(process.env.API_RANDOM_FAIL_STATUS);
+const randomFailPathPrefixes = readPathPrefixes(process.env.API_RANDOM_FAIL_PATHS);
 
 app.use(
   "*",
   cors({
     origin: "*",
-    allowHeaders: ["content-type", "x-user-id", "x-team-id"],
+    allowHeaders: [
+      "content-type",
+      "x-user-id",
+      "x-team-id",
+      "x-random-fail-bypass",
+    ],
     allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
 
 app.use("*", async (context, next) => {
   await delay(readRequestDelay(context.req.method, context.req.path));
+
+  if (
+    shouldRandomlyFail(
+      context.req.method,
+      context.req.path,
+      context.req.header("x-random-fail-bypass"),
+    )
+  ) {
+    return context.json(
+      {
+        error: "Random API failure",
+        code: "random_failure",
+      },
+      randomFailStatus,
+    );
+  }
+
   await next();
 });
 
@@ -242,4 +267,54 @@ function readRequestDelay(method: string, path: string) {
   }
 
   return 0;
+}
+
+function shouldRandomlyFail(
+  method: string,
+  path: string,
+  bypassHeader: string | undefined,
+) {
+  if (randomFailRate <= 0 || method === "OPTIONS" || path === "/health") {
+    return false;
+  }
+
+  if (bypassHeader === "1" || bypassHeader === "true") {
+    return false;
+  }
+
+  if (
+    randomFailPathPrefixes.length > 0 &&
+    !randomFailPathPrefixes.some((prefix) => path.startsWith(prefix))
+  ) {
+    return false;
+  }
+
+  return Math.random() < randomFailRate;
+}
+
+function readRatio(value: string | undefined) {
+  const parsed = Number(value ?? 0);
+
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(parsed, 1));
+}
+
+function readStatus(value: string | undefined) {
+  const parsed = Number(value ?? 503);
+
+  if (!Number.isInteger(parsed) || parsed < 400 || parsed > 599) {
+    return 503;
+  }
+
+  return parsed as 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500 | 502 | 503;
+}
+
+function readPathPrefixes(value: string | undefined) {
+  return (value ?? "")
+    .split(",")
+    .map((prefix) => prefix.trim())
+    .filter(Boolean);
 }

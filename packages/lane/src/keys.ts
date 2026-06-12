@@ -51,7 +51,7 @@ function stableStringify(value: unknown): string {
   throw new TypeError(`Unsupported Lane key value: ${String(value)}`);
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
     return false;
   }

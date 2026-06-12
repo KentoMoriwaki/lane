@@ -103,6 +103,154 @@ describe("React integration", () => {
     await waitForText(app.container, "focused|background:0|transition:0|refresh:none");
   });
 
+  it("marks reconnect refetch as background pending", async () => {
+    const lane = createLane();
+    const reload = deferred<string>();
+    const loader = vi.fn(() => reload.promise);
+
+    lane.set(["tasks"], "cached");
+
+    const app = await renderLaneApp({
+      lane,
+      loader,
+      options: {
+        refetchOnReconnect: true,
+        staleTime: 0,
+      },
+    });
+
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:none");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "cached|background:1|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await resolveReload(reload, "reconnected");
+
+    await waitForText(app.container, "reconnected|background:0|transition:0|refresh:none");
+  });
+
+  it("revalidates focus subscribers when the document becomes visible", async () => {
+    const lane = createLane();
+    const reload = deferred<string>();
+    const loader = vi.fn(() => reload.promise);
+
+    lane.set(["tasks"], "cached");
+
+    const app = await renderLaneApp({
+      lane,
+      loader,
+      options: {
+        refetchOnFocus: true,
+        staleTime: 0,
+      },
+    });
+
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:none");
+
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "cached|background:1|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await resolveReload(reload, "visible");
+
+    await waitForText(app.container, "visible|background:0|transition:0|refresh:none");
+  });
+
+  it("throttles focus revalidation and allows it again after the window passes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+
+    const lane = createLane();
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const loader = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+
+    lane.set(["tasks"], "cached");
+
+    const app = await renderLaneApp({
+      lane,
+      loader,
+      options: {
+        refetchOnFocus: true,
+        staleTime: 0,
+      },
+    });
+
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:none");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await settlePromiseHandlers();
+    });
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await resolveReload(first, "focused-1");
+    await waitForText(app.container, "focused-1|background:0|transition:0|refresh:none");
+
+    // Within the throttle window, focus and visibilitychange coalesce.
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await settlePromiseHandlers();
+    });
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(15_000);
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await settlePromiseHandlers();
+    });
+    expect(loader).toHaveBeenCalledTimes(2);
+
+    await resolveReload(second, "focused-2");
+    await waitForText(app.container, "focused-2|background:0|transition:0|refresh:none");
+  });
+
+  it("polls with refetchInterval as background refetches", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const reload = deferred<string>();
+    const loader = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(async () => "first")
+      .mockImplementationOnce(() => reload.promise);
+
+    const app = await renderLaneApp({
+      lane,
+      loader,
+      options: {
+        refetchInterval: 1_000,
+      },
+    });
+
+    await waitForText(app.container, "first|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    await waitForText(app.container, "first|background:1|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(2);
+
+    await resolveReload(reload, "polled");
+
+    await waitForText(app.container, "polled|background:0|transition:0|refresh:none");
+  });
+
   it("marks refetchOnMount as background pending", async () => {
     const lane = createLane();
     const reload = deferred<string>();

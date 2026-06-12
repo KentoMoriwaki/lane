@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hydrateMany, readOrCreate, refetchOnFocus } from "../core";
+import {
+  hydrateMany,
+  readOrCreate,
+  refetchOnFocus,
+  refetchOnReconnect,
+} from "../core";
 import { createLane } from "../index";
 import { serializeKey } from "../keys";
 import {
@@ -533,6 +538,93 @@ describe("focus refetch", () => {
     }, listener);
 
     refetchOnFocus(lane);
+
+    expect(listener).not.toHaveBeenCalled();
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "reloaded"),
+    ).resolves.toBe("cached");
+  });
+});
+
+describe("reconnect refetch", () => {
+  it("invalidates stale entries for reconnect subscribers", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+
+    const lane = createLane();
+    const listener = vi.fn();
+
+    lane.set(["tasks"], "cached");
+    subscribeWithOptions(
+      lane,
+      ["tasks"],
+      {
+        refetchOnReconnect: true,
+        staleTime: 1_000,
+      },
+      listener,
+    );
+
+    vi.setSystemTime(1_999);
+    refetchOnReconnect(lane);
+
+    expect(listener).not.toHaveBeenCalled();
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "too-early"),
+    ).resolves.toBe("cached");
+
+    vi.setSystemTime(2_000);
+    refetchOnReconnect(lane);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(expect.anything(), "background");
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "reconnected"),
+    ).resolves.toBe("reconnected");
+  });
+
+  it("always-reconnect subscribers invalidate settled cache even when it is fresh", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+
+    const lane = createLane();
+    const listener = vi.fn();
+
+    lane.set(["tasks"], "cached");
+    subscribeWithOptions(
+      lane,
+      ["tasks"],
+      {
+        refetchOnReconnect: "always",
+        staleTime: 60_000,
+      },
+      listener,
+    );
+
+    refetchOnReconnect(lane);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "reloaded"),
+    ).resolves.toBe("reloaded");
+  });
+
+  it("does not invalidate entries without reconnect subscribers", async () => {
+    const lane = createLane();
+    const listener = vi.fn();
+
+    lane.set(["tasks"], "cached");
+    subscribeWithOptions(
+      lane,
+      ["tasks"],
+      {
+        refetchOnFocus: true,
+        staleTime: 0,
+      },
+      listener,
+    );
+
+    refetchOnReconnect(lane);
 
     expect(listener).not.toHaveBeenCalled();
     await expect(

@@ -202,6 +202,21 @@ Lifecycle behaviors that keep the promise model production-safe:
   the hook reconciles with the store right after subscribing. Invalidations
   that land while a reader is suspended (and therefore not yet subscribed)
   converge instead of leaving the reader on a dropped promise.
+- **Polling.** `refetchInterval` keeps one interval timer per entry while
+  subscribers exist, using the smallest interval across subscribers. Ticks go
+  through settled-only invalidation with the background source, so pending
+  reads dedupe and readers converge through their background transition.
+- **Reconnect revalidation.** `refetchOnReconnect` mirrors `refetchOnFocus`
+  (`true` = stale entries by `staleTime`, `"always"` = settled entries) and is
+  driven by the browser `online` event.
+- **Focus detection.** The provider listens to both `window` focus and
+  `document` visibilitychange (visible only). Because the two fire together on
+  a tab switch, revalidations are coalesced by `focusThrottleInterval` on the
+  provider (default 5s). Reconnect is not throttled.
+- **Date keys.** Key segments may be `Date` instances; they serialize by
+  timestamp without colliding with their ISO string form, and invalid dates
+  stay stable. Other non-plain values (Map, Set, functions, class instances)
+  still throw.
 
 ## Deferred Key Changes
 

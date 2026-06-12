@@ -25,6 +25,13 @@ Requires React 19.2+ (`useEffectEvent`).
 - loader context with `AbortSignal` (aborted on invalidate/remove/set/GC) and
   opt-in `retry` / `retryDelay`
 - structural sharing so deep-equal reloads keep referential identity
+- polling via `refetchInterval` (smallest interval across subscribers,
+  settled-only ticks so pending reads dedupe)
+- `refetchOnReconnect` mirroring `refetchOnFocus` semantics on the `online`
+  event
+- focus revalidation via both window focus and `visibilitychange`, coalesced
+  by `focusThrottleInterval` on the provider (default 5s)
+- `Date` key segments (serialized by timestamp, stable for invalid dates)
 
 Design notes:
 

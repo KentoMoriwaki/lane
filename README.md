@@ -9,6 +9,9 @@ The library package is intentionally empty for now. The current workspace exists
   projects, labels, members, insights) used by the team workspace apps.
 - `apps/todo-nextjs-swr`: Next.js TODO app using SWR.
 - `apps/todo-nextjs-lane`: Next.js TODO app reserved for the `lane` comparison path.
+- `apps/todo-nextjs-lane-spa`: client-only Lane workspace variant. It uses the
+  same backend and UI shape as `todo-nextjs-lane`, but all workspace reads are
+  owned by Lane on the client instead of App Router server prefetch.
 - `apps/todo-nextjs-react-query`: "Calm Command Workspace" — a team task
   management app built as the TanStack Query baseline (Next.js App Router server
   prefetch + dehydration, then a client query cache that owns reads, writes,
@@ -26,6 +29,7 @@ pnpm install
 pnpm dev:api
 pnpm dev:todo-nextjs-swr             # http://localhost:3001
 pnpm dev:todo-nextjs-lane            # http://localhost:3002
+pnpm dev:todo-nextjs-lane-spa        # http://localhost:3004
 pnpm dev:todo-nextjs-react-query     # http://localhost:3003
 ```
 

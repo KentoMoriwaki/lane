@@ -1,0 +1,15 @@
+{
+  "name": "@lane/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "playwright test",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}

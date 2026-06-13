@@ -2,24 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "todo-nextjs-react-query",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@lane/todo-nextjs-react-query", "dev"],
-      "port": 3003
-    },
-    {
-      "name": "todo-nextjs-lane",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@lane/todo-nextjs-lane", "dev"],
-      "port": 3002
-    },
-    {
-      "name": "todo-nextjs-lane-spa",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@lane/todo-nextjs-lane-spa", "dev"],
-      "port": 3004
-    },
-    {
       "name": "docs",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@lane/docs", "dev"],

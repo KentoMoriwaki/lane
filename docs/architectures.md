@@ -118,10 +118,11 @@ data directly or seeds a client-owned promise store in a structured way.
 
 ## Examples
 
-The repository's [`apps/`](https://github.com/KentoMoriwaki/lane/tree/main/apps)
-directory contains runnable Next.js apps that exercise these architectures
-against a shared backend, alongside SWR and TanStack Query baselines for
-comparison.
+The repository's [`apps/demo`](https://github.com/KentoMoriwaki/lane/tree/main/apps/demo)
+is a runnable Next.js app that builds the same team-task workspace three ways —
+use-lane (RSC-seeded), use-lane (client-only), and a TanStack Query baseline —
+switchable by route, so the architectures can be compared directly against one
+backend.
 
 ## See also
 

@@ -12,22 +12,20 @@ owns loading (Suspense), errors (Error Boundaries), and optimistic UI
 
 ## What's in here
 
-The workspace pairs the `packages/lane` implementation with comparable TODO
-applications against the same SQLite backend, so Lane can be evaluated by
-replacing SWR / TanStack Query while preserving — or improving — the same user
-experience with React transitions.
+The workspace pairs the `packages/lane` implementation with a live demo that
+builds the same team-task workspace three ways against one backend, so Lane can
+be evaluated against the TanStack Query baseline while preserving — or improving
+— the same user experience with React transitions.
 
 | Path | Description |
 | --- | --- |
 | [`packages/lane`](packages/lane) | The `use-lane` library and its unit/React-integration tests. |
-| [`apps/todo-api`](apps/todo-api) | Shared SQLite backend. Serves the original TODO endpoints and a richer team task API under `/api` (users, teams, tasks, projects, labels, members, insights). |
-| [`apps/todo-nextjs-swr`](apps/todo-nextjs-swr) | Next.js TODO app using SWR. |
-| [`apps/todo-nextjs-lane`](apps/todo-nextjs-lane) | Next.js team workspace on the Lane comparison path. The E2E suite runs against it. |
-| [`apps/todo-nextjs-lane-spa`](apps/todo-nextjs-lane-spa) | Client-only Lane workspace variant: same backend and UI shape as `todo-nextjs-lane`, but all workspace reads are owned by Lane on the client instead of App Router server prefetch. |
-| [`apps/todo-nextjs-react-query`](apps/todo-nextjs-react-query) | "Calm Command Workspace" — the TanStack Query baseline (App Router server prefetch + dehydration, then a client query cache). This is the UX/behaviour baseline Lane should be able to replace. |
-| [`apps/e2e`](apps/e2e) | Playwright suite running the user-facing success criteria (reload restoration, search, mutation convergence, team switching, stale-on-error refresh) against `todo-nextjs-lane`. |
+| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, three implementations switchable by route: `/lane` (use-lane, RSC-seeded), `/lane-spa` (use-lane, client-only), and `/react-query` (the TanStack Query baseline). |
+| [`apps/todo-api`](apps/todo-api) | Shared backend (Hono + libSQL/Turso). Serves a team task API under `/api` — users, teams, tasks, projects, labels, members, insights. |
+| [`apps/docs`](apps/docs) | The Nextra documentation site (sourced from `docs/*.md`). |
+| [`apps/e2e`](apps/e2e) | Playwright suite running the user-facing success criteria (reload restoration, search, mutation convergence, team switching, stale-on-error refresh) against the demo's `/lane` route. |
 
-The apps consume the backend through Hono RPC, importing `AppType` from
+The demo consumes the backend through Hono RPC, importing `AppType` from
 `@lane/todo-api` as a type-only dependency.
 
 ## Getting started
@@ -35,7 +33,7 @@ The apps consume the backend through Hono RPC, importing `AppType` from
 ```sh
 pnpm install
 pnpm dev:api
-pnpm dev:todo-nextjs-lane   # http://localhost:3002
+pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query
 ```
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full dev-server matrix,

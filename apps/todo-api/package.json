@@ -16,6 +16,7 @@
   "dependencies": {
     "@hono/node-server": "^1.19.6",
     "@hono/zod-validator": "^0.7.5",
+    "@libsql/client": "^0.17.3",
     "hono": "^4.10.7",
     "nanoid": "^5.1.6",
     "zod": "^4.1.12"

@@ -16,8 +16,9 @@ pnpm install
 ## Repository layout
 
 See the [README](README.md#whats-in-here) for the full table. In short:
-`packages/lane` is the library; `apps/*` are demo apps and a shared backend used
-to evaluate it against SWR and TanStack Query baselines.
+`packages/lane` is the library; `apps/*` are the live demo (`apps/demo`), the
+docs site (`apps/docs`), the shared backend (`apps/todo-api`), and the E2E suite
+(`apps/e2e`).
 
 ## Dev servers
 
@@ -25,10 +26,8 @@ Start the backend first, then any app:
 
 ```sh
 pnpm dev:api
-pnpm dev:todo-nextjs-swr             # http://localhost:3001
-pnpm dev:todo-nextjs-lane            # http://localhost:3002
-pnpm dev:todo-nextjs-react-query     # http://localhost:3003
-pnpm dev:todo-nextjs-lane-spa        # http://localhost:3004
+pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query
+pnpm dev:docs   # http://localhost:3005
 ```
 
 By default the API listens on `http://localhost:4000`. The Next.js apps read
@@ -58,8 +57,9 @@ Failures return `{ error: "Random API failure", code: "random_failure" }` with
 status `503`. Use `API_RANDOM_FAIL_STATUS=500` to change the status, or
 `API_RANDOM_FAIL_PATHS=/api/tasks,/api/insights` to limit failures to path
 prefixes. Requests with `x-random-fail-bypass: 1` are never failed;
-`todo-nextjs-lane` adds this header for server prefetches so the initial server
-render can succeed while client refreshes still exercise random failures.
+the demo's server-prefetched `/lane` route adds this header for server
+prefetches so the initial server render can succeed while client refreshes still
+exercise random failures.
 `/health` and `OPTIONS` requests are never failed.
 
 ## Testing
@@ -71,9 +71,9 @@ pnpm typecheck                 # all workspaces
 ```
 
 The E2E suite boots its own API instance (port 4100, fresh
-`data/e2e-team-task.sqlite`, no artificial delays) and a dedicated
-`todo-nextjs-lane` dev server (port 3102), so a locally running dev setup is
-never touched. On first run, install the browser:
+`data/e2e-team-task.sqlite`, no artificial delays) and a dedicated `apps/demo`
+dev server (port 3102) exercising the `/lane` route, so a locally running dev
+setup is never touched. On first run, install the browser:
 
 ```sh
 pnpm --filter @lane/e2e exec playwright install chromium

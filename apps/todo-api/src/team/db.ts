@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { type Client, type InArgs, createClient } from "@libsql/client";
 import { nanoid } from "nanoid";
 import type {
   CreateLabelInput,
@@ -22,9 +22,29 @@ import type {
 const dbPath = resolve(process.env.TEAM_DB_PATH ?? "data/team-task.sqlite");
 mkdirSync(dirname(dbPath), { recursive: true });
 
-const db = new DatabaseSync(dbPath);
+const db: Client = process.env.TURSO_DATABASE_URL
+  ? createClient({
+      url: process.env.TURSO_DATABASE_URL,
+      authToken: process.env.TURSO_AUTH_TOKEN,
+    })
+  : createClient({ url: `file:${dbPath}` });
 
-db.exec(`
+const allRows = async <T>(sql: string, args: unknown[] = []): Promise<T[]> =>
+  (await db.execute({ sql, args: args as InArgs })).rows as unknown as T[];
+
+const oneRow = async <T>(
+  sql: string,
+  args: unknown[] = [],
+): Promise<T | undefined> =>
+  ((await db.execute({ sql, args: args as InArgs })).rows[0] as unknown as T) ??
+  undefined;
+
+const runSql = async (sql: string, args: unknown[] = []) => {
+  const r = await db.execute({ sql, args: args as InArgs });
+  return { changes: Number(r.rowsAffected) };
+};
+
+const schemaSql = `
   pragma foreign_keys = on;
 
   create table if not exists users (
@@ -92,7 +112,7 @@ db.exec(`
     foreign key (task_id) references tasks(id) on delete cascade,
     foreign key (label_id) references labels(id) on delete cascade
   );
-`);
+`;
 
 /* --------------------------------- Rows -------------------------------- */
 
@@ -140,16 +160,24 @@ type TaskRow = {
 
 export const DEFAULT_USER_ID = "u_maya";
 
-seed();
+async function initDb() {
+  await db.executeMultiple(schemaSql);
+  await seed();
+}
+
+// Run schema-init + seed once at module load. ESM top-level await makes
+// importers (app.ts/server.ts) wait until the DB is ready before handling
+// requests.
+await initDb();
 
 /* --------------------------------- Seed -------------------------------- */
 
-function seed() {
-  const existing = db.prepare("select count(*) as count from teams").get() as {
-    count: number;
-  };
+async function seed() {
+  const existing = (await oneRow<{ count: number }>(
+    "select count(*) as count from teams",
+  )) ?? { count: 0 };
 
-  if (existing.count > 0) {
+  if (Number(existing.count) > 0) {
     return;
   }
 
@@ -167,9 +195,10 @@ function seed() {
   ];
 
   for (const user of users) {
-    db.prepare(
+    await runSql(
       "insert into users (id, name, email, initials, color) values (?, ?, ?, ?, ?)",
-    ).run(user.id, user.name, user.email, user.initials, user.color);
+      [user.id, user.name, user.email, user.initials, user.color],
+    );
   }
 
   const teams = [
@@ -178,11 +207,11 @@ function seed() {
   ];
 
   for (const team of teams) {
-    db.prepare("insert into teams (id, name, slug) values (?, ?, ?)").run(
+    await runSql("insert into teams (id, name, slug) values (?, ?, ?)", [
       team.id,
       team.name,
       team.slug,
-    );
+    ]);
   }
 
   const memberships: Array<[string, string, string]> = [
@@ -196,9 +225,10 @@ function seed() {
   ];
 
   for (const [teamId, userId, role] of memberships) {
-    db.prepare(
+    await runSql(
       "insert into team_members (team_id, user_id, role) values (?, ?, ?)",
-    ).run(teamId, userId, role);
+      [teamId, userId, role],
+    );
   }
 
   const projects: Array<Omit<ProjectRow, "created_at"> & { offset: number }> = [
@@ -210,9 +240,10 @@ function seed() {
   ];
 
   for (const project of projects) {
-    db.prepare(
+    await runSql(
       "insert into projects (id, team_id, name, key, color, created_at) values (?, ?, ?, ?, ?, ?)",
-    ).run(project.id, project.team_id, project.name, project.key, project.color, at(project.offset));
+      [project.id, project.team_id, project.name, project.key, project.color, at(project.offset)],
+    );
   }
 
   const labels: Array<Omit<LabelRow, "created_at"> & { offset: number }> = [
@@ -226,9 +257,10 @@ function seed() {
   ];
 
   for (const label of labels) {
-    db.prepare(
+    await runSql(
       "insert into labels (id, team_id, name, color, created_at) values (?, ?, ?, ?, ?)",
-    ).run(label.id, label.team_id, label.name, label.color, at(label.offset));
+      [label.id, label.team_id, label.name, label.color, at(label.offset)],
+    );
   }
 
   type SeedTask = {
@@ -511,30 +543,32 @@ function seed() {
 
   for (const task of tasks) {
     const createdAt = at(task.createdOffset);
-    db.prepare(
+    await runSql(
       `insert into tasks (
         id, team_id, title, description, status, priority,
         assignee_id, project_id, due_date, created_by, created_at, updated_at
       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      task.id,
-      task.teamId,
-      task.title,
-      task.description,
-      task.status,
-      task.priority,
-      task.assigneeId,
-      task.projectId,
-      task.dueOffset === null ? null : at(task.dueOffset),
-      "u_maya",
-      createdAt,
-      createdAt,
+      [
+        task.id,
+        task.teamId,
+        task.title,
+        task.description,
+        task.status,
+        task.priority,
+        task.assigneeId,
+        task.projectId,
+        task.dueOffset === null ? null : at(task.dueOffset),
+        "u_maya",
+        createdAt,
+        createdAt,
+      ],
     );
 
     for (const labelId of task.labelIds) {
-      db.prepare(
+      await runSql(
         "insert into task_labels (task_id, label_id) values (?, ?)",
-      ).run(task.id, labelId);
+        [task.id, labelId],
+      );
     }
   }
 }
@@ -562,17 +596,18 @@ function toMember(row: MemberRow): TeamMember {
   };
 }
 
-function toProject(row: ProjectRow): Project {
-  const count = db
-    .prepare("select count(*) as count from tasks where project_id = ?")
-    .get(row.id) as { count: number };
+async function toProject(row: ProjectRow): Promise<Project> {
+  const count = await oneRow<{ count: number }>(
+    "select count(*) as count from tasks where project_id = ?",
+    [row.id],
+  );
 
   return {
     id: row.id,
     name: row.name,
     key: row.key,
     color: row.color,
-    taskCount: count.count,
+    taskCount: Number(count?.count ?? 0),
   };
 }
 
@@ -580,48 +615,52 @@ function toLabel(row: LabelRow): TeamLabel {
   return { id: row.id, name: row.name, color: row.color };
 }
 
-function labelsForTask(taskId: string): TeamLabel[] {
-  const rows = db
-    .prepare(
-      `select labels.* from labels
+async function labelsForTask(taskId: string): Promise<TeamLabel[]> {
+  const rows = await allRows<LabelRow>(
+    `select labels.* from labels
        inner join task_labels on task_labels.label_id = labels.id
        where task_labels.task_id = ?
        order by labels.name asc`,
-    )
-    .all(taskId) as LabelRow[];
+    [taskId],
+  );
 
   return rows.map(toLabel);
 }
 
-function memberForTask(teamId: string, userId: string | null): TeamMember | null {
+async function memberForTask(
+  teamId: string,
+  userId: string | null,
+): Promise<TeamMember | null> {
   if (!userId) {
     return null;
   }
 
-  const row = db
-    .prepare(
-      `select users.*, team_members.role as role from users
+  const row = await oneRow<MemberRow>(
+    `select users.*, team_members.role as role from users
        inner join team_members on team_members.user_id = users.id
        where users.id = ? and team_members.team_id = ?`,
-    )
-    .get(userId, teamId) as MemberRow | undefined;
+    [userId, teamId],
+  );
 
   return row ? toMember(row) : null;
 }
 
-function projectForTask(projectId: string | null): Project | null {
+async function projectForTask(
+  projectId: string | null,
+): Promise<Project | null> {
   if (!projectId) {
     return null;
   }
 
-  const row = db
-    .prepare("select * from projects where id = ?")
-    .get(projectId) as ProjectRow | undefined;
+  const row = await oneRow<ProjectRow>(
+    "select * from projects where id = ?",
+    [projectId],
+  );
 
-  return row ? toProject(row) : null;
+  return row ? await toProject(row) : null;
 }
 
-function toTask(row: TaskRow): Task {
+async function toTask(row: TaskRow): Promise<Task> {
   return {
     id: row.id,
     teamId: row.team_id,
@@ -629,9 +668,9 @@ function toTask(row: TaskRow): Task {
     description: row.description,
     status: row.status as TaskStatus,
     priority: row.priority as TaskPriority,
-    assignee: memberForTask(row.team_id, row.assignee_id),
-    project: projectForTask(row.project_id),
-    labels: labelsForTask(row.id),
+    assignee: await memberForTask(row.team_id, row.assignee_id),
+    project: await projectForTask(row.project_id),
+    labels: await labelsForTask(row.id),
     dueDate: row.due_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -640,83 +679,88 @@ function toTask(row: TaskRow): Task {
 
 /* ------------------------------- Session ------------------------------- */
 
-export function getUserById(id: string): TeamUser | null {
-  const row = db.prepare("select * from users where id = ?").get(id) as
-    | UserRow
-    | undefined;
+export async function getUserById(id: string): Promise<TeamUser | null> {
+  const row = await oneRow<UserRow>("select * from users where id = ?", [id]);
 
   return row ? toUser(row) : null;
 }
 
-export function getCurrentUser(userId: string): CurrentUser | null {
-  const user = getUserById(userId);
+export async function getCurrentUser(
+  userId: string,
+): Promise<CurrentUser | null> {
+  const user = await getUserById(userId);
 
   if (!user) {
     return null;
   }
 
-  const teams = listTeamsForUser(userId);
+  const teams = await listTeamsForUser(userId);
   const defaultTeamId = teams[0]?.id ?? "";
 
   return { ...user, defaultTeamId };
 }
 
-export function listTeamsForUser(userId: string): TeamSummary[] {
-  const rows = db
-    .prepare(
-      `select teams.id, teams.name, teams.slug, team_members.role as role
-       from teams
-       inner join team_members on team_members.team_id = teams.id
-       where team_members.user_id = ?
-       order by teams.name asc`,
-    )
-    .all(userId) as Array<{
+export async function listTeamsForUser(
+  userId: string,
+): Promise<TeamSummary[]> {
+  const rows = await allRows<{
     id: string;
     name: string;
     slug: string;
     role: string;
-  }>;
+  }>(
+    `select teams.id, teams.name, teams.slug, team_members.role as role
+       from teams
+       inner join team_members on team_members.team_id = teams.id
+       where team_members.user_id = ?
+       order by teams.name asc`,
+    [userId],
+  );
 
-  return rows.map((row) => {
-    const count = db
-      .prepare("select count(*) as count from team_members where team_id = ?")
-      .get(row.id) as { count: number };
+  return Promise.all(
+    rows.map(async (row) => {
+      const count = await oneRow<{ count: number }>(
+        "select count(*) as count from team_members where team_id = ?",
+        [row.id],
+      );
 
-    return {
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      role: row.role as TeamSummary["role"],
-      memberCount: count.count,
-    };
-  });
+      return {
+        id: row.id,
+        name: row.name,
+        slug: row.slug,
+        role: row.role as TeamSummary["role"],
+        memberCount: Number(count?.count ?? 0),
+      };
+    }),
+  );
 }
 
-export function getMembershipRole(
+export async function getMembershipRole(
   teamId: string,
   userId: string,
-): TeamMember["role"] | null {
-  const row = db
-    .prepare(
-      "select role from team_members where team_id = ? and user_id = ?",
-    )
-    .get(teamId, userId) as { role: string } | undefined;
+): Promise<TeamMember["role"] | null> {
+  const row = await oneRow<{ role: string }>(
+    "select role from team_members where team_id = ? and user_id = ?",
+    [teamId, userId],
+  );
 
   return row ? (row.role as TeamMember["role"]) : null;
 }
 
 /* ------------------------------ Reference ------------------------------ */
 
-export function listMembers(teamId: string, q: string): TeamMember[] {
+export async function listMembers(
+  teamId: string,
+  q: string,
+): Promise<TeamMember[]> {
   const trimmed = q.trim().toLowerCase();
-  const rows = db
-    .prepare(
-      `select users.*, team_members.role as role from users
+  const rows = await allRows<MemberRow>(
+    `select users.*, team_members.role as role from users
        inner join team_members on team_members.user_id = users.id
        where team_members.team_id = ?
        order by users.name asc`,
-    )
-    .all(teamId) as MemberRow[];
+    [teamId],
+  );
 
   const members = rows.map(toMember);
 
@@ -731,37 +775,46 @@ export function listMembers(teamId: string, q: string): TeamMember[] {
   );
 }
 
-export function listProjects(teamId: string): Project[] {
-  const rows = db
-    .prepare("select * from projects where team_id = ? order by name asc")
-    .all(teamId) as ProjectRow[];
+export async function listProjects(teamId: string): Promise<Project[]> {
+  const rows = await allRows<ProjectRow>(
+    "select * from projects where team_id = ? order by name asc",
+    [teamId],
+  );
 
-  return rows.map(toProject);
+  return Promise.all(rows.map(toProject));
 }
 
-export function createProject(
+export async function createProject(
   teamId: string,
   input: CreateProjectInput,
-): Project {
+): Promise<Project> {
   const id = `p_${nanoid(8)}`;
   const key =
     input.key?.toUpperCase() ?? input.name.slice(0, 3).toUpperCase();
   const color = input.color ?? "slate";
 
-  db.prepare(
+  await runSql(
     "insert into projects (id, team_id, name, key, color, created_at) values (?, ?, ?, ?, ?, ?)",
-  ).run(id, teamId, input.name, key, color, new Date().toISOString());
+    [id, teamId, input.name, key, color, new Date().toISOString()],
+  );
 
   return toProject(
-    db.prepare("select * from projects where id = ?").get(id) as ProjectRow,
+    (await oneRow<ProjectRow>(
+      "select * from projects where id = ?",
+      [id],
+    )) as ProjectRow,
   );
 }
 
-export function listLabels(teamId: string, q: string): TeamLabel[] {
+export async function listLabels(
+  teamId: string,
+  q: string,
+): Promise<TeamLabel[]> {
   const trimmed = q.trim().toLowerCase();
-  const rows = db
-    .prepare("select * from labels where team_id = ? order by name asc")
-    .all(teamId) as LabelRow[];
+  const rows = await allRows<LabelRow>(
+    "select * from labels where team_id = ? order by name asc",
+    [teamId],
+  );
 
   const labels = rows.map(toLabel);
 
@@ -772,40 +825,46 @@ export function listLabels(teamId: string, q: string): TeamLabel[] {
   return labels.filter((label) => label.name.toLowerCase().includes(trimmed));
 }
 
-export function createLabel(
+export async function createLabel(
   teamId: string,
   input: CreateLabelInput,
-): TeamLabel {
-  const existing = db
-    .prepare(
-      "select * from labels where team_id = ? and name = ? collate nocase",
-    )
-    .get(teamId, input.name) as LabelRow | undefined;
+): Promise<TeamLabel> {
+  const existing = await oneRow<LabelRow>(
+    "select * from labels where team_id = ? and name = ? collate nocase",
+    [teamId, input.name],
+  );
 
   if (existing) {
     return toLabel(existing);
   }
 
   const id = `l_${nanoid(8)}`;
-  const color = input.color ?? pickLabelColor(teamId);
+  const color = input.color ?? (await pickLabelColor(teamId));
 
-  db.prepare(
+  await runSql(
     "insert into labels (id, team_id, name, color, created_at) values (?, ?, ?, ?, ?)",
-  ).run(id, teamId, input.name, color, new Date().toISOString());
+    [id, teamId, input.name, color, new Date().toISOString()],
+  );
 
   return toLabel(
-    db.prepare("select * from labels where id = ?").get(id) as LabelRow,
+    (await oneRow<LabelRow>(
+      "select * from labels where id = ?",
+      [id],
+    )) as LabelRow,
   );
 }
 
 const labelPalette = ["sage", "cobalt", "rose", "amber", "slate"];
 
-function pickLabelColor(teamId: string): string {
-  const count = db
-    .prepare("select count(*) as count from labels where team_id = ?")
-    .get(teamId) as { count: number };
+async function pickLabelColor(teamId: string): Promise<string> {
+  const count = await oneRow<{ count: number }>(
+    "select count(*) as count from labels where team_id = ?",
+    [teamId],
+  );
 
-  return labelPalette[count.count % labelPalette.length] ?? "slate";
+  return (
+    labelPalette[Number(count?.count ?? 0) % labelPalette.length] ?? "slate"
+  );
 }
 
 /* -------------------------------- Tasks -------------------------------- */
@@ -837,16 +896,17 @@ const priorityOrder: Record<TaskPriority, number> = {
   none: 4,
 };
 
-export function listTasks(
+export async function listTasks(
   teamId: string,
   currentUserId: string,
   filters: TaskFilters,
-): Task[] {
-  const rows = db
-    .prepare("select * from tasks where team_id = ?")
-    .all(teamId) as TaskRow[];
+): Promise<Task[]> {
+  const rows = await allRows<TaskRow>(
+    "select * from tasks where team_id = ?",
+    [teamId],
+  );
 
-  let tasks = rows.map(toTask);
+  let tasks = await Promise.all(rows.map(toTask));
 
   const statusFilter = parseCsv(filters.status);
   if (statusFilter.length > 0) {
@@ -920,61 +980,68 @@ export function listTasks(
   });
 }
 
-export function getTask(teamId: string, taskId: string): Task | null {
-  const row = db
-    .prepare("select * from tasks where id = ? and team_id = ?")
-    .get(taskId, teamId) as TaskRow | undefined;
+export async function getTask(
+  teamId: string,
+  taskId: string,
+): Promise<Task | null> {
+  const row = await oneRow<TaskRow>(
+    "select * from tasks where id = ? and team_id = ?",
+    [taskId, teamId],
+  );
 
-  return row ? toTask(row) : null;
+  return row ? await toTask(row) : null;
 }
 
-export function createTask(
+export async function createTask(
   teamId: string,
   createdById: string,
   input: CreateTaskInput,
-): Task {
+): Promise<Task> {
   const now = new Date().toISOString();
   const id = `task_${nanoid(10)}`;
 
-  db.prepare(
+  await runSql(
     `insert into tasks (
       id, team_id, title, description, status, priority,
       assignee_id, project_id, due_date, created_by, created_at, updated_at
     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    teamId,
-    input.title,
-    input.description ?? "",
-    input.status ?? "todo",
-    input.priority ?? "none",
-    normalizeId(input.assigneeId),
-    normalizeId(input.projectId),
-    input.dueDate ?? null,
-    createdById,
-    now,
-    now,
+    [
+      id,
+      teamId,
+      input.title,
+      input.description ?? "",
+      input.status ?? "todo",
+      input.priority ?? "none",
+      normalizeId(input.assigneeId),
+      normalizeId(input.projectId),
+      input.dueDate ?? null,
+      createdById,
+      now,
+      now,
+    ],
   );
 
   for (const labelId of input.labelIds ?? []) {
-    if (labelBelongsToTeam(teamId, labelId)) {
-      db.prepare(
+    if (await labelBelongsToTeam(teamId, labelId)) {
+      await runSql(
         "insert or ignore into task_labels (task_id, label_id) values (?, ?)",
-      ).run(id, labelId);
+        [id, labelId],
+      );
     }
   }
 
-  return getTask(teamId, id) as Task;
+  return (await getTask(teamId, id)) as Task;
 }
 
-export function updateTask(
+export async function updateTask(
   teamId: string,
   taskId: string,
   input: UpdateTaskInput,
-): Task | null {
-  const current = db
-    .prepare("select * from tasks where id = ? and team_id = ?")
-    .get(taskId, teamId) as TaskRow | undefined;
+): Promise<Task | null> {
+  const current = await oneRow<TaskRow>(
+    "select * from tasks where id = ? and team_id = ?",
+    [taskId, teamId],
+  );
 
   if (!current) {
     return null;
@@ -998,73 +1065,87 @@ export function updateTask(
     updated_at: new Date().toISOString(),
   };
 
-  db.prepare(
+  await runSql(
     `update tasks set
        title = ?, description = ?, status = ?, priority = ?,
        assignee_id = ?, project_id = ?, due_date = ?, updated_at = ?
      where id = ? and team_id = ?`,
-  ).run(
-    next.title,
-    next.description,
-    next.status,
-    next.priority,
-    next.assignee_id,
-    next.project_id,
-    next.due_date,
-    next.updated_at,
-    taskId,
-    teamId,
+    [
+      next.title,
+      next.description,
+      next.status,
+      next.priority,
+      next.assignee_id,
+      next.project_id,
+      next.due_date,
+      next.updated_at,
+      taskId,
+      teamId,
+    ],
   );
 
   return getTask(teamId, taskId);
 }
 
-export function deleteTask(teamId: string, taskId: string): boolean {
-  const result = db
-    .prepare("delete from tasks where id = ? and team_id = ?")
-    .run(taskId, teamId);
+export async function deleteTask(
+  teamId: string,
+  taskId: string,
+): Promise<boolean> {
+  const result = await runSql(
+    "delete from tasks where id = ? and team_id = ?",
+    [taskId, teamId],
+  );
 
   return result.changes > 0;
 }
 
-export function addTaskLabel(
+export async function addTaskLabel(
   teamId: string,
   taskId: string,
   labelId: string,
-): Task | null {
-  if (!getTask(teamId, taskId) || !labelBelongsToTeam(teamId, labelId)) {
+): Promise<Task | null> {
+  if (
+    !(await getTask(teamId, taskId)) ||
+    !(await labelBelongsToTeam(teamId, labelId))
+  ) {
     return null;
   }
 
-  db.prepare(
+  await runSql(
     "insert or ignore into task_labels (task_id, label_id) values (?, ?)",
-  ).run(taskId, labelId);
+    [taskId, labelId],
+  );
 
-  touchTask(taskId);
+  await touchTask(taskId);
   return getTask(teamId, taskId);
 }
 
-export function removeTaskLabel(
+export async function removeTaskLabel(
   teamId: string,
   taskId: string,
   labelId: string,
-): Task | null {
-  if (!getTask(teamId, taskId)) {
+): Promise<Task | null> {
+  if (!(await getTask(teamId, taskId))) {
     return null;
   }
 
-  db.prepare(
+  await runSql(
     "delete from task_labels where task_id = ? and label_id = ?",
-  ).run(taskId, labelId);
+    [taskId, labelId],
+  );
 
-  touchTask(taskId);
+  await touchTask(taskId);
   return getTask(teamId, taskId);
 }
 
-export function getInsights(teamId: string, currentUserId: string): Insights {
-  const tasks = db
-    .prepare("select * from tasks where team_id = ?")
-    .all(teamId) as TaskRow[];
+export async function getInsights(
+  teamId: string,
+  currentUserId: string,
+): Promise<Insights> {
+  const tasks = await allRows<TaskRow>(
+    "select * from tasks where team_id = ?",
+    [teamId],
+  );
 
   const now = Date.now();
   const week = now + 7 * 86_400_000;
@@ -1115,17 +1196,21 @@ export function getInsights(teamId: string, currentUserId: string): Insights {
 
 /* ------------------------------- Helpers ------------------------------- */
 
-function touchTask(taskId: string) {
-  db.prepare("update tasks set updated_at = ? where id = ?").run(
+async function touchTask(taskId: string) {
+  await runSql("update tasks set updated_at = ? where id = ?", [
     new Date().toISOString(),
     taskId,
-  );
+  ]);
 }
 
-function labelBelongsToTeam(teamId: string, labelId: string): boolean {
-  const row = db
-    .prepare("select id from labels where id = ? and team_id = ?")
-    .get(labelId, teamId);
+async function labelBelongsToTeam(
+  teamId: string,
+  labelId: string,
+): Promise<boolean> {
+  const row = await oneRow(
+    "select id from labels where id = ? and team_id = ?",
+    [labelId, teamId],
+  );
 
   return Boolean(row);
 }

@@ -7,9 +7,10 @@ const APP_URL = `http://localhost:${APP_PORT}`;
 
 /**
  * The suite runs against a dedicated API instance (port 4100) with its own
- * SQLite file that is removed before each run, and a dedicated Next.js dev
- * server (port 3102) pointed at it. A locally running dev setup on the
- * default ports is never touched.
+ * SQLite file that is removed before each run, and a dedicated apps/demo dev
+ * server (port 3102) pointed at it. Tests exercise the /lane route (the
+ * use-lane, RSC-seeded variant). A locally running dev setup on the default
+ * ports is never touched.
  */
 export default defineConfig({
   testDir: "./tests",
@@ -46,7 +47,7 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      command: "pnpm --filter @lane/todo-nextjs-lane exec next dev -p 3102",
+      command: "pnpm --filter @lane/demo exec next dev -p 3102",
       cwd: "../..",
       url: APP_URL,
       env: {

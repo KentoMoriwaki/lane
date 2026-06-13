@@ -10,4 +10,3 @@ playwright-report
 *.log
 *.tsbuildinfo
 data
-apps/todo-nextjs-react-query/next-env.d.ts

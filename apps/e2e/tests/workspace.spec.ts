@@ -32,7 +32,7 @@ function detailTitle(page: Page) {
   return detailPanel(page).locator("textarea").first();
 }
 
-async function gotoWorkspace(page: Page, path = "/") {
+async function gotoWorkspace(page: Page, path = "/lane") {
   await page.goto(path);
   // SSR paints before hydration; settle so interactions reach live handlers.
   await page.waitForLoadState("networkidle");

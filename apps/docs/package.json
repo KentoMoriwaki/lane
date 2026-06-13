@@ -1,0 +1,27 @@
+{
+  "name": "@lane/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/sync-docs.mjs",
+    "dev": "next dev -p 3005",
+    "prebuild": "node scripts/sync-docs.mjs",
+    "build": "next build --webpack",
+    "start": "next start -p 3005",
+    "sync": "node scripts/sync-docs.mjs"
+  },
+  "dependencies": {
+    "next": "16.2.7",
+    "nextra": "^4.6.1",
+    "nextra-theme-docs": "^4.6.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

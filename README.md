@@ -1,8 +1,10 @@
 # lane
 
-Monorepo for **[`use-lane`](packages/lane)**, a promise-identity cache for
-React 19. `useLane` / `createLane` coordinate which promise each key renders,
-while React owns loading, errors, transitions, and optimistic updates.
+Monorepo for **[`use-lane`](packages/lane)** — transition-native data fetching
+for React 19. Refetches run inside React transitions, so the current UI stays
+live while the next data loads. Lane caches the promises behind your keys; React
+owns loading (Suspense), errors (Error Boundaries), and optimistic UI
+(`useOptimistic`).
 
 - 📦 **Package** — [`use-lane`](packages/lane) · [npm](https://www.npmjs.com/package/use-lane)
 - 📖 **Docs** — [API reference](docs/api-reference.md) · [Architectures](docs/architectures.md) · [Design notes](docs/design-notes.md)

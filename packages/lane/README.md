@@ -3,14 +3,21 @@
 [![npm version](https://img.shields.io/npm/v/use-lane.svg)](https://www.npmjs.com/package/use-lane)
 [![license](https://img.shields.io/npm/l/use-lane.svg)](https://github.com/KentoMoriwaki/lane/blob/main/packages/lane/LICENSE)
 
-A promise-identity cache for React 19. Lane coordinates **which promise each key
-currently renders**; React primitives own everything else — `use(promise)` for
-data, Suspense for loading, Error Boundaries for initial errors, transitions for
-convergence, and `useOptimistic` / `useActionState` for mutations.
+**Transition-native data fetching for React 19.** Refetches run inside React
+transitions — invalidate after a mutation, revalidate on focus, or defer a
+filter change, and the screen you're looking at stays live while the next data
+loads. No spinner flash, no torn UI.
+
+React 19 ships the primitives to *render* async data — `use(promise)` for data,
+Suspense for loading, Error Boundaries for errors, transitions for non-blocking
+updates, and `useOptimistic` / `useActionState` for mutations. It doesn't ship
+the layer underneath: something to cache those promises by key, share one request
+across components, and re-fetch after a change. Lane is exactly that layer — and
+nothing else.
 
 ```tsx
 const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
-const user = use(promise); // Suspense handles loading, Error Boundary handles failure
+const user = use(promise); // Suspense owns loading, Error Boundaries own errors
 ```
 
 ## Why Lane
@@ -20,6 +27,12 @@ loading/error/status objects, optimistic patches, and mutation helpers. Lane
 takes the opposite split: it owns only the **promise identity** behind each key
 and lets React own the UI state it was designed to own in React 19.
 
+- **Every update is a transition.** SWR and React Query keep the previous screen
+  during a refetch with a library flag (`keepPreviousData` / `placeholderData`).
+  Lane keeps each key's promise in React state, so wrapping a key change or an
+  `invalidate` in `startTransition` — or `useDeferredValue` — *just works*: the
+  same transition you use everywhere else, interruptible, with a real pending
+  flag.
 - **One mental model.** Mutate the source, invalidate the read, render from the
   next promise — the same model you already use next to Server Components.
 - **No parallel state machine.** No `data` / `error` / `isLoading` result object.
@@ -110,6 +123,11 @@ function RenameButton({ userId }: { userId: string }) {
 
 ## Core concepts
 
+- **Transition-native re-reads.** Updates run through `useTransition`, so the
+  previous UI stays mounted and interactive while the next promise resolves —
+  `isTransitionPending` and `isBackgroundPending` tell you which is in flight.
+  Pair a key with `useDeferredValue` for search and filter UIs. (Initial loads
+  with no prior data still suspend to a Suspense fallback.)
 - **Keys are structural arrays** (`["task", id]`). They are matched exactly, or
   by `prefix` / predicate for scoped operations. `Date` segments are supported.
 - **Invalidation-driven re-reads.** `invalidate` clears the cached promise and

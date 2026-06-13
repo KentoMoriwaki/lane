@@ -1,9 +1,9 @@
 # API Reference
 
-`use-lane` is a promise-identity cache for React 19. Lane owns which promise each
-key currently renders; React owns loading (Suspense), errors (Error Boundaries),
-convergence (transitions), and optimistic UI (`useOptimistic` /
-`useActionState`).
+`use-lane` is transition-native data fetching for React 19. Lane caches the
+promise behind each key and re-reads it inside React transitions; React owns
+loading (Suspense), errors (Error Boundaries), and optimistic UI (`useOptimistic`
+/ `useActionState`).
 
 Everything is exported from the package root:
 

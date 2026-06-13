@@ -1,7 +1,7 @@
 {
   "name": "use-lane",
   "version": "0.1.0",
-  "description": "A promise-identity cache for React 19 — useLane/createLane coordinate which promise each key renders, while React owns loading, errors, transitions, and optimistic updates.",
+  "description": "Transition-native data fetching for React 19 — Lane caches the promise behind each key and re-reads it inside transitions, while React owns loading, errors, and optimistic UI.",
   "license": "MIT",
   "author": "Kento Moriwaki <kentomoriwaki@gmail.com>",
   "homepage": "https://github.com/KentoMoriwaki/lane/tree/main/packages/lane#readme",
@@ -20,6 +20,7 @@
     "cache",
     "suspense",
     "transition",
+    "concurrent",
     "hooks",
     "swr",
     "react-query"

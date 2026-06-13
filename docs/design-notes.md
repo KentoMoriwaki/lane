@@ -26,6 +26,28 @@ entries stay invalidated and fetch when next read. That is why Lane core never
 has to store loaders for later refetch — the reader that owns the read provides
 the loader.
 
+## Transition-native by construction
+
+Lane keeps each key's promise in React state (via `useState` + `useTransition`),
+not in an external store read during render. That single choice is what makes
+updates transition-native: when an entry is invalidated, set, or refetched, the
+hook swaps the promise inside `startTransition`, so React keeps rendering the
+last value until the next one resolves, then commits. The previous screen stays
+mounted and interactive — no fallback flash, no tearing.
+
+Because the data lives in React state, this is not a bespoke `keepPreviousData`
+flag like a query cache needs; it is the same transition model the rest of the
+app already uses. Callers compose it directly: wrap a filter change in
+`startTransition`, or derive the key and loader from a `useDeferredValue` input,
+and deferred behavior falls out for free. Background revalidations (focus, mount,
+polling, reconnect) run on a separate transition surfaced as `isBackgroundPending`,
+so automatic refreshes never block an interaction.
+
+Two deliberate exceptions keep the claim honest: an initial load with no prior
+value suspends to a Suspense fallback — a transition can only preserve UI that
+already exists — and `remove` is urgent rather than transition-preserving, so
+stale data cannot linger after sign-out or a team switch.
+
 ## React owns UI state
 
 `useLane` deliberately returns no query-result fields — no `data`, `error`,

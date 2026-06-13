@@ -55,7 +55,7 @@ API_RANDOM_FAIL_RATE=0.35 pnpm dev:api
 ## Testing
 
 ```sh
-pnpm --filter @lane/lane test    # library unit and React integration tests
+pnpm --filter use-lane test    # library unit and React integration tests
 pnpm test:e2e                    # Playwright success-criteria suite
 pnpm typecheck                   # all workspaces
 ```

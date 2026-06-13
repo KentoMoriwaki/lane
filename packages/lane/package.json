@@ -1,7 +1,29 @@
 {
-  "name": "@lane/lane",
+  "name": "use-lane",
   "version": "0.1.0",
-  "private": true,
+  "description": "A promise-identity cache for React 19 — useLane/createLane coordinate which promise each key renders, while React owns loading, errors, transitions, and optimistic updates.",
+  "license": "MIT",
+  "author": "Kento Moriwaki <kentomoriwaki@gmail.com>",
+  "homepage": "https://github.com/KentoMoriwaki/lane/tree/main/packages/lane#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KentoMoriwaki/lane.git",
+    "directory": "packages/lane"
+  },
+  "bugs": {
+    "url": "https://github.com/KentoMoriwaki/lane/issues"
+  },
+  "keywords": [
+    "react",
+    "react-19",
+    "data-fetching",
+    "cache",
+    "suspense",
+    "transition",
+    "hooks",
+    "swr",
+    "react-query"
+  ],
   "type": "module",
   "sideEffects": false,
   "engines": {

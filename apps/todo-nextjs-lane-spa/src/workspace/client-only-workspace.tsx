@@ -1,6 +1,6 @@
 "use client";
 
-import { LaneProvider, useLane } from "@lane/lane";
+import { LaneProvider, useLane } from "use-lane";
 import * as React from "react";
 import { fetchCurrentUser } from "@/api/endpoints";
 import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";

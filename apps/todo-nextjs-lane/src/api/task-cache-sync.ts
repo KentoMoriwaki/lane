@@ -1,5 +1,5 @@
 import type { Task } from "@lane/todo-api";
-import type { LaneEntryInfo } from "@lane/lane";
+import type { LaneEntryInfo } from "use-lane";
 import type { TaskFilters } from "./endpoints";
 
 export type TaskCacheStrategy = {

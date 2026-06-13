@@ -1,6 +1,6 @@
 "use client";
 
-import { useLaneInstance } from "@lane/lane";
+import { useLaneInstance } from "use-lane";
 import type { CurrentUser } from "@lane/todo-api";
 import { useSearchParams } from "next/navigation";
 import * as React from "react";

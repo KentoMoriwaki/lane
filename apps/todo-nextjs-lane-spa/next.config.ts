@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: resolve(appDir, "../.."),
   },
-  transpilePackages: ["@lane/lane"],
+  transpilePackages: ["use-lane"],
 };
 
 export default nextConfig;

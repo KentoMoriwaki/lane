@@ -24,6 +24,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@lane/docs", "dev"],
       "port": 3005
+    },
+    {
+      "name": "demo",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@lane/demo", "dev"],
+      "port": 3006
     }
   ]
 }

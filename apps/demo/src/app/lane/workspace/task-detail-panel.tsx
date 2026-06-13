@@ -20,15 +20,15 @@ import {
   useUpdateTask,
 } from "@/app/lane/api/hooks";
 import { taskCacheStrategies } from "@/app/lane/api/task-cache-sync";
-import { Button } from "@/app/lane/components/ui/button";
-import { Input } from "@/app/lane/components/ui/input";
-import { Separator } from "@/app/lane/components/ui/separator";
-import { Skeleton } from "@/app/lane/components/ui/skeleton";
-import { Textarea } from "@/app/lane/components/ui/textarea";
-import { accent } from "@/app/lane/lib/accent";
-import { formatRelative, toDateInputValue, fromDateInputValue } from "@/app/lane/lib/format";
-import { STATUS_META } from "@/app/lane/lib/task-meta";
-import { cn } from "@/app/lane/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import { accent } from "@/lib/accent";
+import { formatRelative, toDateInputValue, fromDateInputValue } from "@/lib/format";
+import { STATUS_META } from "@/lib/task-meta";
+import { cn } from "@/lib/utils";
 import { AssigneePicker } from "./assignee-picker";
 import { EmptyState, InlineSpinner } from "./feedback";
 import { LabelChip } from "./task-bits";

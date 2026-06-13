@@ -2,9 +2,9 @@
 
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { useInsights } from "@/app/lane/api/hooks";
-import { Skeleton } from "@/app/lane/components/ui/skeleton";
-import { accent, type AccentToken } from "@/app/lane/lib/accent";
-import { cn } from "@/app/lane/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { accent, type AccentToken } from "@/lib/accent";
+import { cn } from "@/lib/utils";
 import Link, { useLinkStatus } from "next/link";
 import * as React from "react";
 import { RefreshErrorChip } from "./feedback";

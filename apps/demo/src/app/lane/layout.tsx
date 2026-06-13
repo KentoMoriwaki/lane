@@ -1,8 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Toaster } from "@/app/lane/components/ui/sonner";
-import { TooltipProvider } from "@/app/lane/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 /**
  * Route-level providers for the use-lane variant. Tooltip + Toaster live here

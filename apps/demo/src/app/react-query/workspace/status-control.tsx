@@ -7,10 +7,10 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/app/react-query/components/ui/popover";
-import { accent } from "@/app/react-query/lib/accent";
-import { STATUS_META, STATUS_ORDER } from "@/app/react-query/lib/task-meta";
-import { cn } from "@/app/react-query/lib/utils";
+} from "@/components/ui/popover";
+import { accent } from "@/lib/accent";
+import { STATUS_META, STATUS_ORDER } from "@/lib/task-meta";
+import { cn } from "@/lib/utils";
 
 export function StatusControl({
   value,

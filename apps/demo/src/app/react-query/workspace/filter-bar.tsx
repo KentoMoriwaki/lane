@@ -4,7 +4,7 @@ import type { TaskPriority, TaskScope, TaskStatus } from "@lane/todo-api";
 import { ChevronDown, ListFilter, RotateCw, X } from "lucide-react";
 import type { TaskFilters } from "@/app/react-query/api/endpoints";
 import { useLabels, useProjects, useTasks } from "@/app/react-query/api/hooks";
-import { Button } from "@/app/react-query/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -12,16 +12,16 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/app/react-query/components/ui/dropdown-menu";
-import { Tabs, TabsList, TabsTrigger } from "@/app/react-query/components/ui/tabs";
-import { accent } from "@/app/react-query/lib/accent";
+} from "@/components/ui/dropdown-menu";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { accent } from "@/lib/accent";
 import {
   PRIORITY_META,
   PRIORITY_ORDER,
   STATUS_META,
   STATUS_ORDER,
-} from "@/app/react-query/lib/task-meta";
-import { cn } from "@/app/react-query/lib/utils";
+} from "@/lib/task-meta";
+import { cn } from "@/lib/utils";
 
 export function FilterBar({
   filters,

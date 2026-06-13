@@ -12,15 +12,15 @@ import {
   useUpdateTask,
 } from "@/app/react-query/api/hooks";
 import { taskCacheStrategies } from "@/app/react-query/api/task-cache-sync";
-import { Button } from "@/app/react-query/components/ui/button";
-import { Input } from "@/app/react-query/components/ui/input";
-import { Separator } from "@/app/react-query/components/ui/separator";
-import { Skeleton } from "@/app/react-query/components/ui/skeleton";
-import { Textarea } from "@/app/react-query/components/ui/textarea";
-import { accent } from "@/app/react-query/lib/accent";
-import { formatRelative, toDateInputValue, fromDateInputValue } from "@/app/react-query/lib/format";
-import { STATUS_META } from "@/app/react-query/lib/task-meta";
-import { cn } from "@/app/react-query/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import { accent } from "@/lib/accent";
+import { formatRelative, toDateInputValue, fromDateInputValue } from "@/lib/format";
+import { STATUS_META } from "@/lib/task-meta";
+import { cn } from "@/lib/utils";
 import { AssigneePicker } from "./assignee-picker";
 import { EmptyState, InlineSpinner, SectionError } from "./feedback";
 import { LabelChip } from "./task-bits";

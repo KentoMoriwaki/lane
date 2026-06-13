@@ -5,16 +5,16 @@ import { MoreHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useDeleteTask, useUpdateTask } from "@/app/react-query/api/hooks";
 import { taskCacheStrategies } from "@/app/react-query/api/task-cache-sync";
-import { Avatar } from "@/app/react-query/components/ui/avatar";
+import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/app/react-query/components/ui/dropdown-menu";
-import { accent } from "@/app/react-query/lib/accent";
-import { STATUS_META } from "@/app/react-query/lib/task-meta";
-import { cn } from "@/app/react-query/lib/utils";
+} from "@/components/ui/dropdown-menu";
+import { accent } from "@/lib/accent";
+import { STATUS_META } from "@/lib/task-meta";
+import { cn } from "@/lib/utils";
 import { DueBadge, LabelChip, PriorityIcon } from "./task-bits";
 import { StatusControl } from "./status-control";
 

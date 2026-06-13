@@ -15,7 +15,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/app/lane/components/ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 import { useWorkspace } from "./workspace-provider";
 
 function teamInitials(name: string) {

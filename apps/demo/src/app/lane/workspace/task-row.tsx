@@ -6,16 +6,16 @@ import * as React from "react";
 import { toast } from "sonner";
 import { useDeleteTask, useUpdateTask } from "@/app/lane/api/hooks";
 import { taskCacheStrategies } from "@/app/lane/api/task-cache-sync";
-import { Avatar } from "@/app/lane/components/ui/avatar";
+import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/app/lane/components/ui/dropdown-menu";
-import { accent } from "@/app/lane/lib/accent";
-import { STATUS_META } from "@/app/lane/lib/task-meta";
-import { cn } from "@/app/lane/lib/utils";
+} from "@/components/ui/dropdown-menu";
+import { accent } from "@/lib/accent";
+import { STATUS_META } from "@/lib/task-meta";
+import { cn } from "@/lib/utils";
 import { DueBadge, LabelChip, PriorityIcon } from "./task-bits";
 import { StatusControl } from "./status-control";
 

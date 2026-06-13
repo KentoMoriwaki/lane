@@ -12,14 +12,14 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "@/app/lane/components/ui/command";
+} from "@/components/ui/command";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/app/lane/components/ui/popover";
-import { accent } from "@/app/lane/lib/accent";
-import { cn } from "@/app/lane/lib/utils";
+} from "@/components/ui/popover";
+import { accent } from "@/lib/accent";
+import { cn } from "@/lib/utils";
 import { InlineSpinner } from "./feedback";
 
 export function LabelPicker({

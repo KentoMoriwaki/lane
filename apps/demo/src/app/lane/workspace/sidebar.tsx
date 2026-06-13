@@ -21,16 +21,16 @@ import {
   useProjects,
 } from "@/app/lane/api/hooks";
 import { EMPTY_FILTERS } from "@/app/lane/api/endpoints";
-import { Avatar } from "@/app/lane/components/ui/avatar";
+import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/app/lane/components/ui/dropdown-menu";
-import { accent } from "@/app/lane/lib/accent";
-import { cn } from "@/app/lane/lib/utils";
+} from "@/components/ui/dropdown-menu";
+import { accent } from "@/lib/accent";
+import { cn } from "@/lib/utils";
 import { TeamSwitcher } from "./team-switcher";
 import { useWorkspace } from "./workspace-provider";
 

@@ -3,8 +3,8 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import type { ReactNode } from "react";
-import { Toaster } from "@/app/react-query/components/ui/sonner";
-import { TooltipProvider } from "@/app/react-query/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { getQueryClient } from "@/app/react-query/get-query-client";
 
 /**

@@ -1,6 +1,6 @@
 import { AlertTriangle, Loader2, type LucideIcon } from "lucide-react";
-import { Button } from "@/app/react-query/components/ui/button";
-import { cn } from "@/app/react-query/lib/utils";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /** Scoped error with a retry control — never a full-page failure. */
 export function SectionError({

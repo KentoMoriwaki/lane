@@ -1,9 +1,9 @@
 import type { TaskPriority, TaskStatus, TeamLabel } from "@lane/todo-api";
 import { CalendarClock } from "lucide-react";
-import { accent } from "@/app/react-query/lib/accent";
-import { type DueTone, describeDueDate } from "@/app/react-query/lib/format";
-import { PRIORITY_META, STATUS_META } from "@/app/react-query/lib/task-meta";
-import { cn } from "@/app/react-query/lib/utils";
+import { accent } from "@/lib/accent";
+import { type DueTone, describeDueDate } from "@/lib/format";
+import { PRIORITY_META, STATUS_META } from "@/lib/task-meta";
+import { cn } from "@/lib/utils";
 
 export function StatusIcon({
   status,

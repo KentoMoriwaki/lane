@@ -19,17 +19,17 @@ import {
   useProjects,
 } from "@/app/react-query/api/hooks";
 import { EMPTY_FILTERS } from "@/app/react-query/api/endpoints";
-import { Avatar } from "@/app/react-query/components/ui/avatar";
+import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/app/react-query/components/ui/dropdown-menu";
-import { Skeleton } from "@/app/react-query/components/ui/skeleton";
-import { accent } from "@/app/react-query/lib/accent";
-import { cn } from "@/app/react-query/lib/utils";
+} from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
+import { accent } from "@/lib/accent";
+import { cn } from "@/lib/utils";
 import { TeamSwitcher } from "./team-switcher";
 import { useWorkspace } from "./workspace-provider";
 

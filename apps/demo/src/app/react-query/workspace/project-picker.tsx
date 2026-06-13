@@ -13,14 +13,14 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "@/app/react-query/components/ui/command";
+} from "@/components/ui/command";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/app/react-query/components/ui/popover";
-import { accent } from "@/app/react-query/lib/accent";
-import { cn } from "@/app/react-query/lib/utils";
+} from "@/components/ui/popover";
+import { accent } from "@/lib/accent";
+import { cn } from "@/lib/utils";
 import { InlineSpinner, SectionError } from "./feedback";
 
 const PROJECT_COLORS = ["cobalt", "sage", "amber", "rose", "slate"];

@@ -2,9 +2,9 @@
 
 import type { TaskFilters } from "@/app/react-query/api/endpoints";
 import { useInsights } from "@/app/react-query/api/hooks";
-import { Skeleton } from "@/app/react-query/components/ui/skeleton";
-import { accent, type AccentToken } from "@/app/react-query/lib/accent";
-import { cn } from "@/app/react-query/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { accent, type AccentToken } from "@/lib/accent";
+import { cn } from "@/lib/utils";
 import { SectionError } from "./feedback";
 
 type InsightCard = {

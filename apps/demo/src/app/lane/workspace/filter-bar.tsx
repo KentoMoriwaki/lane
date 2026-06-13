@@ -5,7 +5,7 @@ import Link, { useLinkStatus } from "next/link";
 import * as React from "react";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { useLabels, useProjects, useTasks } from "@/app/lane/api/hooks";
-import { Button } from "@/app/lane/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,15 +13,15 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/app/lane/components/ui/dropdown-menu";
-import { accent } from "@/app/lane/lib/accent";
+} from "@/components/ui/dropdown-menu";
+import { accent } from "@/lib/accent";
 import {
   PRIORITY_META,
   PRIORITY_ORDER,
   STATUS_META,
   STATUS_ORDER,
-} from "@/app/lane/lib/task-meta";
-import { cn } from "@/app/lane/lib/utils";
+} from "@/lib/task-meta";
+import { cn } from "@/lib/utils";
 
 export function FilterBar({
   filters,

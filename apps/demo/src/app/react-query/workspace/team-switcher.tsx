@@ -9,9 +9,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/app/react-query/components/ui/dropdown-menu";
-import { Skeleton } from "@/app/react-query/components/ui/skeleton";
-import { cn } from "@/app/react-query/lib/utils";
+} from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import { useWorkspace } from "./workspace-provider";
 
 function teamInitials(name: string) {

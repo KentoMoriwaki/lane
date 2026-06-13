@@ -10,15 +10,15 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from "@/app/lane/components/ui/command";
+} from "@/components/ui/command";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/app/lane/components/ui/popover";
-import { Avatar } from "@/app/lane/components/ui/avatar";
+} from "@/components/ui/popover";
+import { Avatar } from "@/components/ui/avatar";
 import { useMembers } from "@/app/lane/api/hooks";
-import { cn } from "@/app/lane/lib/utils";
+import { cn } from "@/lib/utils";
 import { InlineSpinner } from "./feedback";
 
 export function AssigneePicker({

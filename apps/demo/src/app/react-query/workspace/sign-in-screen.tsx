@@ -1,8 +1,8 @@
 "use client";
 
 import { ArrowRight } from "lucide-react";
-import { Avatar } from "@/app/react-query/components/ui/avatar";
-import { Button } from "@/app/react-query/components/ui/button";
+import { Avatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { useWorkspace } from "./workspace-provider";
 
 export function SignInScreen() {

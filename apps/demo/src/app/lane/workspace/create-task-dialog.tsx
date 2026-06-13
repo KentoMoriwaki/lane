@@ -5,7 +5,7 @@ import { AlertTriangle, Loader2, X } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { useCreateTask } from "@/app/lane/api/hooks";
-import { Button } from "@/app/lane/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -13,12 +13,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/app/lane/components/ui/dialog";
-import { Input } from "@/app/lane/components/ui/input";
-import { Textarea } from "@/app/lane/components/ui/textarea";
-import { accent } from "@/app/lane/lib/accent";
-import { fromDateInputValue } from "@/app/lane/lib/format";
-import { cn } from "@/app/lane/lib/utils";
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { accent } from "@/lib/accent";
+import { fromDateInputValue } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { AssigneePicker } from "./assignee-picker";
 import { LabelPicker } from "./label-picker";
 import { PriorityControl } from "./priority-control";

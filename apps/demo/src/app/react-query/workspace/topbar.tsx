@@ -1,13 +1,13 @@
 "use client";
 
 import { Plus, RefreshCw, Search } from "lucide-react";
-import { Button } from "@/app/react-query/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/app/react-query/components/ui/tooltip";
-import { cn } from "@/app/react-query/lib/utils";
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 export function Topbar({
   search,

@@ -5,7 +5,7 @@ import { AlertTriangle, Loader2, X } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { useCreateTask } from "@/app/react-query/api/hooks";
-import { Button } from "@/app/react-query/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -13,12 +13,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/app/react-query/components/ui/dialog";
-import { Input } from "@/app/react-query/components/ui/input";
-import { Textarea } from "@/app/react-query/components/ui/textarea";
-import { accent } from "@/app/react-query/lib/accent";
-import { fromDateInputValue } from "@/app/react-query/lib/format";
-import { cn } from "@/app/react-query/lib/utils";
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { accent } from "@/lib/accent";
+import { fromDateInputValue } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { AssigneePicker } from "./assignee-picker";
 import { LabelPicker } from "./label-picker";
 import { PriorityControl } from "./priority-control";

@@ -46,7 +46,7 @@ const team = new Hono<{ Variables: Variables }>();
  */
 team.use("*", async (context, next) => {
   const userId = context.req.header("x-user-id") ?? DEFAULT_USER_ID;
-  const user = getUserById(userId);
+  const user = await getUserById(userId);
 
   if (!user) {
     return context.json(
@@ -79,7 +79,7 @@ const teamScopedPaths = [
 for (const path of teamScopedPaths) {
   team.use(path, async (context, next) => {
     const userId = context.get("userId");
-    const teams = listTeamsForUser(userId);
+    const teams = await listTeamsForUser(userId);
     const requestedTeamId = context.req.header("x-team-id");
     const teamId = requestedTeamId ?? teams[0]?.id;
 
@@ -87,7 +87,7 @@ for (const path of teamScopedPaths) {
       return context.json({ error: "No active team", code: "no_team" }, 400);
     }
 
-    const role = getMembershipRole(teamId, userId);
+    const role = await getMembershipRole(teamId, userId);
 
     if (!role) {
       return context.json(
@@ -123,8 +123,8 @@ function delay(ms: number): Promise<void> {
 }
 
 export const teamRoutes = team
-  .get("/me", (context) => {
-    const user = getCurrentUser(context.get("userId"));
+  .get("/me", async (context) => {
+    const user = await getCurrentUser(context.get("userId"));
 
     if (!user) {
       return context.json({ error: "Unknown user" }, 404);
@@ -132,17 +132,17 @@ export const teamRoutes = team
 
     return context.json(user, 200);
   })
-  .get("/teams", (context) => {
-    return context.json(listTeamsForUser(context.get("userId")), 200);
+  .get("/teams", async (context) => {
+    return context.json(await listTeamsForUser(context.get("userId")), 200);
   })
   .get(
     "/tasks",
     zValidator("query", listTasksQuerySchema, validationHook),
-    (context) => {
+    async (context) => {
       const query = context.req.valid("query");
 
       return context.json(
-        listTasks(context.get("teamId"), context.get("userId"), {
+        await listTasks(context.get("teamId"), context.get("userId"), {
           q: query.q,
           scope: query.scope,
           status: query.status,
@@ -158,8 +158,8 @@ export const teamRoutes = team
   .post(
     "/tasks",
     zValidator("json", createTaskInputSchema, validationHook),
-    (context) => {
-      const task = createTask(
+    async (context) => {
+      const task = await createTask(
         context.get("teamId"),
         context.get("userId"),
         context.req.valid("json"),
@@ -168,8 +168,8 @@ export const teamRoutes = team
       return context.json(task, 201);
     },
   )
-  .get("/tasks/:id", (context) => {
-    const task = getTask(context.get("teamId"), context.req.param("id"));
+  .get("/tasks/:id", async (context) => {
+    const task = await getTask(context.get("teamId"), context.req.param("id"));
 
     if (!task) {
       return context.json({ error: "Task not found" }, 404);
@@ -180,8 +180,8 @@ export const teamRoutes = team
   .patch(
     "/tasks/:id",
     zValidator("json", updateTaskInputSchema, validationHook),
-    (context) => {
-      const task = updateTask(
+    async (context) => {
+      const task = await updateTask(
         context.get("teamId"),
         context.req.param("id"),
         context.req.valid("json"),
@@ -194,8 +194,8 @@ export const teamRoutes = team
       return context.json(task, 200);
     },
   )
-  .delete("/tasks/:id", (context) => {
-    const deleted = deleteTask(
+  .delete("/tasks/:id", async (context) => {
+    const deleted = await deleteTask(
       context.get("teamId"),
       context.req.param("id"),
     );
@@ -209,8 +209,8 @@ export const teamRoutes = team
   .post(
     "/tasks/:id/labels",
     zValidator("json", addTaskLabelInputSchema, validationHook),
-    (context) => {
-      const task = addTaskLabel(
+    async (context) => {
+      const task = await addTaskLabel(
         context.get("teamId"),
         context.req.param("id"),
         context.req.valid("json").labelId,
@@ -223,8 +223,8 @@ export const teamRoutes = team
       return context.json(task, 200);
     },
   )
-  .delete("/tasks/:id/labels/:labelId", (context) => {
-    const task = removeTaskLabel(
+  .delete("/tasks/:id/labels/:labelId", async (context) => {
+    const task = await removeTaskLabel(
       context.get("teamId"),
       context.req.param("id"),
       context.req.param("labelId"),
@@ -238,12 +238,12 @@ export const teamRoutes = team
   })
   .get("/projects", async (context) => {
     await delay(DERIVED_DATA_DELAY_MS);
-    return context.json(listProjects(context.get("teamId")), 200);
+    return context.json(await listProjects(context.get("teamId")), 200);
   })
   .post(
     "/projects",
     zValidator("json", createProjectInputSchema, validationHook),
-    (context) => {
+    async (context) => {
       // Creating a project is an admin-only action. Non-admins receive a
       // permission-aware response rather than a generic failure.
       if (context.get("role") !== "admin") {
@@ -257,7 +257,7 @@ export const teamRoutes = team
       }
 
       return context.json(
-        createProject(context.get("teamId"), context.req.valid("json")),
+        await createProject(context.get("teamId"), context.req.valid("json")),
         201,
       );
     },
@@ -265,9 +265,12 @@ export const teamRoutes = team
   .get(
     "/labels",
     zValidator("query", listLabelsQuerySchema, validationHook),
-    (context) => {
+    async (context) => {
       return context.json(
-        listLabels(context.get("teamId"), context.req.valid("query").q ?? ""),
+        await listLabels(
+          context.get("teamId"),
+          context.req.valid("query").q ?? "",
+        ),
         200,
       );
     },
@@ -275,9 +278,9 @@ export const teamRoutes = team
   .post(
     "/labels",
     zValidator("json", createLabelInputSchema, validationHook),
-    (context) => {
+    async (context) => {
       return context.json(
-        createLabel(context.get("teamId"), context.req.valid("json")),
+        await createLabel(context.get("teamId"), context.req.valid("json")),
         201,
       );
     },
@@ -285,9 +288,12 @@ export const teamRoutes = team
   .get(
     "/members",
     zValidator("query", listMembersQuerySchema, validationHook),
-    (context) => {
+    async (context) => {
       return context.json(
-        listMembers(context.get("teamId"), context.req.valid("query").q ?? ""),
+        await listMembers(
+          context.get("teamId"),
+          context.req.valid("query").q ?? "",
+        ),
         200,
       );
     },
@@ -295,7 +301,7 @@ export const teamRoutes = team
   .get("/insights", async (context) => {
     await delay(DERIVED_DATA_DELAY_MS);
     return context.json(
-      getInsights(context.get("teamId"), context.get("userId")),
+      await getInsights(context.get("teamId"), context.get("userId")),
       200,
     );
   });

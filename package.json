@@ -5,7 +5,6 @@
   "packageManager": "pnpm@10.28.0",
   "scripts": {
     "dev": "pnpm -r --parallel dev",
-    "dev:api": "pnpm --filter @lane/todo-api dev",
     "dev:demo": "pnpm --filter @lane/demo dev",
     "dev:docs": "pnpm --filter @lane/docs dev",
     "build": "pnpm -r build",

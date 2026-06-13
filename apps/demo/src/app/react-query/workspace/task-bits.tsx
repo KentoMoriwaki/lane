@@ -1,4 +1,4 @@
-import type { TaskPriority, TaskStatus, TeamLabel } from "@lane/todo-api";
+import type { TaskPriority, TaskStatus, TeamLabel } from "@/server/api";
 import { CalendarClock } from "lucide-react";
 import { accent } from "@/lib/accent";
 import { type DueTone, describeDueDate } from "@/lib/format";

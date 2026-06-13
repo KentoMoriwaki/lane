@@ -1,6 +1,6 @@
 "use client";
 
-import type { TeamMember } from "@lane/todo-api";
+import type { TeamMember } from "@/server/api";
 import { Check, ChevronsUpDown, UserCircle2, UserX } from "lucide-react";
 import * as React from "react";
 import {

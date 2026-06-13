@@ -1,6 +1,6 @@
 "use client";
 
-import type { Task } from "@lane/todo-api";
+import type { Task } from "@/server/api";
 import { MoreHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useDeleteTask, useUpdateTask } from "@/app/react-query/api/hooks";

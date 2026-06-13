@@ -1,6 +1,6 @@
 "use client";
 
-import type { TaskStatus } from "@lane/todo-api";
+import type { TaskStatus } from "@/server/api";
 import { Check } from "lucide-react";
 import * as React from "react";
 import {

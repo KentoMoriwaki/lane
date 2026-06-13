@@ -6,7 +6,7 @@ import type {
   TeamLabel,
   TeamMember,
   UpdateTaskInput,
-} from "@lane/todo-api";
+} from "@/server/api";
 import { Check, MousePointerClick, Trash2, X } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";

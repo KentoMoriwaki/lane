@@ -21,6 +21,10 @@ import { getQueryClient } from "@/app/react-query/get-query-client";
 import { Workspace } from "@/app/react-query/workspace/workspace";
 import { WorkspaceProvider } from "@/app/react-query/workspace/workspace-provider";
 
+// The workspace is prefetched per request from the embedded API, so it can never
+// be statically prerendered (there is no server to fetch from at build time).
+export const dynamic = "force-dynamic";
+
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };

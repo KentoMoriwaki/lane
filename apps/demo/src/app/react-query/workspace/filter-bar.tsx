@@ -1,6 +1,6 @@
 "use client";
 
-import type { TaskPriority, TaskScope, TaskStatus } from "@lane/todo-api";
+import type { TaskPriority, TaskScope, TaskStatus } from "@/server/api";
 import { ChevronDown, ListFilter, RotateCw, X } from "lucide-react";
 import type { TaskFilters } from "@/app/react-query/api/endpoints";
 import { useLabels, useProjects, useTasks } from "@/app/react-query/api/hooks";

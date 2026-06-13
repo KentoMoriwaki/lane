@@ -1,6 +1,6 @@
 "use client";
 
-import type { CurrentUser } from "@lane/todo-api";
+import type { CurrentUser } from "@/server/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";

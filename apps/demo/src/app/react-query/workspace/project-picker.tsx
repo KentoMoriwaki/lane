@@ -1,6 +1,6 @@
 "use client";
 
-import type { Project } from "@lane/todo-api";
+import type { Project } from "@/server/api";
 import { Check, ChevronsUpDown, FolderPlus, Hash } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";

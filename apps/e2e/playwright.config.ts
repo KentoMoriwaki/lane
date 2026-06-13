@@ -1,14 +1,12 @@
 import { defineConfig } from "@playwright/test";
 
-const API_PORT = 4100;
 const APP_PORT = 3102;
-const API_URL = `http://localhost:${API_PORT}`;
 const APP_URL = `http://localhost:${APP_PORT}`;
 
 /**
- * The suite runs against a dedicated API instance (port 4100) with its own
- * SQLite file that is removed before each run, and a dedicated apps/demo dev
- * server (port 3102) pointed at it. Tests exercise the /lane route (the
+ * The suite runs against a dedicated apps/demo dev server (port 3102) that
+ * serves its own embedded team API from `/api`, backed by a local SQLite file
+ * that is removed before each run. Tests exercise the /lane route (the
  * use-lane, RSC-seeded variant). A locally running dev setup on the default
  * ports is never touched.
  */
@@ -29,32 +27,23 @@ export default defineConfig({
     baseURL: APP_URL,
     trace: "retain-on-failure",
   },
-  webServer: [
-    {
-      command:
-        "rm -f apps/todo-api/data/e2e-team-task.sqlite && pnpm --filter @lane/todo-api dev",
-      cwd: "../..",
-      url: `${API_URL}/health`,
-      env: {
-        PORT: String(API_PORT),
-        TEAM_DB_PATH: "data/e2e-team-task.sqlite",
-        TEAM_API_READ_DELAY_MS: "0",
-        TEAM_API_WRITE_DELAY_MS: "0",
-        TEAM_API_PICKER_DELAY_MS: "0",
-        TODO_API_DELAY_MS: "0",
-      },
-      reuseExistingServer: false,
-      timeout: 60_000,
+  webServer: {
+    command:
+      "rm -f apps/demo/data/e2e-team-task.sqlite && pnpm --filter @lane/demo exec next dev -p 3102",
+    cwd: "../..",
+    url: APP_URL,
+    env: {
+      // The server-side RPC client (RSC seed) needs an absolute origin; the
+      // browser still talks to /api same-origin.
+      NEXT_PUBLIC_SITE_URL: APP_URL,
+      // A throwaway SQLite file (relative to apps/demo), re-seeded each run.
+      TEAM_DB_PATH: "data/e2e-team-task.sqlite",
+      // No artificial latency so the suite stays fast and deterministic.
+      TEAM_API_READ_DELAY_MS: "0",
+      TEAM_API_WRITE_DELAY_MS: "0",
+      TEAM_API_PICKER_DELAY_MS: "0",
     },
-    {
-      command: "pnpm --filter @lane/demo exec next dev -p 3102",
-      cwd: "../..",
-      url: APP_URL,
-      env: {
-        NEXT_PUBLIC_TODO_API_URL: API_URL,
-      },
-      reuseExistingServer: false,
-      timeout: 120_000,
-    },
-  ],
+    reuseExistingServer: false,
+    timeout: 120_000,
+  },
 });

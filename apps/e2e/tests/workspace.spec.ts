@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// Seeded data from apps/todo-api/src/team/db.ts
+// Seeded data from apps/demo/src/server/team/db.ts
 const ACME_TEAM = "Acme Product Team";
 const GROWTH_TEAM = "Growth Pod";
 const ACME_TASK = "Review billing webhook retry behavior";

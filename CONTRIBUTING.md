@@ -16,40 +16,41 @@ pnpm install
 ## Repository layout
 
 See the [README](README.md#whats-in-here) for the full table. In short:
-`packages/lane` is the library; `apps/*` are the live demo (`apps/demo`), the
-docs site (`apps/docs`), the shared backend (`apps/todo-api`), and the E2E suite
-(`apps/e2e`).
+`packages/lane` is the library; `apps/*` are the live demo (`apps/demo`, which
+embeds its own team API at `/api`), the docs site (`apps/docs`), and the E2E
+suite (`apps/e2e`).
 
 ## Dev servers
 
-Start the backend first, then any app:
+The demo is self-contained — it serves its own team API from `/api`, so one
+process is all you need:
 
 ```sh
-pnpm dev:api
-pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query
+pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query (+ /api)
 pnpm dev:docs   # http://localhost:3005
 ```
 
-By default the API listens on `http://localhost:4000`. The Next.js apps read
-`NEXT_PUBLIC_TODO_API_URL`, falling back to that URL.
+With no `TURSO_*` environment variables set, the demo's API uses a local SQLite
+file (`apps/demo/data/team-task.sqlite`, git-ignored), created and seeded on first
+request. See [DEPLOYMENT.md](DEPLOYMENT.md) for the Turso-backed production setup.
 
-### API environment variables
+### Demo API environment variables
 
-- `TODO_API_DELAY_MS` — the TODO API delays `/todos` requests by `1000ms` by
-  default so the demo apps show pending and transition states. Set to `0` to
-  disable.
+The embedded team API under `/api` adds small artificial delays so the demo
+shows scoped pending, optimistic, and transition states:
+
 - `TEAM_API_READ_DELAY_MS`, `TEAM_API_WRITE_DELAY_MS`, `TEAM_API_PICKER_DELAY_MS`
-  — the team task API under `/api` adds smaller, separate delays so the React
-  Query baseline shows scoped pending, optimistic, and transition states. Set to
-  `0` to disable. Team task data is seeded into `data/team-task.sqlite` on first
-  run.
+  — default `100ms` each. Set to `0` to disable. Team data is seeded into
+  `apps/demo/data/team-task.sqlite` on first request.
+- `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` — when set, the API uses a hosted
+  Turso database instead of the local file (see [DEPLOYMENT.md](DEPLOYMENT.md)).
 
 ### Simulating failures
 
-For read/error-handling checks, the API can randomly fail requests:
+For error-handling checks, the embedded API can randomly fail requests:
 
 ```sh
-API_RANDOM_FAIL_RATE=0.35 pnpm dev:api
+API_RANDOM_FAIL_RATE=0.35 pnpm dev:demo
 ```
 
 `API_RANDOM_FAIL_RATE` is clamped between `0` and `1` and defaults to `0`.
@@ -59,8 +60,7 @@ status `503`. Use `API_RANDOM_FAIL_STATUS=500` to change the status, or
 prefixes. Requests with `x-random-fail-bypass: 1` are never failed;
 the demo's server-prefetched `/lane` route adds this header for server
 prefetches so the initial server render can succeed while client refreshes still
-exercise random failures.
-`/health` and `OPTIONS` requests are never failed.
+exercise random failures. `OPTIONS` requests are never failed.
 
 ## Testing
 
@@ -70,10 +70,10 @@ pnpm test:e2e                  # Playwright success-criteria suite
 pnpm typecheck                 # all workspaces
 ```
 
-The E2E suite boots its own API instance (port 4100, fresh
-`data/e2e-team-task.sqlite`, no artificial delays) and a dedicated `apps/demo`
-dev server (port 3102) exercising the `/lane` route, so a locally running dev
-setup is never touched. On first run, install the browser:
+The E2E suite boots a single `apps/demo` dev server (port 3102) that serves its
+own `/api` from a fresh `apps/demo/data/e2e-team-task.sqlite` with no artificial
+delays, exercising the `/lane` route, so a locally running dev setup is never
+touched. On first run, install the browser:
 
 ```sh
 pnpm --filter @lane/e2e exec playwright install chromium

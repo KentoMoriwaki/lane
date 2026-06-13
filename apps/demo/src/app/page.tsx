@@ -20,14 +20,7 @@ const VARIANTS: Variant[] = [
     name: "TanStack Query",
     tagline:
       "The baseline: a resolved-value cache with its own query/mutation hooks, status objects, and optimistic patches.",
-    available: false,
-  },
-  {
-    href: "/swr",
-    name: "SWR",
-    tagline:
-      "Stale-while-revalidate hooks with a global cache and keepPreviousData.",
-    available: false,
+    available: true,
   },
 ];
 
@@ -39,13 +32,13 @@ export default function Home() {
           use-lane · live demo
         </p>
         <h1 className="text-balance text-4xl font-semibold tracking-tight">
-          One team-task workspace, three data layers.
+          One team-task workspace, two data layers.
         </h1>
         <p className="text-pretty text-lg text-muted-foreground">
           The same UI and the same backend, implemented with{" "}
-          <span className="text-foreground">use-lane</span>, TanStack Query, and
-          SWR — so you can feel the difference. Switch the data layer by changing
-          the route.
+          <span className="text-foreground">use-lane</span> and TanStack Query —
+          so you can feel the difference. Switch the data layer by changing the
+          route.
         </p>
       </header>
 

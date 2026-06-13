@@ -1,7 +1,7 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
-import { fetchCurrentUser, fetchTeams } from "@/rq/api/endpoints";
+import { fetchCurrentUser, fetchTeams } from "@/app/react-query/api/endpoints";
 import {
   currentUserQueryOptions,
   insightsQueryOptions,
@@ -11,15 +11,15 @@ import {
   taskQueryOptions,
   tasksQueryOptions,
   teamsQueryOptions,
-} from "@/rq/api/query-options";
+} from "@/app/react-query/api/query-options";
 import {
   buildWorkspaceSearch,
   getterFromRecord,
   parseWorkspaceState,
-} from "@/rq/api/url-state";
-import { getQueryClient } from "@/rq/get-query-client";
-import { Workspace } from "@/rq/workspace/workspace";
-import { WorkspaceProvider } from "@/rq/workspace/workspace-provider";
+} from "@/app/react-query/api/url-state";
+import { getQueryClient } from "@/app/react-query/get-query-client";
+import { Workspace } from "@/app/react-query/workspace/workspace";
+import { WorkspaceProvider } from "@/app/react-query/workspace/workspace-provider";
 
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;

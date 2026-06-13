@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
-import { Toaster } from "@/components/ui/sonner";
-import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Calm Command Workspace - Lane",
+  title: "use-lane demo",
   description:
-    "Lane replacement for the team task workspace React Query baseline.",
+    "The same team-task workspace, implemented with use-lane and TanStack Query.",
 };
 
 export default function RootLayout({
@@ -17,8 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-background text-foreground antialiased">
-        <Providers>{children}</Providers>
-        <Toaster />
+        {children}
       </body>
     </html>
   );

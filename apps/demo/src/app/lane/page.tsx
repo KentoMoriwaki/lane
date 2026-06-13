@@ -9,15 +9,15 @@ import {
   fetchTask,
   fetchTasks,
   fetchTeams,
-} from "@/api/endpoints";
+} from "@/app/lane/api/endpoints";
 import {
   buildWorkspaceSearch,
   getterFromRecord,
   parseWorkspaceState,
-} from "@/api/url-state";
-import { workspaceSnapshots } from "@/api/query-options";
-import { Workspace } from "@/workspace/workspace";
-import { WorkspaceProvider } from "@/workspace/workspace-provider";
+} from "@/app/lane/api/url-state";
+import { workspaceSnapshots } from "@/app/lane/api/query-options";
+import { Workspace } from "@/app/lane/workspace/workspace";
+import { WorkspaceProvider } from "@/app/lane/workspace/workspace-provider";
 
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;

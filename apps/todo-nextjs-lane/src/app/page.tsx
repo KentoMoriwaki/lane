@@ -1,4 +1,4 @@
-import { LaneHydration, LaneProvider } from "@lane/lane";
+import { LaneHydration, LaneProvider } from "use-lane";
 import { redirect } from "next/navigation";
 import {
   fetchCurrentUser,

@@ -5,7 +5,7 @@ import { EMPTY_FILTERS, type TaskFilters } from "@/api/endpoints";
 import { useWorkspaceRefresh } from "@/api/hooks";
 import { queryKeys } from "@/api/query-options";
 import { buildWorkspaceHref } from "@/api/url-state";
-import { useLaneInstance } from "@lane/lane";
+import { useLaneInstance } from "use-lane";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { SectionError } from "./feedback";
 import { FilterBar } from "./filter-bar";

@@ -17,8 +17,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @lane/lane test
-      - run: pnpm --filter @lane/lane build
+      - run: pnpm --filter use-lane test
+      - run: pnpm --filter use-lane build
       - run: pnpm typecheck
 
   e2e:

@@ -7,7 +7,7 @@ import type {
   TeamMember,
   TeamSummary,
 } from "@lane/todo-api";
-import type { LaneHydrationSnapshots, LaneSnapshot } from "@lane/lane";
+import type { LaneHydrationSnapshots, LaneSnapshot } from "use-lane";
 import type { TaskFilters } from "./endpoints";
 
 export const queryKeys = {

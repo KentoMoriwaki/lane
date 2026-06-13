@@ -8,7 +8,7 @@ import type {
   TeamLabel,
   UpdateTaskInput,
 } from "@lane/todo-api";
-import { useLane, useLaneInstance, type Lane } from "@lane/lane";
+import { useLane, useLaneInstance, type Lane } from "use-lane";
 import * as React from "react";
 import { useWorkspaceCtx } from "@/workspace/workspace-provider";
 import {

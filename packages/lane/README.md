@@ -1,4 +1,4 @@
-# @lane/lane
+# use-lane
 
 Prototype package for the `lane` client data library: a promise-identity cache
 for React 19. Lane coordinates which promise a key currently renders;
@@ -40,8 +40,8 @@ keeping the `"use client"` directive at the top of each bundle. Inside the
 workspace, the package resolves to `src/` directly; `publishConfig` switches
 the entry points to `dist/` when packing.
 
-The package is not published yet. To publish: pick the final npm name, remove
-`"private": true`, then `pnpm build && pnpm publish`. `pnpm pack` +
+The package publishes to npm as `use-lane`. To cut a release:
+`pnpm build && pnpm publish`. `pnpm pack` +
 [publint](https://publint.dev) validate the publish shape without publishing.
 
 Design notes:

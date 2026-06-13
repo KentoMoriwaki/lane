@@ -1,6 +1,6 @@
 "use client";
 
-import { useLaneInstance } from "@lane/lane";
+import { useLaneInstance } from "use-lane";
 import { Check, ChevronsUpDown, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";

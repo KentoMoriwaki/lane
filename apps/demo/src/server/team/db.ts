@@ -1,6 +1,4 @@
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { type Client, type InArgs, createClient } from "@libsql/client";
+import type { Client, InArgs } from "@libsql/client";
 import { nanoid } from "nanoid";
 import type {
   CreateLabelInput,
@@ -17,31 +15,109 @@ import type {
   TeamSummary,
   TeamUser,
   UpdateTaskInput,
-} from "./schema.js";
+} from "./schema";
 
-const dbPath = resolve(process.env.TEAM_DB_PATH ?? "data/team-task.sqlite");
-mkdirSync(dirname(dbPath), { recursive: true });
+/**
+ * Database access for the embedded team-task API.
+ *
+ * Two backends, picked from the environment:
+ *   - `TURSO_DATABASE_URL` set  → a hosted libSQL/Turso database over HTTP. The
+ *     `@libsql/client/web` entry is used so the native `libsql` binding (which
+ *     is not available on serverless runtimes such as Vercel functions) is
+ *     never loaded.
+ *   - otherwise                 → a local SQLite file via the native client,
+ *     for `pnpm dev` and the Playwright suite.
+ *
+ * The client and schema/seed are created lazily on first query. Nothing here
+ * runs at module-evaluation time, so importing this module during `next build`
+ * never opens a connection or writes a file.
+ */
 
-const db: Client = process.env.TURSO_DATABASE_URL
-  ? createClient({
+const client = lazy(createDbClient);
+const ready = lazy(initDb);
+
+async function createDbClient(): Promise<Client> {
+  if (process.env.TURSO_DATABASE_URL) {
+    const { createClient } = await import("@libsql/client/web");
+    return createClient({
       url: process.env.TURSO_DATABASE_URL,
       authToken: process.env.TURSO_AUTH_TOKEN,
-    })
-  : createClient({ url: `file:${dbPath}` });
+    });
+  }
 
-const allRows = async <T>(sql: string, args: unknown[] = []): Promise<T[]> =>
-  (await db.execute({ sql, args: args as InArgs })).rows as unknown as T[];
+  // Local file backend. `node:fs`/`node:path` are imported lazily here (not at
+  // module scope) so the production trace — which always takes the Turso branch
+  // above — never sees these filesystem operations, and `process.cwd()` keeps
+  // the path statically scoped for the bundler's file tracer.
+  const [{ createClient }, { mkdirSync }, { dirname, isAbsolute, join }] =
+    await Promise.all([
+      import("@libsql/client"),
+      import("node:fs"),
+      import("node:path"),
+    ]);
+
+  const configured = process.env.TEAM_DB_PATH ?? "data/team-task.sqlite";
+  const dbPath = isAbsolute(configured)
+    ? configured
+    : join(process.cwd(), configured);
+  mkdirSync(dirname(dbPath), { recursive: true });
+  return createClient({ url: `file:${dbPath}` });
+}
+
+async function initDb(): Promise<void> {
+  const db = await client();
+  await db.executeMultiple(schemaSql);
+  await seed();
+}
+
+/** Memoize a zero-arg async factory so it runs at most once. */
+function lazy<T>(factory: () => Promise<T>): () => Promise<T> {
+  let promise: Promise<T> | null = null;
+  return () => {
+    if (!promise) {
+      promise = factory();
+    }
+    return promise;
+  };
+}
+
+/* --------------------------- Query executors --------------------------- */
+
+// Raw executors talk to the client directly and are used by schema init and
+// seeding (which must run *before* the readiness gate is resolved).
+const rawAll = async <T>(sql: string, args: unknown[] = []): Promise<T[]> =>
+  (await (await client()).execute({ sql, args: args as InArgs }))
+    .rows as unknown as T[];
+
+const rawOne = async <T>(
+  sql: string,
+  args: unknown[] = [],
+): Promise<T | undefined> =>
+  ((await (await client()).execute({ sql, args: args as InArgs }))
+    .rows[0] as unknown as T) ?? undefined;
+
+const rawRun = async (sql: string, args: unknown[] = []) => {
+  const r = await (await client()).execute({ sql, args: args as InArgs });
+  return { changes: Number(r.rowsAffected) };
+};
+
+// Public executors wait for schema + seed before touching the database.
+const allRows = async <T>(sql: string, args: unknown[] = []): Promise<T[]> => {
+  await ready();
+  return rawAll<T>(sql, args);
+};
 
 const oneRow = async <T>(
   sql: string,
   args: unknown[] = [],
-): Promise<T | undefined> =>
-  ((await db.execute({ sql, args: args as InArgs })).rows[0] as unknown as T) ??
-  undefined;
+): Promise<T | undefined> => {
+  await ready();
+  return rawOne<T>(sql, args);
+};
 
 const runSql = async (sql: string, args: unknown[] = []) => {
-  const r = await db.execute({ sql, args: args as InArgs });
-  return { changes: Number(r.rowsAffected) };
+  await ready();
+  return rawRun(sql, args);
 };
 
 const schemaSql = `
@@ -160,20 +236,10 @@ type TaskRow = {
 
 export const DEFAULT_USER_ID = "u_maya";
 
-async function initDb() {
-  await db.executeMultiple(schemaSql);
-  await seed();
-}
-
-// Run schema-init + seed once at module load. ESM top-level await makes
-// importers (app.ts/server.ts) wait until the DB is ready before handling
-// requests.
-await initDb();
-
 /* --------------------------------- Seed -------------------------------- */
 
 async function seed() {
-  const existing = (await oneRow<{ count: number }>(
+  const existing = (await rawOne<{ count: number }>(
     "select count(*) as count from teams",
   )) ?? { count: 0 };
 
@@ -195,8 +261,8 @@ async function seed() {
   ];
 
   for (const user of users) {
-    await runSql(
-      "insert into users (id, name, email, initials, color) values (?, ?, ?, ?, ?)",
+    await rawRun(
+      "insert or ignore into users (id, name, email, initials, color) values (?, ?, ?, ?, ?)",
       [user.id, user.name, user.email, user.initials, user.color],
     );
   }
@@ -207,7 +273,7 @@ async function seed() {
   ];
 
   for (const team of teams) {
-    await runSql("insert into teams (id, name, slug) values (?, ?, ?)", [
+    await rawRun("insert or ignore into teams (id, name, slug) values (?, ?, ?)", [
       team.id,
       team.name,
       team.slug,
@@ -225,8 +291,8 @@ async function seed() {
   ];
 
   for (const [teamId, userId, role] of memberships) {
-    await runSql(
-      "insert into team_members (team_id, user_id, role) values (?, ?, ?)",
+    await rawRun(
+      "insert or ignore into team_members (team_id, user_id, role) values (?, ?, ?)",
       [teamId, userId, role],
     );
   }
@@ -240,8 +306,8 @@ async function seed() {
   ];
 
   for (const project of projects) {
-    await runSql(
-      "insert into projects (id, team_id, name, key, color, created_at) values (?, ?, ?, ?, ?, ?)",
+    await rawRun(
+      "insert or ignore into projects (id, team_id, name, key, color, created_at) values (?, ?, ?, ?, ?, ?)",
       [project.id, project.team_id, project.name, project.key, project.color, at(project.offset)],
     );
   }
@@ -257,8 +323,8 @@ async function seed() {
   ];
 
   for (const label of labels) {
-    await runSql(
-      "insert into labels (id, team_id, name, color, created_at) values (?, ?, ?, ?, ?)",
+    await rawRun(
+      "insert or ignore into labels (id, team_id, name, color, created_at) values (?, ?, ?, ?, ?)",
       [label.id, label.team_id, label.name, label.color, at(label.offset)],
     );
   }
@@ -543,8 +609,8 @@ async function seed() {
 
   for (const task of tasks) {
     const createdAt = at(task.createdOffset);
-    await runSql(
-      `insert into tasks (
+    await rawRun(
+      `insert or ignore into tasks (
         id, team_id, title, description, status, priority,
         assignee_id, project_id, due_date, created_by, created_at, updated_at
       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -565,8 +631,8 @@ async function seed() {
     );
 
     for (const labelId of task.labelIds) {
-      await runSql(
-        "insert into task_labels (task_id, label_id) values (?, ?)",
+      await rawRun(
+        "insert or ignore into task_labels (task_id, label_id) values (?, ?)",
         [task.id, labelId],
       );
     }

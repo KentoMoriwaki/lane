@@ -19,7 +19,7 @@ import {
   listTeamsForUser,
   removeTaskLabel,
   updateTask,
-} from "./db.js";
+} from "./db";
 import {
   addTaskLabelInputSchema,
   createLabelInputSchema,
@@ -29,7 +29,7 @@ import {
   listMembersQuerySchema,
   listTasksQuerySchema,
   updateTaskInputSchema,
-} from "./schema.js";
+} from "./schema";
 
 type Variables = {
   userId: string;

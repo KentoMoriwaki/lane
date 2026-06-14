@@ -1,4 +1,4 @@
-import type { TaskPriority, TaskStatus } from "@lane/todo-api";
+import type { TaskPriority, TaskStatus } from "@/server/api";
 import {
   AlertTriangle,
   Circle,

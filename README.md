@@ -13,27 +13,28 @@ owns loading (Suspense), errors (Error Boundaries), and optimistic UI
 ## What's in here
 
 The workspace pairs the `packages/lane` implementation with a live demo that
-builds the same team-task workspace three ways against one backend, so Lane can
-be evaluated against the TanStack Query baseline while preserving — or improving
-— the same user experience with React transitions.
+builds the same team-task workspace three ways against one embedded team API, so
+Lane can be evaluated against the TanStack Query baseline while preserving — or
+improving — the same user experience with React transitions.
 
 | Path | Description |
 | --- | --- |
 | [`packages/lane`](packages/lane) | The `use-lane` library and its unit/React-integration tests. |
-| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, three implementations switchable by route: `/lane` (use-lane, RSC-seeded), `/lane-spa` (use-lane, client-only), and `/react-query` (the TanStack Query baseline). |
-| [`apps/todo-api`](apps/todo-api) | Shared backend (Hono + libSQL/Turso). Serves a team task API under `/api` — users, teams, tasks, projects, labels, members, insights. |
+| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, three implementations switchable by route: `/lane` (use-lane, RSC-seeded), `/lane-spa` (use-lane, client-only), and `/react-query` (the TanStack Query baseline). It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
 | [`apps/docs`](apps/docs) | The Nextra documentation site (sourced from `docs/*.md`). |
 | [`apps/e2e`](apps/e2e) | Playwright suite running the user-facing success criteria (reload restoration, search, mutation convergence, team switching, stale-on-error refresh) against the demo's `/lane` route. |
 
-The demo consumes the backend through Hono RPC, importing `AppType` from
-`@lane/todo-api` as a type-only dependency.
+The demo's team API (Hono + libSQL/Turso) is embedded as a Next.js Route Handler
+at [`apps/demo/src/app/api/[[...route]]/route.ts`](apps/demo/src/app/api), and the
+frontend talks to it through the typed Hono RPC client at the same origin
+(`/api`). It uses a local SQLite file in development and Turso in production —
+see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ## Getting started
 
 ```sh
 pnpm install
-pnpm dev:api
-pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query
+pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query (+ /api)
 ```
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full dev-server matrix,

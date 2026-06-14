@@ -6,7 +6,7 @@ import type {
   TeamLabel,
   TeamMember,
   TeamSummary,
-} from "@lane/todo-api";
+} from "@/server/api";
 import type { LaneHydrationSnapshots, LaneSnapshot } from "use-lane";
 import type { TaskFilters } from "./endpoints";
 

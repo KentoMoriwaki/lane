@@ -9,7 +9,7 @@ import type {
   TeamLabel,
   TeamMember,
   UpdateTaskInput,
-} from "@lane/todo-api";
+} from "@/server/api";
 import {
   type QueryClient,
   keepPreviousData,

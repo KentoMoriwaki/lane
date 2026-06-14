@@ -1,4 +1,4 @@
-import type { AppType } from "@lane/todo-api";
+import type { AppType } from "@/server/api";
 import { hc } from "hono/client";
 
 /**
@@ -6,10 +6,30 @@ import { hc } from "hono/client";
  * the typed Hono RPC client; Lane hooks call the wrappers in `endpoints.ts`,
  * never `fetch` directly.
  */
-const apiUrl =
-  process.env.NEXT_PUBLIC_TODO_API_URL ?? "http://localhost:4000";
+/**
+ * The team API is embedded in this app (`app/api/[[...route]]/route.ts`), so the
+ * browser talks to it same-origin via a relative URL. Server Components (the RSC
+ * seed in `page.tsx`) run in Node and need an absolute origin: an explicit
+ * `NEXT_PUBLIC_SITE_URL`, the Vercel deployment URL, or the local dev port.
+ */
+function resolveApiBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    return "";
+  }
 
-export const client = hc<AppType>(apiUrl);
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/+$/, "");
+  }
+
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+
+  return `http://localhost:${process.env.PORT ?? "3006"}`;
+}
+
+export const client = hc<AppType>(resolveApiBaseUrl());
 
 /**
  * The active session + team context. It is sent to the API as request headers

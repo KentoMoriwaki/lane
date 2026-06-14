@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "node scripts/sync-docs.mjs && next build --webpack",
+  "installCommand": "pnpm install --frozen-lockfile"
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import type { Task } from "@lane/todo-api";
+import type { Task } from "@/server/api";
 import { Inbox, ListTodo } from "lucide-react";
 import * as React from "react";
 import { useTasks } from "@/app/lane-spa/api/hooks";

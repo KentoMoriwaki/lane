@@ -1,6 +1,6 @@
 "use client";
 
-import type { TeamLabel } from "@lane/todo-api";
+import type { TeamLabel } from "@/server/api";
 import { Check, Plus, Tag } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";

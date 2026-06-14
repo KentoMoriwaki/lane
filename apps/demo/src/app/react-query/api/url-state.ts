@@ -1,4 +1,4 @@
-import type { TaskPriority, TaskScope, TaskStatus } from "@lane/todo-api";
+import type { TaskPriority, TaskScope, TaskStatus } from "@/server/api";
 import { EMPTY_FILTERS, type TaskFilters } from "./endpoints";
 
 /**

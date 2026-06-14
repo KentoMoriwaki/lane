@@ -13,7 +13,7 @@ import type {
   TeamMember,
   TeamSummary,
   UpdateTaskInput,
-} from "@lane/todo-api";
+} from "@/server/api";
 import { assertOk, client, requestOptions, type WorkspaceCtx } from "./client";
 
 export type TaskFilters = {

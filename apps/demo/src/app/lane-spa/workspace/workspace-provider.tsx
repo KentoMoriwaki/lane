@@ -1,7 +1,7 @@
 "use client";
 
 import { useLaneInstance } from "use-lane";
-import type { CurrentUser } from "@lane/todo-api";
+import type { CurrentUser } from "@/server/api";
 import { useSearchParams } from "next/navigation";
 import * as React from "react";
 import type { WorkspaceCtx } from "@/app/lane-spa/api/client";

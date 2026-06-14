@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
     root: resolve(appDir, "../.."),
   },
   transpilePackages: ["use-lane"],
+  // The embedded API talks to libSQL/Turso from the Node runtime. Keep the
+  // client external so Next requires it at runtime instead of bundling its
+  // native/optional dependencies.
+  serverExternalPackages: ["@libsql/client", "libsql"],
 };
 
 export default nextConfig;

@@ -1,4 +1,4 @@
-import type { Task } from "@lane/todo-api";
+import type { Task } from "@/server/api";
 import type { LaneEntryInfo } from "use-lane";
 import type { TaskFilters } from "./endpoints";
 

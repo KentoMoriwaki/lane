@@ -19,6 +19,10 @@ import { workspaceSnapshots } from "@/app/lane/api/query-options";
 import { Workspace } from "@/app/lane/workspace/workspace";
 import { WorkspaceProvider } from "@/app/lane/workspace/workspace-provider";
 
+// The workspace is seeded per request from the embedded API, so it can never be
+// statically prerendered (there is no server to fetch from at build time).
+export const dynamic = "force-dynamic";
+
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };

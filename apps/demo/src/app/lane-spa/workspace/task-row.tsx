@@ -1,6 +1,6 @@
 "use client";
 
-import type { Task } from "@lane/todo-api";
+import type { Task } from "@/server/api";
 import { MoreHorizontal, Trash2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";

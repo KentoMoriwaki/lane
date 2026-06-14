@@ -1,6 +1,6 @@
 "use client";
 
-import type { TaskPriority, TaskScope, TaskStatus } from "@lane/todo-api";
+import type { TaskPriority, TaskScope, TaskStatus } from "@/server/api";
 import * as React from "react";
 import { useWorkspaceRefresh } from "@/app/react-query/api/hooks";
 import { CreateTaskDialog } from "./create-task-dialog";

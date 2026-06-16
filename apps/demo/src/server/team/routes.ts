@@ -150,6 +150,7 @@ export const teamRoutes = team
           projectId: query.projectId,
           labelId: query.labelId,
           due: query.due,
+          ids: query.ids,
         }),
         200,
       );

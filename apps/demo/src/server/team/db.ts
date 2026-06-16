@@ -188,6 +188,14 @@ const schemaSql = `
     foreign key (task_id) references tasks(id) on delete cascade,
     foreign key (label_id) references labels(id) on delete cascade
   );
+
+  create table if not exists task_dependencies (
+    task_id text not null,         -- the blocked task
+    blocked_by_id text not null,   -- the task that blocks it
+    primary key (task_id, blocked_by_id),
+    foreign key (task_id) references tasks(id) on delete cascade,
+    foreign key (blocked_by_id) references tasks(id) on delete cascade
+  );
 `;
 
 /* --------------------------------- Rows -------------------------------- */
@@ -637,6 +645,25 @@ async function seed() {
       );
     }
   }
+
+  // Dependency edges: [blocked task, the task that blocks it]. The mix gives
+  // every shape — blocked by an open task, blocked only by finished work, a
+  // pure blocker, and one task that is both blocked and blocking.
+  const dependencies: Array<[string, string]> = [
+    ["task_proration", "task_webhook"], // blocked by an in-progress task
+    ["task_dunning", "task_webhook"], // webhook blocks two downstream tasks
+    ["task_audit_log", "task_sso"], // blocked by an in-progress task
+    ["task_usage_dashboard", "task_search"], // blocked by an in-review task
+    ["task_invoice_pdf", "task_rate_limit"], // sole blocker is already done
+    ["task_search", "task_rate_limit"], // search: blocked (done) AND blocking
+  ];
+
+  for (const [taskId, blockedById] of dependencies) {
+    await rawRun(
+      "insert or ignore into task_dependencies (task_id, blocked_by_id) values (?, ?)",
+      [taskId, blockedById],
+    );
+  }
 }
 
 /* ------------------------------ Assemblers ----------------------------- */
@@ -726,7 +753,30 @@ async function projectForTask(
   return row ? await toProject(row) : null;
 }
 
+async function dependenciesForTask(
+  taskId: string,
+): Promise<{ blockedBy: string[]; blocks: string[] }> {
+  const [blockedBy, blocks] = await Promise.all([
+    allRows<{ blocked_by_id: string }>(
+      "select blocked_by_id from task_dependencies where task_id = ? order by blocked_by_id asc",
+      [taskId],
+    ),
+    // Reverse edges: tasks that name this one as a blocker.
+    allRows<{ task_id: string }>(
+      "select task_id from task_dependencies where blocked_by_id = ? order by task_id asc",
+      [taskId],
+    ),
+  ]);
+
+  return {
+    blockedBy: blockedBy.map((row) => row.blocked_by_id),
+    blocks: blocks.map((row) => row.task_id),
+  };
+}
+
 async function toTask(row: TaskRow): Promise<Task> {
+  const { blockedBy, blocks } = await dependenciesForTask(row.id);
+
   return {
     id: row.id,
     teamId: row.team_id,
@@ -738,6 +788,8 @@ async function toTask(row: TaskRow): Promise<Task> {
     project: await projectForTask(row.project_id),
     labels: await labelsForTask(row.id),
     dueDate: row.due_date,
+    blockedBy,
+    blocks,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -943,6 +995,8 @@ export type TaskFilters = {
   projectId?: string;
   labelId?: string;
   due?: "overdue" | "today" | "week";
+  /** Comma-separated task IDs — resolves dependency edges to task objects. */
+  ids?: string;
 };
 
 const statusOrder: Record<TaskStatus, number> = {
@@ -973,6 +1027,12 @@ export async function listTasks(
   );
 
   let tasks = await Promise.all(rows.map(toTask));
+
+  const idsFilter = parseCsv(filters.ids);
+  if (idsFilter.length > 0) {
+    const wanted = new Set(idsFilter);
+    tasks = tasks.filter((task) => wanted.has(task.id));
+  }
 
   const statusFilter = parseCsv(filters.status);
   if (statusFilter.length > 0) {

@@ -83,6 +83,10 @@ export const taskSchema = z.object({
   project: projectSchema.nullable(),
   labels: z.array(labelSchema),
   dueDate: z.string().nullable(),
+  /** IDs of tasks this task is blocked by (read-only; seeded). */
+  blockedBy: z.array(z.string()),
+  /** IDs of tasks this task blocks — the reverse edges (read-only; computed). */
+  blocks: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -113,6 +117,8 @@ export const listTasksQuerySchema = z.object({
   projectId: z.string().optional(),
   labelId: z.string().optional(),
   due: z.enum(["overdue", "today", "week"]).optional(),
+  /** Comma-separated task IDs — used to resolve dependency edges. */
+  ids: z.string().optional(),
 });
 
 export const createTaskInputSchema = z.object({

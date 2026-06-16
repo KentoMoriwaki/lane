@@ -39,6 +39,7 @@ import {
   fetchProjects,
   fetchTask,
   fetchTasks,
+  fetchTasksByIds,
   fetchTeams,
 } from "./endpoints";
 
@@ -88,6 +89,33 @@ export function useInsights() {
   return useLane(queryKeys.insights, () => fetchInsights(ctx));
 }
 
+/* --------------------------- Dependency reads -------------------------- */
+
+/**
+ * The two reads behind the detail panel's dependency status. Each is gated with
+ * `enabled`, so a task with no blockers (or that blocks nothing) never fetches —
+ * `result.promise` is `undefined` and the reader unwraps it conditionally. Both
+ * feed one combined verdict, which is why each stays an independent gated read
+ * rather than a conditional mount or a single merged loader.
+ */
+export function useBlockedByTasks(taskId: string, ids: string[]) {
+  const ctx = useWorkspaceCtx();
+  return useLane(
+    queryKeys.taskBlockedBy(taskId),
+    () => fetchTasksByIds(ctx, ids),
+    { enabled: ids.length > 0, staleTime: 5_000, refetchOnMount: true },
+  );
+}
+
+export function useBlockingTasks(taskId: string, ids: string[]) {
+  const ctx = useWorkspaceCtx();
+  return useLane(
+    queryKeys.taskBlocking(taskId),
+    () => fetchTasksByIds(ctx, ids),
+    { enabled: ids.length > 0, staleTime: 5_000, refetchOnMount: true },
+  );
+}
+
 /* ------------------------------ Mutations ------------------------------ */
 
 export function useCreateTask() {
@@ -132,6 +160,7 @@ export function useDeleteTask() {
       insights: true,
       projects: true,
     });
+    invalidateDependencyEntries(lane);
   }, [ctx, lane]);
 }
 
@@ -223,6 +252,14 @@ function publishTask(
     insights: strategy.refreshInsights,
     projects: strategy.refreshProjects,
   });
+  invalidateDependencyEntries(lane);
+}
+
+// Dependency reads cache a copy of the edge's task (with its status), so any
+// task change must refresh them to keep the verdict honest.
+function invalidateDependencyEntries(lane: Lane) {
+  lane.invalidateAll(["task-blocked-by"]);
+  lane.invalidateAll(["task-blocking"]);
 }
 
 function removeTaskFromTaskLists(

@@ -513,6 +513,51 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
+  it("gates the read with enabled and loads once it flips on", async () => {
+    const lane = createLane();
+    const loader = vi.fn(async () => "value");
+
+    const app = await render(gatedApp(lane, false, loader));
+
+    // Disabled: no loader, no subscription, and promise is undefined.
+    await waitForText(app.container, "disabled");
+    expect(loader).not.toHaveBeenCalled();
+
+    await act(async () => {
+      app.root.render(gatedApp(lane, true, loader));
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "value");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // Flipping back off drops to undefined again without another fetch.
+    await act(async () => {
+      app.root.render(gatedApp(lane, false, loader));
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "disabled");
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not subscribe a disabled reader to store changes", async () => {
+    const lane = createLane();
+    const loader = vi.fn(async () => "loader");
+
+    const app = await render(gatedApp(lane, false, loader));
+    await waitForText(app.container, "disabled");
+
+    // A set on the same key must not wake a disabled reader.
+    await act(async () => {
+      lane.set(["tasks"], "published");
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "disabled");
+    expect(loader).not.toHaveBeenCalled();
+  });
+
   it("keeps the cache for remounts within gcTime", async () => {
     vi.useFakeTimers();
 
@@ -567,7 +612,7 @@ function Probe({
 }: {
   cacheKey?: LaneKey;
   loader: LaneLoader<string>;
-  options?: LaneUseOptions;
+  options?: Omit<LaneUseOptions, "enabled">;
 }) {
   const result = useLane(cacheKey, loader, options);
   const value = React.use(result.promise);
@@ -589,6 +634,35 @@ function Probe({
       result.isTransitionPending,
     )}|refresh:${refresh}`,
   );
+}
+
+function GatedProbe({
+  enabled,
+  loader,
+}: {
+  enabled: boolean;
+  loader: LaneLoader<string>;
+}) {
+  const result = useLane(["tasks"], loader, { enabled });
+  // `use` may be called conditionally — the gated read is unwrapped only when
+  // there is a promise, otherwise the reader renders its own fallback.
+  const value = result.promise ? React.use(result.promise) : "disabled";
+  return React.createElement("div", null, value);
+}
+
+function gatedApp(
+  lane: Lane,
+  enabled: boolean,
+  loader: LaneLoader<string>,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: "loading" },
+      React.createElement(GatedProbe, { enabled, loader }),
+    ),
+  });
 }
 
 function keyedApp(

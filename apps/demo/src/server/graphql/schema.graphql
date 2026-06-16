@@ -1,0 +1,214 @@
+"""
+The GraphQL contract for the Relay variant of the demo.
+
+It mirrors the same team-task domain the REST/Hono API serves, reshaped for a
+graph client: every entity implements `Node` with a globally-unique `id`, so the
+Relay store normalizes a task (or member, project, label) to ONE record no matter
+how many views reference it. Editing a task in the detail panel updates its row
+in the list for free — no manual cache-sync layer. Dependency edges and the
+slow derived reads (`insights`, `projects`) are modeled as ordinary graph fields
+so a single query can `@defer` them and stream the shell first.
+
+This file is the single source of truth: graphql-yoga builds its executable
+schema from it, and relay-compiler type-checks every `graphql` literal against it.
+"""
+
+# Incremental-delivery directives. graphql-yoga's `useDeferStream` plugin powers
+# the execution; declaring them here (rather than as a relay-compiler schema
+# extension) is what makes relay-compiler treat `@defer` as a server directive
+# and keep it in the operation text it sends — so the server actually streams.
+directive @defer(label: String, if: Boolean) on FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+directive @stream(
+  label: String
+  if: Boolean
+  initialCount: Int
+) on FIELD
+
+interface Node {
+  id: ID!
+}
+
+enum TaskStatus {
+  backlog
+  todo
+  in_progress
+  in_review
+  done
+  canceled
+}
+
+enum TaskPriority {
+  none
+  low
+  medium
+  high
+  urgent
+}
+
+enum MemberRole {
+  admin
+  member
+}
+
+enum TaskScope {
+  all
+  mine
+  unassigned
+}
+
+enum DueFilter {
+  overdue
+  today
+  week
+}
+
+"""
+The authenticated user, plus their default team. Its `id` is deliberately
+distinct from `userId`: the same person is also a `TeamMember` (e.g. as a task
+assignee), and Relay requires one `__typename` per normalized id — so the Viewer
+record and the TeamMember record must not collide on the raw user id.
+"""
+type Viewer implements Node {
+  id: ID!
+  userId: ID!
+  name: String!
+  email: String!
+  initials: String!
+  color: String!
+  defaultTeamId: ID!
+}
+
+"A member of the active team. Shared by `Task.assignee` and the member list, so the store unifies them by id."
+type TeamMember implements Node {
+  id: ID!
+  name: String!
+  email: String!
+  initials: String!
+  color: String!
+  role: MemberRole!
+}
+
+"A team the viewer belongs to."
+type TeamSummary implements Node {
+  id: ID!
+  name: String!
+  slug: String!
+  role: MemberRole!
+  memberCount: Int!
+}
+
+type Project implements Node {
+  id: ID!
+  name: String!
+  key: String!
+  color: String!
+  taskCount: Int!
+}
+
+type Label implements Node {
+  id: ID!
+  name: String!
+  color: String!
+}
+
+type Task implements Node {
+  id: ID!
+  teamId: ID!
+  title: String!
+  description: String!
+  status: TaskStatus!
+  priority: TaskPriority!
+  assignee: TeamMember
+  project: Project
+  labels: [Label!]!
+  dueDate: String
+  "Tasks that block this one (resolved nodes, not ids — the store dedupes them)."
+  blockedBy: [Task!]!
+  "Tasks this one blocks — the reverse edges."
+  blocks: [Task!]!
+  createdAt: String!
+  updatedAt: String!
+}
+
+"Derived workspace counters. Intentionally slow on the server so it can be `@defer`-ed."
+type Insights {
+  total: Int!
+  open: Int!
+  inProgress: Int!
+  inReview: Int!
+  completed: Int!
+  overdue: Int!
+  unassigned: Int!
+  assignedToMe: Int!
+  dueSoon: Int!
+}
+
+input TaskFilterInput {
+  scope: TaskScope
+  q: String
+  status: [TaskStatus!]
+  priority: [TaskPriority!]
+  projectId: ID
+  labelId: ID
+  due: DueFilter
+}
+
+input CreateTaskInput {
+  title: String!
+  description: String
+  status: TaskStatus
+  priority: TaskPriority
+  assigneeId: ID
+  projectId: ID
+  dueDate: String
+  labelIds: [ID!]
+}
+
+input UpdateTaskInput {
+  title: String
+  description: String
+  status: TaskStatus
+  priority: TaskPriority
+  assigneeId: ID
+  projectId: ID
+  dueDate: String
+}
+
+input CreateLabelInput {
+  name: String!
+  color: String
+}
+
+input CreateProjectInput {
+  name: String!
+  key: String
+  color: String
+}
+
+type Query {
+  "Relay's Node root — powers `@refetchable` fragment refetches."
+  node(id: ID!): Node
+  viewer: Viewer!
+  teams: [TeamSummary!]!
+  tasks(filters: TaskFilterInput): [Task!]!
+  task(id: ID!): Task
+  projects: [Project!]!
+  labels(q: String): [Label!]!
+  members(q: String): [TeamMember!]!
+  insights: Insights!
+}
+
+type DeleteTaskPayload {
+  deletedTaskId: ID!
+}
+
+type Mutation {
+  createTask(input: CreateTaskInput!): Task!
+  updateTask(id: ID!, input: UpdateTaskInput!): Task!
+  deleteTask(id: ID!): DeleteTaskPayload!
+  addTaskLabel(taskId: ID!, labelId: ID!): Task!
+  removeTaskLabel(taskId: ID!, labelId: ID!): Task!
+  createLabel(input: CreateLabelInput!): Label!
+  createProject(input: CreateProjectInput!): Project!
+}

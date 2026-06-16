@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/facebook/relay/main/packages/relay-compiler/relay-compiler-config-schema.json",
+  "src": "./src/app/relay",
+  "schema": "./src/server/graphql/schema.graphql",
+  "language": "typescript",
+  "artifactDirectory": "./src/app/relay/__generated__",
+  "eagerEsModules": true,
+  "noFutureProofEnums": true,
+  "excludes": ["**/node_modules/**", "**/__generated__/**", "**/.next/**"]
+}

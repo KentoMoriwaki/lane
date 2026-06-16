@@ -29,6 +29,13 @@ const VARIANTS: Variant[] = [
     tagline:
       "The baseline: a resolved-value cache with its own query/mutation hooks, status objects, and optimistic patches.",
   },
+  {
+    href: "/relay",
+    name: "Relay",
+    badge: "GraphQL",
+    tagline:
+      "The transition/Suspense yardstick: a normalized GraphQL store, fragment colocation, preloaded queries refetched in transitions, and @defer streaming. Client-owned, like the SPA variant.",
+  },
 ];
 
 export default function Home() {
@@ -39,13 +46,13 @@ export default function Home() {
           use-lane · live demo
         </p>
         <h1 className="text-balance text-4xl font-semibold tracking-tight">
-          One team-task workspace, three implementations.
+          One team-task workspace, four implementations.
         </h1>
         <p className="text-pretty text-lg text-muted-foreground">
-          The same UI and the same backend, built three ways —{" "}
+          The same UI and the same backend, built four ways —{" "}
           <span className="text-foreground">use-lane</span> server-seeded,
-          use-lane client-only, and the TanStack Query baseline — so you can feel
-          the difference. Switch by changing the route.
+          use-lane client-only, the TanStack Query baseline, and a Relay GraphQL
+          variant — so you can feel the difference. Switch by changing the route.
         </p>
       </header>
 

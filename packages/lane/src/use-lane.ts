@@ -18,6 +18,7 @@ import { serializeKey } from "./keys";
 import { useLaneInstance } from "./provider";
 import type {
   Lane,
+  LaneGatedResult,
   LaneInvalidateOptions,
   LaneKey,
   LaneLoader,
@@ -28,9 +29,20 @@ import type {
 export function useLane<T>(
   key: LaneKey,
   loader: LaneLoader<T>,
+  options?: Omit<LaneUseOptions, "enabled"> & { enabled?: true },
+): LaneResult<T>;
+export function useLane<T>(
+  key: LaneKey,
+  loader: LaneLoader<T>,
+  options?: LaneUseOptions,
+): LaneGatedResult<T>;
+export function useLane<T>(
+  key: LaneKey,
+  loader: LaneLoader<T>,
   options: LaneUseOptions = {},
-): LaneResult<T> {
+): LaneResult<T> | LaneGatedResult<T> {
   const lane = useLaneInstance();
+  const enabled = options.enabled ?? true;
   const keyId = serializeKey(key);
   const readOptions: LaneReadOptions = {
     retry: options.retry,
@@ -38,18 +50,27 @@ export function useLane<T>(
   };
   const [isTransitionPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
-  const [promise, setPromise] = useState<Promise<T>>(() =>
-    readOrCreate(lane, key, loader, readOptions),
+  const [promise, setPromise] = useState<Promise<T> | undefined>(() =>
+    enabled ? readOrCreate(lane, key, loader, readOptions) : undefined,
   );
-  const [prevSource, setPrevSource] = useState(() => ({ keyId, lane }));
+  const [prevSource, setPrevSource] = useState(() => ({ enabled, keyId, lane }));
 
   let effectivePromise = promise;
 
-  if (lane !== prevSource.lane || keyId !== prevSource.keyId) {
-    const nextPromise = readOrCreate(lane, key, loader, readOptions);
+  // A change in source identity OR in `enabled` switches the read during render:
+  // enabling reads the (possibly cached) promise immediately, disabling drops to
+  // `undefined` without an extra render of stale data.
+  if (
+    enabled !== prevSource.enabled ||
+    lane !== prevSource.lane ||
+    keyId !== prevSource.keyId
+  ) {
+    const nextPromise = enabled
+      ? readOrCreate(lane, key, loader, readOptions)
+      : undefined;
     effectivePromise = nextPromise;
 
-    setPrevSource({ keyId, lane });
+    setPrevSource({ enabled, keyId, lane });
     setPromise(nextPromise);
   }
 
@@ -113,6 +134,12 @@ export function useLane<T>(
   );
 
   useEffect(() => {
+    // A disabled read owns no entry: no subscription, no GC anchor, no
+    // revalidation. The effect re-runs when `enabled` flips and subscribes then.
+    if (!enabled) {
+      return;
+    }
+
     const unsubscribe = subscribeLane(lane, key, {
       onInvalidate: (entry, source) => {
         onInvalidate(lane, entry.key, source);
@@ -133,6 +160,7 @@ export function useLane<T>(
 
     return unsubscribe;
   }, [
+    enabled,
     lane,
     keyId,
     options.gcTime,
@@ -143,8 +171,12 @@ export function useLane<T>(
   ]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     refetchOnMount(lane, keyId);
-  }, [lane, keyId]);
+  }, [enabled, lane, keyId]);
 
   const invalidate = useCallback(() => {
     invalidateEntry(lane, keyId);
@@ -155,16 +187,26 @@ export function useLane<T>(
     isBackgroundPending,
     isTransitionPending,
     promise: effectivePromise,
-    refreshError: readRefreshError(lane, keyId),
+    refreshError: enabled ? readRefreshError(lane, keyId) : undefined,
   };
 }
 
 export function useLanePromise<T>(
   key: LaneKey,
   loader: LaneLoader<T>,
+  options?: Omit<LaneUseOptions, "enabled"> & { enabled?: true },
+): Promise<T>;
+export function useLanePromise<T>(
+  key: LaneKey,
+  loader: LaneLoader<T>,
   options?: LaneUseOptions,
-): Promise<T> {
-  return useLane(key, loader, options).promise;
+): Promise<T> | undefined;
+export function useLanePromise<T>(
+  key: LaneKey,
+  loader: LaneLoader<T>,
+  options?: LaneUseOptions,
+): Promise<T> | undefined {
+  return useLane(key, loader, options ?? {}).promise;
 }
 
 function invalidateOptionsForRefetchOnMount(

@@ -103,6 +103,7 @@ function WorkspaceShell() {
           <TaskDetailPanel
             taskId={selectedTaskId}
             onClose={() => selectTask(null)}
+            onSelectTask={selectTask}
           />
         </div>
       </div>

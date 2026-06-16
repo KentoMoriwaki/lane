@@ -26,6 +26,7 @@ import {
   createProject,
   createTask,
   deleteTask,
+  fetchTasksByIds,
   removeTaskLabel,
   updateTask,
 } from "./endpoints";
@@ -88,6 +89,34 @@ export function useMembers() {
 
 export function useInsights() {
   return useQuery(insightsQueryOptions(useWorkspaceCtx()));
+}
+
+/* --------------------------- Dependency reads -------------------------- */
+
+/**
+ * The two reads behind the detail panel's dependency status. Each is gated with
+ * `enabled` so it only runs when the task actually has that edge, and both feed a
+ * single combined verdict in the component — the case where `enabled` earns its
+ * keep (you cannot split the verdict across separately-mounted children).
+ */
+export function useBlockedByTasks(taskId: string, ids: string[]) {
+  const ctx = useWorkspaceCtx();
+  return useQuery({
+    queryKey: queryKeys.taskBlockedBy(taskId),
+    queryFn: () => fetchTasksByIds(ctx, ids),
+    enabled: ids.length > 0,
+    staleTime: 5_000,
+  });
+}
+
+export function useBlockingTasks(taskId: string, ids: string[]) {
+  const ctx = useWorkspaceCtx();
+  return useQuery({
+    queryKey: queryKeys.taskBlocking(taskId),
+    queryFn: () => fetchTasksByIds(ctx, ids),
+    enabled: ids.length > 0,
+    staleTime: 5_000,
+  });
 }
 
 /* -------------------------- Optimistic helpers ------------------------- */
@@ -239,6 +268,13 @@ function invalidateDerivedTaskViews(
   }
 }
 
+// Dependency reads cache a copy of the edge's task (including its status), so a
+// status change anywhere must refresh them to keep the verdict honest.
+function invalidateDependencyViews(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: ["task-blocked-by"] });
+  queryClient.invalidateQueries({ queryKey: ["task-blocking"] });
+}
+
 function invalidateTaskViews(
   queryClient: QueryClient,
   strategy: TaskCacheStrategy,
@@ -248,6 +284,7 @@ function invalidateTaskViews(
     insights: strategy.refreshInsights,
     projects: strategy.refreshProjects,
   });
+  invalidateDependencyViews(queryClient);
 }
 
 function removeTaskFromTaskLists(queryClient: QueryClient, taskId: string) {
@@ -327,6 +364,7 @@ export function useDeleteTask() {
         insights: true,
         projects: true,
       });
+      invalidateDependencyViews(queryClient);
     },
   });
 }

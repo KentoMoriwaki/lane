@@ -25,6 +25,8 @@ export const queryKeys = {
   teams: ["teams"] as const,
   tasks: (filters: TaskFilters) => ["tasks", filters] as const,
   task: (taskId: string) => ["task", taskId] as const,
+  taskBlockedBy: (taskId: string) => ["task-blocked-by", taskId] as const,
+  taskBlocking: (taskId: string) => ["task-blocking", taskId] as const,
   projects: ["projects"] as const,
   labels: ["labels"] as const,
   members: ["members"] as const,

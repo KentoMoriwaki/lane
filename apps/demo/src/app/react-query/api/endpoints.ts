@@ -88,6 +88,22 @@ export async function fetchTask(
   return (await response.json()) as Task;
 }
 
+export async function fetchTasksByIds(
+  ctx: WorkspaceCtx,
+  ids: string[],
+): Promise<Task[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const response = await client.api.tasks.$get(
+    { query: { ids: ids.join(",") } },
+    requestOptions(ctx),
+  );
+  await assertOk(response);
+  return (await response.json()) as Task[];
+}
+
 export async function createTask(
   ctx: WorkspaceCtx,
   input: CreateTaskInput,

@@ -26,15 +26,18 @@ import { EmptyState, InlineSpinner, SectionError } from "./feedback";
 import { LabelChip } from "./task-bits";
 import { LabelPicker } from "./label-picker";
 import { PriorityControl } from "./priority-control";
+import { DependencyStatus } from "./dependency-status";
 import { ProjectPicker } from "./project-picker";
 import { StatusControl } from "./status-control";
 
 export function TaskDetailPanel({
   taskId,
   onClose,
+  onSelectTask,
 }: {
   taskId: string | null;
   onClose: () => void;
+  onSelectTask: (taskId: string) => void;
 }) {
   if (!taskId) {
     return (
@@ -51,7 +54,12 @@ export function TaskDetailPanel({
 
   return (
     <DetailShell>
-      <TaskDetail key={taskId} taskId={taskId} onClose={onClose} />
+      <TaskDetail
+        key={taskId}
+        taskId={taskId}
+        onClose={onClose}
+        onSelectTask={onSelectTask}
+      />
     </DetailShell>
   );
 }
@@ -67,9 +75,11 @@ function DetailShell({ children }: { children: React.ReactNode }) {
 function TaskDetail({
   taskId,
   onClose,
+  onSelectTask,
 }: {
   taskId: string;
   onClose: () => void;
+  onSelectTask: (taskId: string) => void;
 }) {
   const { data: task, isPending, isError, error, refetch, isFetching } =
     useTask(taskId);
@@ -351,6 +361,10 @@ function TaskDetail({
             />
           </div>
         </div>
+
+        <Separator />
+
+        <DependencyStatus task={task} onSelectTask={onSelectTask} />
 
         <p className="pt-1 text-xs text-muted-foreground">
           Updated {formatRelative(task.updatedAt)}

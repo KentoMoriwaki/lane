@@ -57,6 +57,16 @@ export type LaneResult<T> = {
   invalidate: () => void;
 };
 
+/**
+ * The shape `useLane` returns when `enabled` may be `false`: the read is gated,
+ * so `promise` is `undefined` while disabled (nothing is fetched or subscribed).
+ * Unwrap it conditionally — `result.promise ? use(result.promise) : fallback` —
+ * which is allowed because `use` may be called inside conditionals.
+ */
+export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
+  promise: Promise<T> | undefined;
+};
+
 export type LaneRefetchOnMount = boolean | "always";
 
 export type LaneRefetchOnFocus = boolean | "always";
@@ -64,6 +74,13 @@ export type LaneRefetchOnFocus = boolean | "always";
 export type LaneRefetchOnReconnect = boolean | "always";
 
 export type LaneUseOptions = {
+  /**
+   * When `false`, the read is gated off: no loader runs, no subscription is
+   * created, and `useLane` returns `promise: undefined`. Defaults to `true`.
+   * Passing `enabled` widens the return to `LaneGatedResult<T>`; omit it (or
+   * pass a literal `true`) to keep the non-nullable `LaneResult<T>`.
+   */
+  enabled?: boolean;
   staleTime?: number;
   gcTime?: number;
   retry?: number;

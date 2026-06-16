@@ -276,6 +276,7 @@ export function WorkspaceShell({
             <TaskDetailPanel
               taskId={selectedTaskId}
               onClose={() => selectTask(null)}
+              onSelectTask={selectTask}
             />
           </LaneErrorBoundary>
         </div>

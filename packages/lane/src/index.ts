@@ -7,6 +7,7 @@ export { useLane, useLanePromise } from "./use-lane";
 export type {
   Lane,
   LaneEntryInfo,
+  LaneGatedResult,
   LaneHydrationSnapshots,
   LaneInvalidateOptions,
   LaneKey,

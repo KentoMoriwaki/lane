@@ -33,6 +33,7 @@ import { AssigneePicker } from "./assignee-picker";
 import { EmptyState, InlineSpinner } from "./feedback";
 import { LabelChip } from "./task-bits";
 import { LabelPicker } from "./label-picker";
+import { DependencyStatus } from "./dependency-status";
 import { PriorityControl } from "./priority-control";
 import { ProjectPicker } from "./project-picker";
 import { StatusControl } from "./status-control";
@@ -40,15 +41,22 @@ import { StatusControl } from "./status-control";
 export function TaskDetailPanel({
   taskId,
   onClose,
+  onSelectTask,
 }: {
   taskId: string | null;
   onClose: () => void;
+  onSelectTask: (taskId: string) => void;
 }) {
   return (
     <DetailShell>
       <React.Suspense fallback={<DetailSkeleton />}>
         {taskId ? (
-          <TaskDetail taskId={taskId} onClose={onClose} />
+          <TaskDetail
+            key={taskId}
+            taskId={taskId}
+            onClose={onClose}
+            onSelectTask={onSelectTask}
+          />
         ) : (
         <EmptyState
           icon={MousePointerClick}
@@ -73,9 +81,11 @@ function DetailShell({ children }: { children: React.ReactNode }) {
 function TaskDetail({
   taskId,
   onClose,
+  onSelectTask,
 }: {
   taskId: string;
   onClose: () => void;
+  onSelectTask: (taskId: string) => void;
 }) {
   const task = React.use(useTask(taskId).promise);
   const projects = React.use(useProjects().promise);
@@ -373,6 +383,10 @@ function TaskDetail({
             />
           </div>
         </div>
+
+        <Separator />
+
+        <DependencyStatus task={task} onSelectTask={onSelectTask} />
 
         <p className="pt-1 text-xs text-muted-foreground">
           Updated {formatRelative(optimisticTask.updatedAt)}

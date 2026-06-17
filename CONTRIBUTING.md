@@ -91,15 +91,16 @@ top of each bundle. Inside the workspace the package resolves to `src/` directly
 
 To cut a release, first update [CHANGELOG.md](CHANGELOG.md) (move the
 `[Unreleased]` entries under a new version heading and refresh the compare
-links) and commit it. Then run the matching release script from the package:
+links) and commit it. Then run the matching release script from the repo root:
 
 ```sh
-pnpm --filter use-lane release:patch   # 0.1.0 -> 0.1.1
-pnpm --filter use-lane release:minor   # 0.1.0 -> 0.2.0
-pnpm --filter use-lane release:major   # 0.1.0 -> 1.0.0
+pnpm release:patch   # 0.1.0 -> 0.1.1
+pnpm release:minor   # 0.1.0 -> 0.2.0
+pnpm release:major   # 0.1.0 -> 1.0.0
 ```
 
-Each `release:*` script runs [`scripts/release.mjs`](packages/lane/scripts/release.mjs),
+These root scripts just forward to `use-lane`; `pnpm --filter use-lane release:patch`
+works too. Each `release:*` script runs [`scripts/release.mjs`](packages/lane/scripts/release.mjs),
 which refuses a dirty tree, bumps the version, commits it, creates an annotated
 `vX.Y.Z` tag (with notes pulled from the matching CHANGELOG section), builds via
 `prepublishOnly`, publishes to npm, pushes the commit and tag, and — if the

@@ -10,7 +10,11 @@
     "build": "pnpm -r build",
     "test": "pnpm -r --if-present test",
     "test:e2e": "pnpm --filter @lane/e2e e2e",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "release": "pnpm --filter use-lane release",
+    "release:patch": "pnpm --filter use-lane release:patch",
+    "release:minor": "pnpm --filter use-lane release:minor",
+    "release:major": "pnpm --filter use-lane release:major"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",

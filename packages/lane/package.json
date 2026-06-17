@@ -1,6 +1,6 @@
 {
   "name": "use-lane",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Transition-native data fetching for React 19 — Lane caches the promise behind each key and re-reads it inside transitions, while React owns loading, errors, and optimistic UI.",
   "license": "MIT",
   "author": "Kento Moriwaki <kentomoriwaki@gmail.com>",

@@ -89,12 +89,21 @@ definitions to `packages/lane/dist/`, keeping the `"use client"` directive at th
 top of each bundle. Inside the workspace the package resolves to `src/` directly;
 `publishConfig` switches the entry points to `dist/` when packing.
 
-To cut a release:
+To cut a release, first update [CHANGELOG.md](CHANGELOG.md) (move the
+`[Unreleased]` entries under a new version heading and refresh the compare
+links) and commit it. Then run the matching release script from the package:
 
 ```sh
-pnpm --filter use-lane build
-pnpm --filter use-lane publish
+pnpm --filter use-lane release:patch   # 0.1.0 -> 0.1.1
+pnpm --filter use-lane release:minor   # 0.1.0 -> 0.2.0
+pnpm --filter use-lane release:major   # 0.1.0 -> 1.0.0
 ```
 
-`pnpm --filter use-lane pack` plus [publint](https://publint.dev) validate the
-publish shape without publishing.
+Each `release:*` script bumps the version with `npm version` (creating the
+`vX.Y.Z` commit and tag), then runs `release`, which builds via `prepublishOnly`,
+publishes to npm, and pushes the commit and tag with `git push --follow-tags`.
+`npm version` requires a clean working tree, so commit the changelog first.
+
+`pnpm --filter use-lane build` then `pnpm --filter use-lane publish` is the
+equivalent manual path. `pnpm --filter use-lane pack` plus
+[publint](https://publint.dev) validate the publish shape without publishing.

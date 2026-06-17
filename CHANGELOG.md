@@ -6,6 +6,17 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-17
+
+### Added
+
+- `enabled?: boolean` option for `useLane` / `useLanePromise`. When `false`, no
+  loader runs and no subscription is created, and the result's `promise` is
+  `undefined` (new `LaneGatedResult<T>`). Overloads keep callers that omit
+  `enabled` (or pass `true`) at the non-nullable `LaneResult<T>`. Flipping
+  `enabled` back to `true` is treated as a mount (re-subscribe +
+  `refetchOnMount`).
+
 ## [0.1.0] - 2026-06-13
 
 Initial public release.
@@ -41,5 +52,6 @@ Initial public release.
 
 - React 19.2+ (`useEffectEvent`).
 
-[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/KentoMoriwaki/lane/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/KentoMoriwaki/lane/releases/tag/v0.1.0

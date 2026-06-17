@@ -99,11 +99,14 @@ pnpm --filter use-lane release:minor   # 0.1.0 -> 0.2.0
 pnpm --filter use-lane release:major   # 0.1.0 -> 1.0.0
 ```
 
-Each `release:*` script bumps the version with `npm version` (creating the
-`vX.Y.Z` commit and tag), then runs `release`, which builds via `prepublishOnly`,
-publishes to npm, and pushes the commit and tag with `git push --follow-tags`.
-`npm version` requires a clean working tree, so commit the changelog first.
+Each `release:*` script runs [`scripts/release.mjs`](packages/lane/scripts/release.mjs),
+which refuses a dirty tree, bumps the version, commits it, creates an annotated
+`vX.Y.Z` tag (with notes pulled from the matching CHANGELOG section), builds via
+`prepublishOnly`, publishes to npm, pushes the commit and tag, and — if the
+[`gh` CLI](https://cli.github.com) is available — opens a GitHub release. Because
+it pushes straight to the current branch, run it on an up-to-date `main`.
 
 `pnpm --filter use-lane build` then `pnpm --filter use-lane publish` is the
-equivalent manual path. `pnpm --filter use-lane pack` plus
+equivalent manual path (`release` on its own publishes the current version and
+pushes, without bumping). `pnpm --filter use-lane pack` plus
 [publint](https://publint.dev) validate the publish shape without publishing.

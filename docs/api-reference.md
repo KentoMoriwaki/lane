@@ -78,9 +78,11 @@ function useLane<T>(
 ```
 
 - **`key`** — a structural array (`["task", id]`). See [Keys](#keys).
-- **`loader`** — `({ key, signal }) => Promise<T>`. Called when the key has no
-  cached promise. The `signal` aborts when the in-flight read is discarded
-  (invalidation, removal, an authoritative `set` over a pending read, or GC).
+- **`loader`** — `({ key, signal }) => Promise<T>`, or `undefined` to gate the
+  read off (see [Conditional reads](#conditional-reads-gating)). Called when the
+  key has no cached promise. The `signal` aborts when the in-flight read is
+  discarded (invalidation, removal, an authoritative `set` over a pending read,
+  or GC).
 - **`options`** — see [`LaneUseOptions`](#laneuseoptions).
 
 Returns a [`LaneResult<T>`](#laneresultt). Read the data with `use(result.promise)`
@@ -125,6 +127,53 @@ type LaneResult<T> = {
 | `isTransitionPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / polling / reconnect / subscription catch-up) is converging. |
 | `invalidate` | Invalidate this exact key and re-read through a transition. Convenience for `lane.invalidate(key)`. |
+
+### `LaneGatedResult<T>`
+
+What `useLane` / `useLanePromise` return when the loader may be `undefined` —
+`promise` widens to `Promise<T> | undefined`:
+
+```ts
+type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
+  promise: Promise<T> | undefined;
+};
+```
+
+A statically-present loader keeps the non-nullable `LaneResult<T>`; a
+possibly-`undefined` loader selects this gated shape. See
+[Conditional reads](#conditional-reads-gating).
+
+### Conditional reads (gating)
+
+Pass `undefined` as the loader to gate a read off. While disabled nothing is
+fetched, no subscription is created, and no entry is stored — `result.promise`
+is `undefined`. Because Lane only loads external data, an absent loader has no
+other meaning, so it is the single, unambiguous disable signal (there is no
+`enabled` option).
+
+```tsx
+const detail = useLane(
+  ["component", componentId],
+  componentId
+    ? ({ signal }) => fetchComponent(componentId, { signal })
+    : undefined,
+);
+const value = detail.promise ? use(detail.promise) : null;
+```
+
+Gating through the loader keeps two things honest:
+
+- **The loaded type is unaffected.** The off-state lives on the `promise:
+  undefined` axis, so `Awaited<promise>` stays `T` — the fallback type is chosen
+  at the unwrap site, never mixed into the loaded value.
+- **No assertions.** Branch the loader on the same value it dereferences
+  (`componentId ? … : undefined`); that value is narrowed to non-null inside the
+  closure.
+
+The key may carry not-yet-ready segments (`null` / `undefined`) while disabled —
+nothing is stored, so no placeholder key is needed. Segments must still be
+serializable, since the key is serialized for identity tracking even while
+disabled.
 
 ### `LaneUseOptions`
 
@@ -341,7 +390,7 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 
 ## Type exports
 
-`Lane`, `LaneEntryInfo`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
+`Lane`, `LaneEntryInfo`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneRefetchOnFocus`,
 `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneResult`, `LaneRetryDelay`,
 `LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`.

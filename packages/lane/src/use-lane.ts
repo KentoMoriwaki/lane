@@ -29,20 +29,23 @@ import type {
 export function useLane<T>(
   key: LaneKey,
   loader: LaneLoader<T>,
-  options?: Omit<LaneUseOptions, "enabled"> & { enabled?: true },
+  options?: LaneUseOptions,
 ): LaneResult<T>;
 export function useLane<T>(
   key: LaneKey,
-  loader: LaneLoader<T>,
+  loader: LaneLoader<T> | undefined,
   options?: LaneUseOptions,
 ): LaneGatedResult<T>;
 export function useLane<T>(
   key: LaneKey,
-  loader: LaneLoader<T>,
+  loader: LaneLoader<T> | undefined,
   options: LaneUseOptions = {},
 ): LaneResult<T> | LaneGatedResult<T> {
   const lane = useLaneInstance();
-  const enabled = options.enabled ?? true;
+  // A read is "enabled" exactly when a loader is supplied. Lane only loads
+  // external data, so an absent loader has no other meaning and is the single,
+  // unambiguous disable signal: no fetch, no subscription, no stored entry.
+  const enabled = loader !== undefined;
   const keyId = serializeKey(key);
   const readOptions: LaneReadOptions = {
     retry: options.retry,
@@ -51,7 +54,7 @@ export function useLane<T>(
   const [isTransitionPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
   const [promise, setPromise] = useState<Promise<T> | undefined>(() =>
-    enabled ? readOrCreate(lane, key, loader, readOptions) : undefined,
+    loader !== undefined ? readOrCreate(lane, key, loader, readOptions) : undefined,
   );
   const [prevSource, setPrevSource] = useState(() => ({ enabled, keyId, lane }));
 
@@ -65,9 +68,10 @@ export function useLane<T>(
     lane !== prevSource.lane ||
     keyId !== prevSource.keyId
   ) {
-    const nextPromise = enabled
-      ? readOrCreate(lane, key, loader, readOptions)
-      : undefined;
+    const nextPromise =
+      loader !== undefined
+        ? readOrCreate(lane, key, loader, readOptions)
+        : undefined;
     effectivePromise = nextPromise;
 
     setPrevSource({ enabled, keyId, lane });
@@ -79,6 +83,12 @@ export function useLane<T>(
     targetKey: LaneKey,
     source: LaneInvalidationSource,
   ) => {
+    // Only fires while subscribed, which never happens without a loader; the
+    // guard also narrows `loader` to non-undefined for the read below.
+    if (loader === undefined) {
+      return;
+    }
+
     const updatePromise = () => {
       setPromise(readOrCreate(targetLane, targetKey, loader, readOptions));
     };
@@ -92,6 +102,10 @@ export function useLane<T>(
   });
 
   const onRemove = useEffectEvent((targetLane: Lane, targetKey: LaneKey) => {
+    if (loader === undefined) {
+      return;
+    }
+
     const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
     setPromise(nextPromise);
   });
@@ -105,6 +119,10 @@ export function useLane<T>(
     targetLane: Lane,
     targetKey: LaneKey,
   ) => {
+    if (loader === undefined) {
+      return;
+    }
+
     const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
 
     if (nextPromise === promise) {
@@ -194,16 +212,16 @@ export function useLane<T>(
 export function useLanePromise<T>(
   key: LaneKey,
   loader: LaneLoader<T>,
-  options?: Omit<LaneUseOptions, "enabled"> & { enabled?: true },
+  options?: LaneUseOptions,
 ): Promise<T>;
 export function useLanePromise<T>(
   key: LaneKey,
-  loader: LaneLoader<T>,
+  loader: LaneLoader<T> | undefined,
   options?: LaneUseOptions,
 ): Promise<T> | undefined;
 export function useLanePromise<T>(
   key: LaneKey,
-  loader: LaneLoader<T>,
+  loader: LaneLoader<T> | undefined,
   options?: LaneUseOptions,
 ): Promise<T> | undefined {
   return useLane(key, loader, options ?? {}).promise;

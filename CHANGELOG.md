@@ -6,6 +6,19 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** removed the `enabled?: boolean` option. Gate a read by passing
+  `undefined` as the loader instead
+  (`useLane(key, cond ? loader : undefined)`). Lane loads external data only, so
+  an absent loader has no other meaning and is the single, unambiguous disable
+  signal. Gating through the loader keeps the loaded type unaffected (the
+  off-state stays on the `promise: undefined` axis, so `Awaited<promise>` is
+  still `T`) and lets the loader's inputs narrow without a non-null assertion.
+  Disabled reads still fetch nothing, create no subscription, and store no
+  entry; supplying the loader is treated as a mount (re-subscribe +
+  `refetchOnMount`).
+
 ## [0.1.1] - 2026-06-17
 
 ### Added

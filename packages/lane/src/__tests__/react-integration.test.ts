@@ -513,7 +513,7 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
-  it("gates the read with enabled and loads once it flips on", async () => {
+  it("gates the read by omitting the loader and loads once it is supplied", async () => {
     const lane = createLane();
     const loader = vi.fn(async () => "value");
 
@@ -612,7 +612,7 @@ function Probe({
 }: {
   cacheKey?: LaneKey;
   loader: LaneLoader<string>;
-  options?: Omit<LaneUseOptions, "enabled">;
+  options?: LaneUseOptions;
 }) {
   const result = useLane(cacheKey, loader, options);
   const value = React.use(result.promise);
@@ -643,7 +643,7 @@ function GatedProbe({
   enabled: boolean;
   loader: LaneLoader<string>;
 }) {
-  const result = useLane(["tasks"], loader, { enabled });
+  const result = useLane(["tasks"], enabled ? loader : undefined);
   // `use` may be called conditionally — the gated read is unwrapped only when
   // there is a promise, otherwise the reader renders its own fallback.
   const value = result.promise ? React.use(result.promise) : "disabled";

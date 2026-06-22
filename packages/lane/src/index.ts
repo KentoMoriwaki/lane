@@ -13,6 +13,7 @@ export type {
   LaneKey,
   LaneLoader,
   LaneLoaderContext,
+  LaneOptions,
   LaneRefetchOnFocus,
   LaneRefetchOnMount,
   LaneRefetchOnReconnect,
@@ -23,4 +24,5 @@ export type {
   LaneUpdater,
   LaneUseOptions,
   LaneValue,
+  LaneWhenStale,
 } from "./types";

@@ -488,14 +488,10 @@ describe("React integration", () => {
   it("collects the cache after unmount once gcTime elapses", async () => {
     vi.useFakeTimers();
 
-    const lane = createLane();
+    const lane = createLane({ gcTime: 200 });
     const loader = vi.fn(async () => "loaded");
 
-    const app = await renderLaneApp({
-      lane,
-      loader,
-      options: { gcTime: 200 },
-    });
+    const app = await renderLaneApp({ lane, loader });
     await waitForText(app.container, "loaded|background:0|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
 
@@ -504,13 +500,56 @@ describe("React integration", () => {
       await vi.advanceTimersByTimeAsync(200);
     });
 
-    const remounted = await renderLaneApp({
-      lane,
-      loader,
-      options: { gcTime: 200 },
-    });
+    const remounted = await renderLaneApp({ lane, loader });
     await waitForText(remounted.container, "loaded|background:0|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("whenStale 'refetch' discards a stale value and refetches on remount", async () => {
+    vi.useFakeTimers();
+
+    // gcTime Infinity keeps the entry, so the remount refetch is a stale-reuse
+    // decision, not garbage collection.
+    const lane = createLane({ gcTime: Infinity });
+    const loader = vi.fn(async () => "loaded");
+    const options = {
+      whenStale: "refetch" as const,
+      staleTime: 100,
+    };
+
+    const app = await renderLaneApp({ lane, loader, options });
+    await waitForText(app.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    unmountApp(app);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200); // past staleTime
+    });
+
+    const remounted = await renderLaneApp({ lane, loader, options });
+    await waitForText(remounted.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("whenStale 'revalidate' (default) reuses a stale value on remount", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: Infinity });
+    const loader = vi.fn(async () => "loaded");
+    const options = { staleTime: 100 };
+
+    const app = await renderLaneApp({ lane, loader, options });
+    await waitForText(app.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    unmountApp(app);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200); // past staleTime
+    });
+
+    const remounted = await renderLaneApp({ lane, loader, options });
+    await waitForText(remounted.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it("gates the read by omitting the loader and loads once it is supplied", async () => {
@@ -561,14 +600,10 @@ describe("React integration", () => {
   it("keeps the cache for remounts within gcTime", async () => {
     vi.useFakeTimers();
 
-    const lane = createLane();
+    const lane = createLane({ gcTime: 200 });
     const loader = vi.fn(async () => "loaded");
 
-    const app = await renderLaneApp({
-      lane,
-      loader,
-      options: { gcTime: 200 },
-    });
+    const app = await renderLaneApp({ lane, loader });
     await waitForText(app.container, "loaded|background:0|transition:0|refresh:none");
 
     unmountApp(app);
@@ -576,11 +611,7 @@ describe("React integration", () => {
       await vi.advanceTimersByTimeAsync(100);
     });
 
-    const remounted = await renderLaneApp({
-      lane,
-      loader,
-      options: { gcTime: 200 },
-    });
+    const remounted = await renderLaneApp({ lane, loader });
     await waitForText(remounted.container, "loaded|background:0|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
   });

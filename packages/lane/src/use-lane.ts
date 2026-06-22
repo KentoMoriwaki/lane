@@ -50,6 +50,8 @@ export function useLane<T>(
   const readOptions: LaneReadOptions = {
     retry: options.retry,
     retryDelay: options.retryDelay,
+    staleTime: options.staleTime,
+    whenStale: options.whenStale,
   };
   const [isTransitionPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
@@ -166,7 +168,6 @@ export function useLane<T>(
         onRemove(lane, entry.key);
       },
       options: {
-        gcTime: options.gcTime,
         refetchInterval: options.refetchInterval,
         refetchOnFocus: options.refetchOnFocus,
         refetchOnReconnect: options.refetchOnReconnect,
@@ -181,7 +182,6 @@ export function useLane<T>(
     enabled,
     lane,
     keyId,
-    options.gcTime,
     options.refetchInterval,
     options.refetchOnFocus,
     options.refetchOnReconnect,

@@ -154,13 +154,13 @@ function RenameButton({ userId }: { userId: string }) {
 | `useLane(key, loader, options?)` | Read a key. Returns `{ promise, refreshError, isTransitionPending, isBackgroundPending, invalidate }`. |
 | `useLanePromise(key, loader, options?)` | Thin wrapper returning just `promise`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
-| `createLane()` | Create a Lane instance manually (e.g. to share one across providers or seed on the server). |
+| `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime }`. |
 | `LaneHydration` | Apply RSC-loaded snapshots as authoritative seed values. |
 
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
-`updateAll`, `remove` / `removeAll`. `useLane` options: `staleTime`, `gcTime`,
+`updateAll`, `remove` / `removeAll`. `useLane` options: `staleTime`, `whenStale`,
 `retry`, `retryDelay`, `refetchInterval`, `refetchOnFocus`, `refetchOnMount`,
-`refetchOnReconnect`.
+`refetchOnReconnect`. `createLane` options: `gcTime`.
 
 See the **[API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md)**
 for full signatures and semantics.

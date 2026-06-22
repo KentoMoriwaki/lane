@@ -53,15 +53,27 @@ const lane = useLaneInstance();
 lane.invalidate(["user", id]);
 ```
 
-### `createLane()`
+### `createLane(options?)`
 
 Creates a `Lane` instance directly. Most apps never call this — `LaneProvider`
 creates one for you. Use it to share a single instance across multiple providers
 or to construct one outside React.
 
 ```ts
-const lane = createLane();
+const lane = createLane({ gcTime: 5 * 60_000 });
 ```
+
+#### `LaneOptions`
+
+```ts
+type LaneOptions = {
+  gcTime?: number;
+};
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `gcTime` | `300000` (5 min) | How long (ms) an inactive entry (no subscribers) is retained before it is garbage-collected. An instance-wide memory policy — idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. Eviction is coalesced into a single sweep per lane, so the exact moment is approximate (it never needs to be precise). |
 
 ## Reading data
 
@@ -180,7 +192,7 @@ disabled.
 ```ts
 type LaneUseOptions = {
   staleTime?: number;
-  gcTime?: number;
+  whenStale?: "revalidate" | "refetch";
   retry?: number;
   retryDelay?: (attempt: number, error: unknown) => number;
   refetchInterval?: number;
@@ -190,10 +202,13 @@ type LaneUseOptions = {
 };
 ```
 
+> `gcTime` is **not** a per-read option — it is an instance-wide policy passed to
+> [`createLane({ gcTime })`](#laneoptions).
+
 | Option | Default | Description |
 | --- | --- | --- |
-| `staleTime` | `0` | How long (ms) a fulfilled value is considered fresh. Stale entries are eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. |
-| `gcTime` | `300000` (5 min) | How long an entry with no subscribers is kept before collection. `Infinity` opts out. The largest `gcTime` across subscribers wins. |
+| `staleTime` | `0` | How long (ms) a fulfilled value is considered fresh. Once stale, a read's behavior is decided by `whenStale`, and the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. |
+| `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. |
 | `retry` | `0` | Number of automatic retries for a failed load. Aborts stop the retry loop. |
 | `retryDelay` | exponential backoff, `min(1000 · 2^attempt, 30000)` | Delay (ms) before retry `attempt`. |
 | `refetchInterval` | — | Poll the entry every N ms. The smallest interval across subscribers is used; ticks are settled-only so pending reads dedupe. |
@@ -370,6 +385,13 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
   Freshness keeps the original fulfillment time, so staleness policies still
   treat the data as old and retry. Only an **initial** load (no previous value)
   rejects the promise and reaches the Error Boundary.
+- **Stale reads.** `staleTime` sets how long a value stays fresh; on a stale
+  read, `whenStale` decides what happens. `"revalidate"` (default) keeps showing
+  the cached value and refreshes in the background. `"refetch"` discards an idle
+  stale value and suspends on a fresh load — never discarding an in-flight read
+  or a value a live subscriber is showing. This is orthogonal to `refetchOnMount`
+  / `refetchOnFocus` / `refetchOnReconnect`, which decide *when* a background
+  revalidation is triggered, not what a read shows.
 - **Abort.** Loaders receive an `AbortSignal` that fires when the read is
   discarded by invalidation, removal, an authoritative `set` over a pending read,
   or GC.
@@ -384,16 +406,19 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 - **Focus / reconnect.** The provider coalesces `focus` + `visibilitychange`
   into one revalidation per `focusThrottleInterval` (default 5s); `online` drives
   reconnect revalidation (not throttled).
-- **Garbage collection.** An entry with no subscribers is collected `gcTime` ms
-  after its last subscriber leaves (default 5 min; `Infinity` opts out). This
-  also collects entries from renders that never committed.
+- **Garbage collection.** An inactive entry (no subscribers) is retained for the
+  lane's `gcTime` (`createLane({ gcTime })`, default 5 min; `Infinity` opts out)
+  and then collected. Collection is a single coalesced sweep per lane — armed
+  when an entry loses its last subscriber, so timing is approximate. Because the
+  sweep is lane-wide, it also reclaims orphans (entries from renders that never
+  committed) on whatever cycle a later unsubscribe triggers.
 
 ## Type exports
 
 `Lane`, `LaneEntryInfo`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
-`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneRefetchOnFocus`,
+`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`, `LaneRefetchOnFocus`,
 `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneResult`, `LaneRetryDelay`,
-`LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`.
+`LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`.
 
 ## See also
 

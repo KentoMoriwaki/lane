@@ -12,8 +12,8 @@ All notable changes to `use-lane` are documented here. The format is based on
   `useLanePromise`, controlling what a read does when the cached value is stale
   (older than `staleTime`). `"revalidate"` (default, the existing behavior)
   reuses the cached value and refreshes in the background; `"refetch"` discards
-  an idle stale value and suspends on a fresh load, but never discards an
-  in-flight read or a value a live subscriber is showing.
+  an idle stale value (or a prior error) and suspends on a fresh load, but never
+  discards an in-flight read or a value a live subscriber is showing.
 
 ### Changed
 

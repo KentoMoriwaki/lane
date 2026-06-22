@@ -91,4 +91,26 @@ describe("whenStale", () => {
     );
     expect(loader).toHaveBeenCalledTimes(1);
   });
+
+  it("'refetch' always retries a prior error, even within staleTime", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "loaded");
+    loader.mockRejectedValueOnce(new Error("boom"));
+
+    // Initial load rejects → the entry holds a rejected, settled cache.
+    await expect(
+      readOrCreate(lane, ["k"], loader, refetch(10_000)),
+    ).rejects.toThrow("boom");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // Idle remount well within staleTime: a prior error is never reused (errors
+    // are not gated by staleTime), so the read refetches fresh.
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(
+      readOrCreate(lane, ["k"], loader, refetch(10_000)),
+    ).resolves.toBe("loaded");
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
 });

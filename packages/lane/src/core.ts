@@ -199,10 +199,11 @@ export function readOrCreate<T>(
  * refreshed separately in the background, so a reader shows the cached value
  * and converges through a transition (the long-standing behavior).
  *
- * `"refetch"` discards a stale value and suspends on a fresh read, but never
- * discards an in-flight read (would break same-transition sharing) or a value a
- * live subscriber is showing (would yank a shared promise from active readers) —
- * so it only forces a fresh load on an otherwise idle remount.
+ * `"refetch"` discards a stale value (or a prior error) and suspends on a fresh
+ * read, but never discards an in-flight read (would break same-transition
+ * sharing) or a value a live subscriber is showing (would yank a shared promise
+ * from active readers) — so it only forces a fresh load on an otherwise idle
+ * remount.
  */
 function reuseCache(
   entry: LaneEntry,
@@ -222,10 +223,16 @@ function reuseCache(
     return cache;
   }
 
-  const staleTime = options?.staleTime ?? 0;
-  const isFresh = Date.now() - cache.settlement.at < staleTime;
+  // refetch is a deliberate read-time choice on an idle remount, not a
+  // background trigger — so it does not inherit core's "rejected is never
+  // stale" rule (which exists only to stop focus/poll/mount from hammering a
+  // failing endpoint). Re-surfacing a prior error on remount helps no one, so
+  // always retry it; a fulfilled value follows the usual staleness rule.
+  if (cache.settlement.kind === "rejected") {
+    return undefined;
+  }
 
-  return isFresh ? cache : undefined;
+  return isStale(cache, options?.staleTime ?? 0) ? undefined : cache;
 }
 
 export function readRefreshError(lane: Lane, keyId: string): unknown {
@@ -665,7 +672,19 @@ function removeEntryCache(entry: LaneEntry): void {
  * opts out entirely.
  */
 function ensureSweep(state: LaneState): void {
-  if (state.sweepTimer !== undefined || !Number.isFinite(state.gcTime)) {
+  // Infinity (or NaN) opts out of collection entirely.
+  if (!Number.isFinite(state.gcTime)) {
+    return;
+  }
+
+  // Non-positive gcTime means "collect as soon as idle": sweep once now rather
+  // than arming a 0ms interval that would spin the event loop.
+  if (state.gcTime <= 0) {
+    sweep(state);
+    return;
+  }
+
+  if (state.sweepTimer !== undefined) {
     return;
   }
 

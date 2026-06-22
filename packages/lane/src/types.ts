@@ -83,9 +83,9 @@ export type LaneUseOptions = {
    * - `"revalidate"` (default): reuse the cached value and let it be refreshed
    *   in the background (via `refetchOnMount`/focus/reconnect/poll) — the reader
    *   keeps showing it and converges to fresh through a transition.
-   * - `"refetch"`: discard the stale value and suspend on a fresh read. Never
-   *   discards an in-flight read or a value a live subscriber is showing, so
-   *   it only forces a fresh load on an otherwise idle remount.
+   * - `"refetch"`: discard the stale value (or a prior error) and suspend on a
+   *   fresh read. Never discards an in-flight read or a value a live subscriber
+   *   is showing, so it only forces a fresh load on an otherwise idle remount.
    *
    * This is the read-time freshness behavior; `refetchOnMount`/focus/reconnect
    * decide *when* a background revalidation is triggered, independently.

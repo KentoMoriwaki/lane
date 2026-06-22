@@ -208,7 +208,7 @@ type LaneUseOptions = {
 | Option | Default | Description |
 | --- | --- | --- |
 | `staleTime` | `0` | How long (ms) a fulfilled value is considered fresh. Once stale, a read's behavior is decided by `whenStale`, and the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. |
-| `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. |
+| `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value (or a prior error) and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. |
 | `retry` | `0` | Number of automatic retries for a failed load. Aborts stop the retry loop. |
 | `retryDelay` | exponential backoff, `min(1000 · 2^attempt, 30000)` | Delay (ms) before retry `attempt`. |
 | `refetchInterval` | — | Poll the entry every N ms. The smallest interval across subscribers is used; ticks are settled-only so pending reads dedupe. |
@@ -388,8 +388,8 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 - **Stale reads.** `staleTime` sets how long a value stays fresh; on a stale
   read, `whenStale` decides what happens. `"revalidate"` (default) keeps showing
   the cached value and refreshes in the background. `"refetch"` discards an idle
-  stale value and suspends on a fresh load — never discarding an in-flight read
-  or a value a live subscriber is showing. This is orthogonal to `refetchOnMount`
+  stale value (or a prior error) and suspends on a fresh load — never discarding
+  an in-flight read or a value a live subscriber is showing. This is orthogonal to `refetchOnMount`
   / `refetchOnFocus` / `refetchOnReconnect`, which decide *when* a background
   revalidation is triggered, not what a read shows.
 - **Abort.** Loaders receive an `AbortSignal` that fires when the read is

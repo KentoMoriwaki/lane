@@ -134,4 +134,22 @@ describe("garbage collection", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(signal?.aborted).toBe(true);
   });
+
+  it("collects immediately on unsubscribe when gcTime is 0", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: 0 });
+    const loader = vi.fn(async () => "loaded");
+    const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
+
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+
+    // gcTime 0 sweeps synchronously when the last subscriber leaves — no timer
+    // advance needed. (An armed 0ms interval would instead need a tick and could
+    // spin the event loop.)
+    unsubscribe();
+
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
 });

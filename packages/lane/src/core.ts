@@ -8,6 +8,7 @@ import type {
   LaneKey,
   LaneLoader,
   LaneOptions,
+  LaneRead,
   LaneRetryDelay,
   LaneScope,
   LaneUpdater,
@@ -58,7 +59,6 @@ type LanePromiseCache = {
   promise: Promise<unknown>;
   settlement: LanePromiseSettlement | undefined;
   startedAt: number;
-  refreshError: { error: unknown; at: number } | undefined;
   controller: AbortController | undefined;
 };
 
@@ -175,7 +175,7 @@ export function readOrCreate<T>(
   key: LaneKey,
   loader: LaneLoader<T>,
   options?: LaneReadOptions,
-): Promise<T> {
+): Promise<LaneRead<T>> {
   const state = getLaneState(lane);
   const keyId = serializeKey(key);
   const entry = getOrCreateEntry(state, key, keyId);
@@ -183,7 +183,7 @@ export function readOrCreate<T>(
   const reusable = reuseCache(entry, options);
 
   if (reusable) {
-    return reusable.promise as Promise<T>;
+    return reusable.promise as Promise<LaneRead<T>>;
   }
 
   const controller = new AbortController();
@@ -233,10 +233,6 @@ function reuseCache(
   }
 
   return isStale(cache, options?.staleTime ?? 0) ? undefined : cache;
-}
-
-export function readRefreshError(lane: Lane, keyId: string): unknown {
-  return getLaneState(lane).entries.get(keyId)?.cache?.refreshError?.error;
 }
 
 export function invalidateEntry(
@@ -364,7 +360,7 @@ function updateEntry<T>(
   state: LaneState,
   entry: LaneEntry,
   updater: LaneUpdater<T>,
-): Promise<T> | undefined {
+): Promise<LaneRead<T>> | undefined {
   const cache = entry.cache;
 
   if (!cache || cache.settlement?.kind === "rejected") {
@@ -373,7 +369,7 @@ function updateEntry<T>(
 
   const info = { key: entry.key, keyId: entry.keyId };
   const valueOrPromise = cache.promise.then((current) =>
-    updater(current as T, info),
+    updater((current as LaneRead<T>).data, info),
   );
   // The updater adopts the in-flight result, so the previous controller must
   // stay un-aborted and keeps guarding the chained cache.
@@ -381,14 +377,14 @@ function updateEntry<T>(
 
   notifyInvalidate(entry, "transition");
 
-  return updated as Promise<T>;
+  return updated;
 }
 
 function publishEntryValue<T>(
   state: LaneState,
   entry: LaneEntry,
   valueOrPromise: LaneValue<T>,
-): Promise<T> {
+): Promise<LaneRead<T>> {
   entry.cache?.controller?.abort();
 
   return setEntryCache(state, entry, valueOrPromise, undefined);
@@ -577,7 +573,7 @@ function setEntryCache<T>(
   entry: LaneEntry,
   valueOrPromise: LaneValue<T>,
   controller: AbortController | undefined,
-): Promise<T> {
+): Promise<LaneRead<T>> {
   const startedAt = Date.now();
 
   if (!isPromiseLike(valueOrPromise)) {
@@ -585,28 +581,26 @@ function setEntryCache<T>(
 
     entry.cache = {
       controller,
-      promise: Promise.resolve(value),
-      refreshError: undefined,
+      promise: Promise.resolve<LaneRead<T>>({ data: value }),
       settlement: { at: startedAt, kind: "fulfilled" },
       startedAt,
     };
     entry.lastFulfilled = { at: startedAt, value };
 
-    return entry.cache.promise as Promise<T>;
+    return entry.cache.promise as Promise<LaneRead<T>>;
   }
 
   const cache: LanePromiseCache = {
     controller,
     promise: undefined as unknown as Promise<unknown>,
-    refreshError: undefined,
     settlement: undefined,
     startedAt,
   };
 
-  const guarded = valueOrPromise.then(
+  const guarded: Promise<LaneRead<T>> = valueOrPromise.then(
     (value) => {
       if (entry.cache !== cache) {
-        return value;
+        return { data: value };
       }
 
       const at = Date.now();
@@ -615,7 +609,7 @@ function setEntryCache<T>(
       cache.settlement = { at, kind: "fulfilled" };
       entry.lastFulfilled = { at, value: shared };
 
-      return shared;
+      return { data: shared };
     },
     (error: unknown) => {
       if (entry.cache !== cache) {
@@ -629,14 +623,14 @@ function setEntryCache<T>(
         throw error;
       }
 
-      // Stale-on-error: keep serving the last fulfilled value so mounted
-      // readers do not lose good data, and surface the failure separately.
-      // Freshness keeps the original fulfillment time, so staleness policies
-      // still treat the data as old.
+      // Stale-on-error: keep serving the last fulfilled value so mounted readers
+      // do not lose good data, and carry the failure alongside it in the same
+      // resolved value (`refreshError`) instead of a separate channel. Freshness
+      // keeps the original fulfillment time, so staleness policies still treat
+      // the data as old.
       cache.settlement = { at: fallback.at, kind: "fulfilled" };
-      cache.refreshError = { at: Date.now(), error };
 
-      return fallback.value as T;
+      return { data: fallback.value as T, refreshError: error };
     },
   );
 

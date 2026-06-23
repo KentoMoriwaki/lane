@@ -7,12 +7,7 @@ import {
   useState,
   useTransition,
 } from "react";
-import {
-  invalidateEntry,
-  readOrCreate,
-  readRefreshError,
-  subscribeLane,
-} from "./core";
+import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
 import type { LaneInvalidationSource, LaneReadOptions } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneInstance } from "./provider";
@@ -22,6 +17,7 @@ import type {
   LaneInvalidateOptions,
   LaneKey,
   LaneLoader,
+  LaneRead,
   LaneResult,
   LaneUseOptions,
 } from "./types";
@@ -55,7 +51,7 @@ export function useLane<T>(
   };
   const [isTransitionPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
-  const [promise, setPromise] = useState<Promise<T> | undefined>(() =>
+  const [promise, setPromise] = useState<Promise<LaneRead<T>> | undefined>(() =>
     loader !== undefined ? readOrCreate(lane, key, loader, readOptions) : undefined,
   );
   const [prevSource, setPrevSource] = useState(() => ({ enabled, keyId, lane }));
@@ -205,7 +201,6 @@ export function useLane<T>(
     isBackgroundPending,
     isTransitionPending,
     promise: effectivePromise,
-    refreshError: enabled ? readRefreshError(lane, keyId) : undefined,
   };
 }
 
@@ -213,17 +208,17 @@ export function useLanePromise<T>(
   key: LaneKey,
   loader: LaneLoader<T>,
   options?: LaneUseOptions,
-): Promise<T>;
+): Promise<LaneRead<T>>;
 export function useLanePromise<T>(
   key: LaneKey,
   loader: LaneLoader<T> | undefined,
   options?: LaneUseOptions,
-): Promise<T> | undefined;
+): Promise<LaneRead<T>> | undefined;
 export function useLanePromise<T>(
   key: LaneKey,
   loader: LaneLoader<T> | undefined,
   options?: LaneUseOptions,
-): Promise<T> | undefined {
+): Promise<LaneRead<T>> | undefined {
   return useLane(key, loader, options ?? {}).promise;
 }
 

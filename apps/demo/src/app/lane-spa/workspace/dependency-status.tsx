@@ -114,8 +114,8 @@ function DependencyBody({
 
   // `promise` is `undefined` when the edge does not exist (the gated read is
   // disabled); `use` runs only when there is a promise.
-  const blockers = blockedBy.promise ? React.use(blockedBy.promise) : [];
-  const downstream = blocking.promise ? React.use(blocking.promise) : [];
+  const blockers = blockedBy.promise ? React.use(blockedBy.promise).data : [];
+  const downstream = blocking.promise ? React.use(blocking.promise).data : [];
 
   return (
     <div className="space-y-2">

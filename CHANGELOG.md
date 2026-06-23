@@ -17,6 +17,14 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
+- **Breaking:** a read now resolves to `LaneRead<T> = { data, refreshError? }`
+  instead of `T`. `use(result.promise)` returns `{ data, refreshError }` (unwrap
+  `data`), and `set` / `update` / `updateAll` resolve to `LaneRead<T>` as well.
+  The separate `refreshError` field on the `useLane` result is **removed** — on a
+  stale-on-error refresh the error now travels *inside* the resolved value,
+  alongside the `data` it accompanies. This keeps `data` and `refreshError` from
+  tearing apart under concurrent rendering and removes a render-time read of
+  mutable store state (a render-purity violation). New public type `LaneRead<T>`.
 - **Breaking:** `gcTime` moved from a per-`useLane` option to an instance-level
   option on `createLane({ gcTime })` — an instance-wide memory policy rather than
   a per-read concern. The per-hook `gcTime` (and its "largest across subscribers

@@ -87,9 +87,9 @@ function TaskDetail({
   onClose: () => void;
   onSelectTask: (taskId: string) => void;
 }) {
-  const task = React.use(useTask(taskId).promise);
-  const projects = React.use(useProjects().promise);
-  const members = React.use(useMembers().promise);
+  const task = React.use(useTask(taskId).promise).data;
+  const projects = React.use(useProjects().promise).data;
+  const members = React.use(useMembers().promise).data;
   const update = useUpdateTask(taskId);
   const addLabel = useAddTaskLabel(taskId);
   const removeLabel = useRemoveTaskLabel(taskId);

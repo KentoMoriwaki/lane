@@ -24,9 +24,9 @@ export function InsightStrip({
   filters: TaskFilters;
   viewHref: (view: Partial<TaskFilters>) => string;
 }) {
-  const { promise, refreshError, invalidate, isTransitionPending } =
+  const { promise, invalidate, isTransitionPending } =
     useInsights();
-  const data = React.use(promise);
+  const { data, refreshError } = React.use(promise);
 
   const cards: InsightCard[] = [
     { key: "in_progress", label: "In progress", value: data.inProgress, tone: "amber", view: { status: ["in_progress"] } },

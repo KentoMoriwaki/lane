@@ -72,7 +72,7 @@ describe("loader abort", () => {
     expect(pending.signal?.aborted).toBe(true);
     await expect(
       readOrCreate(lane, ["tasks"], async () => "unused"),
-    ).resolves.toBe("authoritative");
+    ).resolves.toEqual({ data: "authoritative" });
   });
 
   it("does not abort when update chains on the in-flight value", async () => {
@@ -92,7 +92,7 @@ describe("loader abort", () => {
     expect(signal?.aborted).toBe(false);
     value.resolve("loaded");
 
-    await expect(updated).resolves.toBe("loaded!");
+    await expect(updated).resolves.toEqual({ data: "loaded!" });
     expect(signal?.aborted).toBe(false);
   });
 });

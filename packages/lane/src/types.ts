@@ -42,16 +42,30 @@ export type LaneInvalidateOptions = {
 export type Lane = {
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
-  set<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<T>;
-  update<T>(key: LaneKey, updater: LaneUpdater<T>): Promise<T> | undefined;
-  updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<T>[];
+  set<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<LaneRead<T>>;
+  update<T>(
+    key: LaneKey,
+    updater: LaneUpdater<T>,
+  ): Promise<LaneRead<T>> | undefined;
+  updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<LaneRead<T>>[];
   remove(key: LaneKey): void;
   removeAll(scope: LaneScope): void;
 };
 
+/**
+ * What a read resolves to. `data` is the value; `refreshError` is present when
+ * the most recent refresh failed while a previously fulfilled value is still
+ * being served (stale-on-error). The error travels in the same resolved value
+ * as the data it accompanies, so a reader sees both consistently through
+ * `use(promise)` — no separate, render-time store read.
+ */
+export type LaneRead<T> = {
+  data: T;
+  refreshError?: unknown;
+};
+
 export type LaneResult<T> = {
-  promise: Promise<T>;
-  refreshError: unknown;
+  promise: Promise<LaneRead<T>>;
   isBackgroundPending: boolean;
   isTransitionPending: boolean;
   invalidate: () => void;
@@ -65,7 +79,7 @@ export type LaneResult<T> = {
  * allowed because `use` may be called inside conditionals.
  */
 export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
-  promise: Promise<T> | undefined;
+  promise: Promise<LaneRead<T>> | undefined;
 };
 
 export type LaneWhenStale = "revalidate" | "refetch";

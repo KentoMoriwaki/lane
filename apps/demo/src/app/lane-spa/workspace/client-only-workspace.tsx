@@ -30,7 +30,7 @@ function ClientOnlyWorkspaceBootstrap() {
     useLane(queryKeys.currentUser, () =>
       fetchCurrentUser({ userId: "", teamId: "" }),
     ).promise,
-  );
+  ).data;
 
   return (
     <ClientWorkspaceProvider

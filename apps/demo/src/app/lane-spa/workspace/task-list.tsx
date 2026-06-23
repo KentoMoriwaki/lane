@@ -27,9 +27,9 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const { userId } = useWorkspace();
-  const { promise, isTransitionPending, refreshError, invalidate } =
+  const { promise, isTransitionPending, invalidate } =
     useTasks(filters);
-  const tasks = React.use(promise);
+  const { data: tasks, refreshError } = React.use(promise);
 
   const dimmed = isTransitionPending;
   const refreshNotice = (

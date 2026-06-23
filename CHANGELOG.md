@@ -6,8 +6,25 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `whenStale?: "revalidate" | "refetch"` read option for `useLane` /
+  `useLanePromise`, controlling what a read does when the cached value is stale
+  (older than `staleTime`). `"revalidate"` (default, the existing behavior)
+  reuses the cached value and refreshes in the background; `"refetch"` discards
+  an idle stale value (or a prior error) and suspends on a fresh load, but never
+  discards an in-flight read or a value a live subscriber is showing.
+
 ### Changed
 
+- **Breaking:** `gcTime` moved from a per-`useLane` option to an instance-level
+  option on `createLane({ gcTime })` — an instance-wide memory policy rather than
+  a per-read concern. The per-hook `gcTime` (and its "largest across subscribers
+  wins" rule) is removed.
+- Garbage collection now runs as a single coalesced sweep per lane, armed only
+  when an entry loses its last subscriber, instead of a per-entry timer armed at
+  cache-set. Timing is approximate but the read path no longer arms timers; the
+  lane-wide sweep also reclaims orphaned (never-committed) entries.
 - **Breaking:** removed the `enabled?: boolean` option. Gate a read by passing
   `undefined` as the loader instead
   (`useLane(key, cond ? loader : undefined)`). Lane loads external data only, so

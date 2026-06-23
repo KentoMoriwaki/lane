@@ -68,6 +68,8 @@ export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
   promise: Promise<T> | undefined;
 };
 
+export type LaneWhenStale = "revalidate" | "refetch";
+
 export type LaneRefetchOnMount = boolean | "always";
 
 export type LaneRefetchOnFocus = boolean | "always";
@@ -76,11 +78,38 @@ export type LaneRefetchOnReconnect = boolean | "always";
 
 export type LaneUseOptions = {
   staleTime?: number;
-  gcTime?: number;
+  /**
+   * What a read does when the cached value is stale (older than `staleTime`):
+   * - `"revalidate"` (default): reuse the cached value and let it be refreshed
+   *   in the background (via `refetchOnMount`/focus/reconnect/poll) — the reader
+   *   keeps showing it and converges to fresh through a transition.
+   * - `"refetch"`: discard the stale value (or a prior error) and suspend on a
+   *   fresh read. Never discards an in-flight read or a value a live subscriber
+   *   is showing, so it only forces a fresh load on an otherwise idle remount.
+   *
+   * This is the read-time freshness behavior; `refetchOnMount`/focus/reconnect
+   * decide *when* a background revalidation is triggered, independently.
+   */
+  whenStale?: LaneWhenStale;
   retry?: number;
   retryDelay?: LaneRetryDelay;
   refetchInterval?: number;
   refetchOnFocus?: LaneRefetchOnFocus;
   refetchOnMount?: LaneRefetchOnMount;
   refetchOnReconnect?: LaneRefetchOnReconnect;
+};
+
+/**
+ * Construction-time options for a `Lane` instance.
+ */
+export type LaneOptions = {
+  /**
+   * How long (ms) an inactive entry (no subscribers) is retained before it is
+   * garbage-collected. Idle-time based — unrelated to `staleTime`/freshness.
+   * An instance-wide memory policy, not a per-read concern. Default 5 minutes;
+   * `Infinity` opts out. Eviction is coalesced into one timer per lane, so the
+   * exact moment is approximate (it never needs to be precise — a late eviction
+   * just keeps the value reusable a little longer).
+   */
+  gcTime?: number;
 };

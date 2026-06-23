@@ -7,11 +7,13 @@ import type {
   LaneInvalidateOptions,
   LaneKey,
   LaneLoader,
+  LaneOptions,
   LaneRetryDelay,
   LaneScope,
   LaneUpdater,
   LaneUseOptions,
   LaneValue,
+  LaneWhenStale,
 } from "./types";
 
 export type LaneInvalidationSource = "background" | "transition";
@@ -19,6 +21,8 @@ export type LaneInvalidationSource = "background" | "transition";
 export type LaneReadOptions = {
   retry?: number;
   retryDelay?: LaneRetryDelay;
+  staleTime?: number;
+  whenStale?: LaneWhenStale;
 };
 
 type LaneSubscription = (
@@ -33,11 +37,7 @@ type LaneSubscriber = {
   onRemove?: LaneRemoveSubscription;
   options: Pick<
     LaneUseOptions,
-    | "gcTime"
-    | "refetchInterval"
-    | "refetchOnFocus"
-    | "refetchOnReconnect"
-    | "staleTime"
+    "refetchInterval" | "refetchOnFocus" | "refetchOnReconnect" | "staleTime"
   >;
 };
 
@@ -45,6 +45,8 @@ type LaneRevalidateTrigger = boolean | "always" | undefined;
 
 type LaneState = {
   entries: Map<string, LaneEntry>;
+  gcTime: number;
+  sweepTimer: ReturnType<typeof setInterval> | undefined;
 };
 
 type LanePromiseSettlement = {
@@ -66,8 +68,10 @@ type LaneEntry = {
   cache: LanePromiseCache | undefined;
   subscribers: Set<LaneSubscriber>;
   lastFulfilled: { value: unknown; at: number } | undefined;
-  gcTime: number | undefined;
-  gcTimer: ReturnType<typeof setTimeout> | undefined;
+  // Timestamp the entry last had zero subscribers (set on creation and on the
+  // last unsubscribe; cleared while subscribed). The central GC sweep evicts
+  // entries idle for longer than the lane's gcTime.
+  idleSince: number | undefined;
   pollInterval: number | undefined;
   pollTimer: ReturnType<typeof setInterval> | undefined;
 };
@@ -79,9 +83,11 @@ const DEFAULT_RETRY_DELAY: LaneRetryDelay = (attempt) =>
 
 const laneStates = new WeakMap<Lane, LaneState>();
 
-export function createLane(): Lane {
+export function createLane(options: LaneOptions = {}): Lane {
   const state: LaneState = {
     entries: new Map(),
+    gcTime: options.gcTime ?? DEFAULT_GC_TIME,
+    sweepTimer: undefined,
   };
 
   const lane: Lane = {
@@ -174,14 +180,59 @@ export function readOrCreate<T>(
   const keyId = serializeKey(key);
   const entry = getOrCreateEntry(state, key, keyId);
 
-  if (entry.cache) {
-    return entry.cache.promise as Promise<T>;
+  const reusable = reuseCache(entry, options);
+
+  if (reusable) {
+    return reusable.promise as Promise<T>;
   }
 
   const controller = new AbortController();
   const promise = runLoader(loader, key, controller.signal, options);
 
   return setEntryCache(state, entry, promise, controller);
+}
+
+/**
+ * Whether a read reuses the cached promise.
+ *
+ * `"revalidate"` (default) always reuses an existing cache — staleness is
+ * refreshed separately in the background, so a reader shows the cached value
+ * and converges through a transition (the long-standing behavior).
+ *
+ * `"refetch"` discards a stale value (or a prior error) and suspends on a fresh
+ * read, but never discards an in-flight read (would break same-transition
+ * sharing) or a value a live subscriber is showing (would yank a shared promise
+ * from active readers) — so it only forces a fresh load on an otherwise idle
+ * remount.
+ */
+function reuseCache(
+  entry: LaneEntry,
+  options: LaneReadOptions | undefined,
+): LanePromiseCache | undefined {
+  const cache = entry.cache;
+
+  if (!cache) {
+    return undefined;
+  }
+
+  if ((options?.whenStale ?? "revalidate") !== "refetch") {
+    return cache;
+  }
+
+  if (cache.settlement === undefined || entry.subscribers.size > 0) {
+    return cache;
+  }
+
+  // refetch is a deliberate read-time choice on an idle remount, not a
+  // background trigger — so it does not inherit core's "rejected is never
+  // stale" rule (which exists only to stop focus/poll/mount from hammering a
+  // failing endpoint). Re-surfacing a prior error on remount helps no one, so
+  // always retry it; a fulfilled value follows the usual staleness rule.
+  if (cache.settlement.kind === "rejected") {
+    return undefined;
+  }
+
+  return isStale(cache, options?.staleTime ?? 0) ? undefined : cache;
 }
 
 export function readRefreshError(lane: Lane, keyId: string): unknown {
@@ -238,12 +289,8 @@ export function subscribeLane(
   const keyId = serializeKey(key);
   const entry = getOrCreateEntry(state, key, keyId);
 
-  if (subscriber.options.gcTime !== undefined) {
-    entry.gcTime = Math.max(entry.gcTime ?? 0, subscriber.options.gcTime);
-  }
-
-  disarmGc(entry);
   entry.subscribers.add(subscriber);
+  entry.idleSince = undefined; // active: not a GC candidate
   recomputePolling(state, entry);
 
   return () => {
@@ -255,8 +302,7 @@ export function subscribeLane(
     }
 
     if (!entry.cache) {
-      disarmGc(entry);
-
+      // No cache and no subscribers: nothing worth keeping, drop now.
       if (state.entries.get(entry.keyId) === entry) {
         state.entries.delete(entry.keyId);
       }
@@ -264,7 +310,10 @@ export function subscribeLane(
       return;
     }
 
-    armGc(state, entry);
+    // Idle with a cache: retained for reuse, collected by the central sweep
+    // once it has been idle for the lane's gcTime.
+    entry.idleSince = Date.now();
+    ensureSweep(state);
   };
 }
 
@@ -350,7 +399,6 @@ function cleanupEntry(state: LaneState, entry: LaneEntry): void {
     return;
   }
 
-  disarmGc(entry);
   disarmPolling(entry);
   state.entries.delete(entry.keyId);
 }
@@ -514,8 +562,7 @@ function createEntry(
 ): LaneEntry {
   return {
     cache: undefined,
-    gcTime: undefined,
-    gcTimer: undefined,
+    idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
     key,
     keyId,
     lastFulfilled: undefined,
@@ -544,7 +591,6 @@ function setEntryCache<T>(
       startedAt,
     };
     entry.lastFulfilled = { at: startedAt, value };
-    armGcIfIdle(state, entry);
 
     return entry.cache.promise as Promise<T>;
   }
@@ -599,7 +645,6 @@ function setEntryCache<T>(
   guarded.catch(noop);
   cache.promise = guarded;
   entry.cache = cache;
-  armGcIfIdle(state, entry);
 
   return guarded;
 }
@@ -615,49 +660,65 @@ function removeEntryCache(entry: LaneEntry): void {
   entry.cache = undefined;
 }
 
-function armGcIfIdle(state: LaneState, entry: LaneEntry): void {
-  if (entry.subscribers.size > 0) {
+/**
+ * One coalesced GC timer per lane. Armed only when an entry loses its last
+ * subscriber — the moment it becomes collectible. A single interval then sweeps
+ * the whole lane and evicts every entry idle longer than `gcTime`, stopping
+ * itself once nothing is idle. Being lane-wide, the same sweep also reclaims
+ * orphans (entries read but never subscribed, e.g. an abandoned render) on
+ * whatever cycle a real unsubscribe next triggers — so the read path never arms
+ * a timer. Eviction timing is intentionally approximate; a late collection only
+ * keeps a value reusable a little longer, which is harmless. `gcTime: Infinity`
+ * opts out entirely.
+ */
+function ensureSweep(state: LaneState): void {
+  // Infinity (or NaN) opts out of collection entirely.
+  if (!Number.isFinite(state.gcTime)) {
     return;
   }
 
-  armGc(state, entry);
-}
-
-function armGc(state: LaneState, entry: LaneEntry): void {
-  disarmGc(entry);
-
-  const gcTime = entry.gcTime ?? DEFAULT_GC_TIME;
-
-  if (!Number.isFinite(gcTime)) {
+  // Non-positive gcTime means "collect as soon as idle": sweep once now rather
+  // than arming a 0ms interval that would spin the event loop.
+  if (state.gcTime <= 0) {
+    sweep(state);
     return;
   }
 
-  const timer = setTimeout(() => {
-    entry.gcTimer = undefined;
+  if (state.sweepTimer !== undefined) {
+    return;
+  }
 
-    if (entry.subscribers.size > 0) {
-      return;
-    }
-
-    if (state.entries.get(entry.keyId) !== entry) {
-      return;
-    }
-
-    removeEntryCache(entry);
-    state.entries.delete(entry.keyId);
-  }, gcTime);
-
-  entry.gcTimer = timer;
+  const timer = setInterval(() => sweep(state), state.gcTime);
+  state.sweepTimer = timer;
   unrefTimer(timer);
 }
 
-function disarmGc(entry: LaneEntry): void {
-  if (entry.gcTimer === undefined) {
-    return;
+function sweep(state: LaneState): void {
+  const now = Date.now();
+  let idleRemaining = false;
+
+  for (const entry of [...state.entries.values()]) {
+    if (entry.subscribers.size > 0 || entry.idleSince === undefined) {
+      continue;
+    }
+
+    if (now - entry.idleSince >= state.gcTime) {
+      evictEntry(state, entry);
+    } else {
+      idleRemaining = true;
+    }
   }
 
-  clearTimeout(entry.gcTimer);
-  entry.gcTimer = undefined;
+  if (!idleRemaining && state.sweepTimer !== undefined) {
+    clearInterval(state.sweepTimer);
+    state.sweepTimer = undefined;
+  }
+}
+
+function evictEntry(state: LaneState, entry: LaneEntry): void {
+  removeEntryCache(entry);
+  disarmPolling(entry);
+  state.entries.delete(entry.keyId);
 }
 
 /**

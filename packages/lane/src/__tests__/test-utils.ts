@@ -46,11 +46,7 @@ export function subscribeWithOptions(
   key: LaneKey,
   options: Pick<
     LaneUseOptions,
-    | "gcTime"
-    | "refetchInterval"
-    | "refetchOnFocus"
-    | "refetchOnReconnect"
-    | "staleTime"
+    "refetchInterval" | "refetchOnFocus" | "refetchOnReconnect" | "staleTime"
   >,
   listener: TestSubscription = vi.fn(),
 ): () => void {

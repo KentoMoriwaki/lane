@@ -157,7 +157,7 @@ adapter option -> conditional cache invalidation -> mounted readers re-read thro
 - focus / reconnect revalidation (`refetchOnFocus`, `refetchOnReconnect`)
 - polling (`refetchInterval`)
 - retry / backoff (`retry`, `retryDelay`)
-- inactive-entry garbage collection (`gcTime`)
+- inactive-entry garbage collection (`gcTime`, a per-lane policy on `createLane`)
 
 Splitting the durable key slot from its optional cached promise is what makes
 this work: invalidation clears the cache and notifies readers; the first reader

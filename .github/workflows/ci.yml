@@ -19,6 +19,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter use-lane test
       - run: pnpm --filter use-lane build
+      - run: pnpm --filter use-lane size
       - run: pnpm typecheck
 
   e2e:

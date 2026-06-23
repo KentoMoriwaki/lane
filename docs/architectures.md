@@ -127,4 +127,5 @@ backend.
 ## See also
 
 - [API reference](./api-reference.md)
+- [Frameworks & routers](./integrations.md) — wiring Lane to Next, React Router, etc.
 - [Design notes](./design-notes.md)

@@ -7,7 +7,7 @@ owns loading (Suspense), errors (Error Boundaries), and optimistic UI
 (`useOptimistic`).
 
 - 📦 **Package** — [`use-lane`](packages/lane) · [npm](https://www.npmjs.com/package/use-lane)
-- 📖 **Docs** — [API reference](docs/api-reference.md) · [Architectures](docs/architectures.md) · [Design notes](docs/design-notes.md)
+- 📖 **Docs** — [API reference](docs/api-reference.md) · [Architectures](docs/architectures.md) · [Frameworks & routers](docs/integrations.md) · [Design notes](docs/design-notes.md)
 - 🛠 **Local setup & contributing** — [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## What's in here

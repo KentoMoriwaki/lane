@@ -33,7 +33,7 @@ export function AssigneePicker({
   disabled?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
-  const members = React.use(useMembers().promise);
+  const members = React.use(useMembers().promise).data;
   const selected: TeamMember | null =
     members.find((member) => member.id === value) ?? null;
 

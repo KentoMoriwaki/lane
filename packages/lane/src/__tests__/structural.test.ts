@@ -68,7 +68,7 @@ describe("structural sharing across reloads", () => {
       { id: 2, name: "b" },
     ]);
 
-    expect(second).toBe(first);
+    expect(second.data).toBe(first.data);
   });
 
   it("reuses unchanged items when a reload changes part of the data", async () => {
@@ -86,8 +86,8 @@ describe("structural sharing across reloads", () => {
       { id: 2, name: "renamed" },
     ]);
 
-    expect(second).not.toBe(first);
-    expect(second[0]).toBe(first[0]);
-    expect(second[1]).toEqual({ id: 2, name: "renamed" });
+    expect(second.data).not.toBe(first.data);
+    expect(second.data[0]).toBe(first.data[0]);
+    expect(second.data[1]).toEqual({ id: 2, name: "renamed" });
   });
 });

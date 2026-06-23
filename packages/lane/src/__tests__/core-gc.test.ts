@@ -27,14 +27,14 @@ describe("garbage collection", () => {
     const loader = vi.fn(async () => "loaded");
 
     // Orphan: read but never subscribed. The read alone arms no timer.
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
 
     // A real unsubscribe elsewhere arms the sweep, which reclaims the orphan too.
     await armSweepViaChurn(lane);
     await vi.advanceTimersByTimeAsync(1_000);
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
@@ -44,7 +44,7 @@ describe("garbage collection", () => {
     const lane = createLane({ gcTime: 1_000 });
     const loader = vi.fn(async () => "loaded");
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
 
     // A sweep is running (armed by churn elsewhere), yet the subscribed entry is
@@ -52,7 +52,7 @@ describe("garbage collection", () => {
     await armSweepViaChurn(lane);
     await vi.advanceTimersByTimeAsync(1_000 * 5);
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
 
     unsubscribe();
@@ -65,15 +65,15 @@ describe("garbage collection", () => {
     const loader = vi.fn(async () => "loaded");
     const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
 
     unsubscribe();
     await vi.advanceTimersByTimeAsync(999);
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1);
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
@@ -84,14 +84,14 @@ describe("garbage collection", () => {
     const loader = vi.fn(async () => "loaded");
     const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     unsubscribe();
 
     await vi.advanceTimersByTimeAsync(500);
     const resubscribed = subscribeWithOptions(lane, ["tasks"], {});
     await vi.advanceTimersByTimeAsync(10_000);
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
 
     resubscribed();
@@ -104,12 +104,12 @@ describe("garbage collection", () => {
     const loader = vi.fn(async () => "loaded");
     const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     unsubscribe();
 
     await vi.advanceTimersByTimeAsync(DEFAULT_GC_TIME * 10);
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
@@ -142,14 +142,14 @@ describe("garbage collection", () => {
     const loader = vi.fn(async () => "loaded");
     const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
 
     // gcTime 0 sweeps synchronously when the last subscriber leaves — no timer
     // advance needed. (An armed 0ms interval would instead need a tick and could
     // spin the event loop.)
     unsubscribe();
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toBe("loaded");
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(2);
   });
 });

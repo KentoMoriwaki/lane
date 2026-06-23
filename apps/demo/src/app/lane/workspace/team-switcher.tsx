@@ -31,7 +31,7 @@ export function TeamSwitcher() {
   const pathname = usePathname();
   const { activeTeamId } = useWorkspace();
   const lane = useLaneInstance();
-  const teams = React.use(useTeams().promise);
+  const teams = React.use(useTeams().promise).data;
 
   const active = teams.find((team) => team.id === activeTeamId) ?? teams[0];
   const hrefForTeam = React.useCallback(

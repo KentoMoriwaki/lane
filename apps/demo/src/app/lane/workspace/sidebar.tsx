@@ -62,10 +62,10 @@ export function Sidebar({
   viewHref: (view: Partial<TaskFilters>) => string;
 }) {
   const active = activeKey(filters);
-  const user = React.use(useCurrentUser().promise);
-  const insights = React.use(useInsights().promise);
-  const projects = React.use(useProjects().promise);
-  const labels = React.use(useLabels().promise);
+  const user = React.use(useCurrentUser().promise).data;
+  const insights = React.use(useInsights().promise).data;
+  const projects = React.use(useProjects().promise).data;
+  const labels = React.use(useLabels().promise).data;
   const { signOut } = useWorkspace();
 
   return (

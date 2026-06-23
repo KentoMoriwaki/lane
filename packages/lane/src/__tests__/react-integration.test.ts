@@ -646,13 +646,14 @@ function Probe({
   options?: LaneUseOptions;
 }) {
   const result = useLane(cacheKey, loader, options);
-  const value = React.use(result.promise);
+  const read = React.use(result.promise);
+  const value = read.data;
   const refresh =
-    result.refreshError === undefined
+    read.refreshError === undefined
       ? "none"
-      : result.refreshError instanceof Error
-        ? result.refreshError.message
-        : String(result.refreshError);
+      : read.refreshError instanceof Error
+        ? read.refreshError.message
+        : String(read.refreshError);
 
   return React.createElement(
     "button",
@@ -677,7 +678,7 @@ function GatedProbe({
   const result = useLane(["tasks"], enabled ? loader : undefined);
   // `use` may be called conditionally — the gated read is unwrapped only when
   // there is a promise, otherwise the reader renders its own fallback.
-  const value = result.promise ? React.use(result.promise) : "disabled";
+  const value = result.promise ? React.use(result.promise).data : "disabled";
   return React.createElement("div", null, value);
 }
 

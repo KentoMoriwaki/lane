@@ -14,6 +14,7 @@ export type {
   LaneLoader,
   LaneLoaderContext,
   LaneOptions,
+  LaneRead,
   LaneRefetchOnFocus,
   LaneRefetchOnMount,
   LaneRefetchOnReconnect,

@@ -38,7 +38,7 @@ export function ProjectPicker({
 }) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
-  const projects = React.use(useProjects().promise);
+  const projects = React.use(useProjects().promise).data;
   const createProject = useCreateProject();
   const [isCreating, startCreateTransition] = React.useTransition();
 

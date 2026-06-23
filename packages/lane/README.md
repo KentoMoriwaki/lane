@@ -17,7 +17,7 @@ nothing else.
 
 ```tsx
 const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
-const user = use(promise); // Suspense owns loading, Error Boundaries own errors
+const { data: user } = use(promise); // Suspense owns loading, Error Boundaries own errors
 ```
 
 ## Why Lane
@@ -35,8 +35,9 @@ and lets React own the UI state it was designed to own in React 19.
   flag.
 - **One mental model.** Mutate the source, invalidate the read, render from the
   next promise — the same model you already use next to Server Components.
-- **No parallel state machine.** No `data` / `error` / `isLoading` result object.
-  You read with `use(promise)`; Suspense and Error Boundaries do the rest.
+- **No parallel state machine.** No `isLoading` / `isError` / `status` fields.
+  `use(promise)` gives you `{ data }` (and a `refreshError` only when a refresh
+  fails over existing data); Suspense and Error Boundaries do the rest.
 - **No mutation helper, by design.** Mutations stay in React primitives, so
   optimistic UI lives next to the action that triggered it instead of in a
   global cache that needs rollback semantics.
@@ -84,7 +85,7 @@ function Profile({ userId }: { userId: string }) {
     return (await res.json()) as User;
   });
 
-  const user = use(promise);
+  const { data: user } = use(promise);
   return <h1>{user.name}</h1>;
 }
 
@@ -134,9 +135,10 @@ function RenameButton({ userId }: { userId: string }) {
   notifies mounted readers, which create the next promise from their current
   loader. Explicit (`transition`) and automatic (`focus` / `mount` / polling,
   reported as `isBackgroundPending`) re-reads are kept separate.
-- **Stale-on-error.** A failed *refresh* keeps serving the last fulfilled value
-  and reports the failure through `refreshError`. Only an *initial* load (no
-  previous value) rejects the promise and reaches the Error Boundary.
+- **Stale-on-error.** A failed *refresh* keeps serving the last fulfilled value;
+  the promise resolves to `{ data, refreshError }`, so `use(promise)` surfaces the
+  stale data and the error together. Only an *initial* load (no previous value)
+  rejects the promise and reaches the Error Boundary.
 - **Authoritative publication.** `set` / `update` publish server-confirmed data
   to exact keys; `LaneHydration` seeds promises from RSC-loaded data and
   overwrites authoritatively on navigation.
@@ -151,7 +153,7 @@ function RenameButton({ userId }: { userId: string }) {
 | Export | Purpose |
 | --- | --- |
 | `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation. |
-| `useLane(key, loader, options?)` | Read a key. Returns `{ promise, refreshError, isTransitionPending, isBackgroundPending, invalidate }`. |
+| `useLane(key, loader, options?)` | Read a key. Returns `{ promise, isTransitionPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
 | `useLanePromise(key, loader, options?)` | Thin wrapper returning just `promise`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
 | `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime }`. |

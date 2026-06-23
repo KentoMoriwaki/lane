@@ -97,12 +97,13 @@ function useLane<T>(
   or GC).
 - **`options`** — see [`LaneUseOptions`](#laneuseoptions).
 
-Returns a [`LaneResult<T>`](#laneresultt). Read the data with `use(result.promise)`
-inside a `Suspense` boundary:
+Returns a [`LaneResult<T>`](#laneresultt). Unwrap `result.promise` with `use()`
+inside a `Suspense` boundary — it resolves to a [`LaneRead<T>`](#lanereadt)
+(`{ data, refreshError }`):
 
 ```tsx
 const { promise } = useLane(["task", id], ({ signal }) => fetchTask(id, signal));
-const task = use(promise);
+const { data: task, refreshError } = use(promise);
 ```
 
 The hook keeps the current promise in React state. When the key changes during
@@ -113,19 +114,18 @@ subscribed hook re-reads through the appropriate transition.
 ### `useLanePromise(key, loader, options?)`
 
 Thin wrapper that returns only the promise. Equivalent to
-`useLane(...).promise`. Use it at call sites that do not need pending state,
-`refreshError`, or the local `invalidate`.
+`useLane(...).promise`. Use it at call sites that do not need pending state or
+the local `invalidate`.
 
 ```ts
-const task = use(useLanePromise(["task", id], loader));
+const { data: task } = use(useLanePromise(["task", id], loader));
 ```
 
 ### `LaneResult<T>`
 
 ```ts
 type LaneResult<T> = {
-  promise: Promise<T>;
-  refreshError: unknown;
+  promise: Promise<LaneRead<T>>;
   isTransitionPending: boolean;
   isBackgroundPending: boolean;
   invalidate: () => void;
@@ -134,11 +134,26 @@ type LaneResult<T> = {
 
 | Field | Description |
 | --- | --- |
-| `promise` | The current promise for the key. Unwrap with `use(promise)`. |
-| `refreshError` | The error from a failed **refresh** of an entry that already has data (see [Stale-on-error](#stale-on-error)). `undefined` when the latest read succeeded. Initial-load failures reject `promise` instead. |
+| `promise` | The current promise for the key. Unwrap with `use(promise)` to get a [`LaneRead<T>`](#lanereadt). |
 | `isTransitionPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / polling / reconnect / subscription catch-up) is converging. |
 | `invalidate` | Invalidate this exact key and re-read through a transition. Convenience for `lane.invalidate(key)`. |
+
+### `LaneRead<T>`
+
+What a read resolves to — `use(promise)` returns this:
+
+```ts
+type LaneRead<T> = {
+  data: T;
+  refreshError?: unknown;
+};
+```
+
+| Field | Description |
+| --- | --- |
+| `data` | The value for the key. |
+| `refreshError` | Present when the most recent **refresh** of an entry that already has data failed (see [Stale-on-error](#stale-on-error)): the stale `data` keeps being served and the error rides alongside it. Absent when the latest read succeeded. Initial-load failures reject `promise` instead. Carrying the error *in the resolved value* (rather than a field read live from the store during render) keeps `data` and `refreshError` consistent under concurrent rendering and avoids a render-purity violation. |
 
 ### `LaneGatedResult<T>`
 
@@ -147,7 +162,7 @@ What `useLane` / `useLanePromise` return when the loader may be `undefined` —
 
 ```ts
 type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
-  promise: Promise<T> | undefined;
+  promise: Promise<LaneRead<T>> | undefined;
 };
 ```
 
@@ -170,7 +185,7 @@ const detail = useLane(
     ? ({ signal }) => fetchComponent(componentId, { signal })
     : undefined,
 );
-const value = detail.promise ? use(detail.promise) : null;
+const value = detail.promise ? use(detail.promise).data : null;
 ```
 
 Gating through the loader keeps two things honest:
@@ -263,9 +278,9 @@ Get the instance from `useLaneInstance()` (or `createLane()`).
 type Lane = {
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
-  set<T>(key: LaneKey, valueOrPromise: T | Promise<T>): Promise<T>;
-  update<T>(key: LaneKey, updater: LaneUpdater<T>): Promise<T> | undefined;
-  updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<T>[];
+  set<T>(key: LaneKey, valueOrPromise: T | Promise<T>): Promise<LaneRead<T>>;
+  update<T>(key: LaneKey, updater: LaneUpdater<T>): Promise<LaneRead<T>> | undefined;
+  updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<LaneRead<T>>[];
   remove(key: LaneKey): void;
   removeAll(scope: LaneScope): void;
 };
@@ -416,8 +431,9 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 ## Type exports
 
 `Lane`, `LaneEntryInfo`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
-`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`, `LaneRefetchOnFocus`,
-`LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneResult`, `LaneRetryDelay`,
+`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`, `LaneRead`,
+`LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
+`LaneResult`, `LaneRetryDelay`,
 `LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`.
 
 ## See also

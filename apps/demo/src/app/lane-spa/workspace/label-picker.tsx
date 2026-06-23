@@ -37,7 +37,7 @@ export function LabelPicker({
 }) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
-  const labels = React.use(useLabels().promise);
+  const labels = React.use(useLabels().promise).data;
   const createLabel = useCreateLabel();
   const [isCreating, startCreateTransition] = React.useTransition();
 

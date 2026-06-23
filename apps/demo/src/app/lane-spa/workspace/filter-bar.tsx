@@ -43,9 +43,9 @@ export function FilterBar({
   const projectsResult = useProjects();
   const labelsResult = useLabels();
   const tasksResult = useTasks(filters);
-  const projects = React.use(projectsResult.promise);
-  const labels = React.use(labelsResult.promise);
-  const tasks = React.use(tasksResult.promise);
+  const projects = React.use(projectsResult.promise).data;
+  const labels = React.use(labelsResult.promise).data;
+  const tasks = React.use(tasksResult.promise).data;
 
   const project = projects?.find(
     (item) => item.id === optimisticFilters.projectId,

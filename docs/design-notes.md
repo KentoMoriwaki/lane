@@ -84,17 +84,25 @@ entry has a last fulfilled value and its next read rejects — after invalidatio
 a focus refetch, polling, or a `set` of a rejecting promise — the cache falls
 back:
 
-- the cached promise resolves with the last fulfilled value, so `use(promise)`
-  keeps rendering instead of throwing
-- the failure surfaces separately as `refreshError`
+- the cached promise resolves with `{ data, refreshError }` — the last fulfilled
+  value plus the error — so `use(promise)` keeps rendering instead of throwing
+- the failure rides *inside the resolved value*, not a side channel: a reader
+  gets `data` and `refreshError` from the same `use(promise)`, so they can never
+  tear apart under concurrent rendering, and nothing reads mutable store state
+  during render
 - freshness keeps the original fulfillment time, so staleness policies still
   treat the data as old and retry naturally
-- the next successful read clears `refreshError`
+- the next successful read resolves to `{ data }` with no `refreshError`
 
 Only initial loads — reads with no previous fulfilled value — reject and reach
 the Error Boundary. This preserves the boundary model for "there is nothing to
 show" while keeping "there is something to show" rendered through background
 failures. `refreshError` is deliberately not named `error` for this reason.
+
+Carrying the error in the resolved value (rather than exposing it as a separate
+field on the hook result) is what makes this consistent: the promise is a single
+React-state snapshot, and `use()` is the only read path, so `data` and
+`refreshError` always reflect the same point in time.
 
 ## Authoritative publication is secondary
 

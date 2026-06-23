@@ -61,6 +61,7 @@
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "size": "size-limit",
     "prepublishOnly": "pnpm build",
     "release": "pnpm publish && git push --follow-tags",
     "release:patch": "node scripts/release.mjs patch",
@@ -68,11 +69,13 @@
     "release:major": "node scripts/release.mjs major"
   },
   "devDependencies": {
+    "@size-limit/preset-small-lib": "^12.1.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "jsdom": "^29.1.1",
     "react": "19.2.7",
     "react-dom": "19.2.7",
+    "size-limit": "^12.1.0",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8"

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "createLane (core only)",
+    "path": "dist/index.js",
+    "import": "{ createLane }",
+    "ignore": ["react", "react-dom"],
+    "limit": "2 kB"
+  },
+  {
+    "name": "LaneProvider + useLane (typical)",
+    "path": "dist/index.js",
+    "import": "{ LaneProvider, useLane }",
+    "ignore": ["react", "react-dom"],
+    "limit": "3.5 kB"
+  }
+]

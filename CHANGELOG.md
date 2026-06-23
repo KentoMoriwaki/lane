@@ -6,6 +6,8 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-23
+
 ### Added
 
 - `whenStale?: "revalidate" | "refetch"` read option for `useLane` /
@@ -33,6 +35,11 @@ All notable changes to `use-lane` are documented here. The format is based on
   when an entry loses its last subscriber, instead of a per-entry timer armed at
   cache-set. Timing is approximate but the read path no longer arms timers; the
   lane-wide sweep also reclaims orphaned (never-committed) entries.
+
+## [0.2.0] - 2026-06-18
+
+### Changed
+
 - **Breaking:** removed the `enabled?: boolean` option. Gate a read by passing
   `undefined` as the loader instead
   (`useLane(key, cond ? loader : undefined)`). Lane loads external data only, so
@@ -90,6 +97,8 @@ Initial public release.
 
 - React 19.2+ (`useEffectEvent`).
 
-[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/KentoMoriwaki/lane/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/KentoMoriwaki/lane/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/KentoMoriwaki/lane/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/KentoMoriwaki/lane/releases/tag/v0.1.0

@@ -84,6 +84,32 @@ export default function Home() {
         ))}
       </ul>
 
+      <div className="rounded-xl border border-dashed bg-card/50 px-5 py-4 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold">Router lab</span>
+          <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+            separate · not the workspace
+          </span>
+          <code className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+            /lane-router
+          </code>
+        </div>
+        <p className="mt-1 text-pretty text-muted-foreground">
+          A focused mini-SPA (users / posts) running as a hash-routed client
+          island: React Router v8 Data mode loaders hydrate Lane, the UI reads via{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">useLane</code>. Shows
+          back/forward without a fallback flash and{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">lane.update</code>{" "}
+          in-place writes.{" "}
+          <Link
+            href="/lane-router"
+            className="text-foreground underline underline-offset-4"
+          >
+            Open →
+          </Link>
+        </p>
+      </div>
+
       <footer className="text-sm text-muted-foreground">
         Docs:{" "}
         <a

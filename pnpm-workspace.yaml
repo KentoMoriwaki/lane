@@ -2,3 +2,8 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# react-router v8 is intentionally the just-released latest; exempt only it from
+# the global `minimumReleaseAge` supply-chain guard so apps/spa can use v8.
+minimumReleaseAgeExclude:
+  - "react-router"
+

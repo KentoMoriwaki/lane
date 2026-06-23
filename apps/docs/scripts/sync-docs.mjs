@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const docsDir = resolve(here, "../../../docs");
 const contentDir = resolve(here, "../content");
 
-const pages = ["api-reference", "architectures", "design-notes"];
+const pages = ["api-reference", "architectures", "integrations", "design-notes"];
 
 mkdirSync(contentDir, { recursive: true });
 

@@ -202,6 +202,97 @@ nothing is stored, so no placeholder key is needed. Segments must still be
 serializable, since the key is serialized for identity tracking even while
 disabled.
 
+### Deferred reads (render first, swap when ready)
+
+Sometimes you want a read's data but don't want its load to gate the surrounding
+UI: render the rest of the screen now, let one region fill in when the load
+resolves, and never flash a Suspense fallback.
+
+The lever is that **`use()` may be called conditionally** — unlike `useState` /
+`useEffect` it resolves by the promise you hand it, not by call order — so
+*owning* a read and *suspending* on it become separate acts. Call `useLane`
+unconditionally (the load starts during render and the promise is cached) and
+gate only the `use()`. The fetch runs immediately; just the reveal waits,
+switched on inside a transition so the suspend keeps the committed UI instead of
+revealing the fallback.
+
+```tsx
+import { use, useEffect, useState, useTransition } from "react";
+import { useLane } from "use-lane";
+
+function ComponentGraph({ selectedId }: { selectedId: string }) {
+  const [reveal, setReveal] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  // After the first commit, switch the reveal on inside a transition.
+  useEffect(() => {
+    startTransition(() => setReveal(true));
+  }, []);
+
+  // Loader always set → the fetch starts on the first render, not when revealed.
+  const { promise } = useLane(["component-graph", selectedId], ({ signal }) =>
+    fetchComponentGraph(selectedId, signal),
+  );
+
+  // Not revealed yet: render the placeholder, never a fallback. `use` is only
+  // reached when `reveal` is true, so the first render never suspends.
+  if (!reveal) return <GraphSkeleton busy={isPending} />;
+
+  // Now `use` suspends — but the transition holds the committed placeholder and
+  // swaps in the graph when the read resolves. The fallback never shows.
+  const { data } = use(promise);
+  return <Graph data={data} />;
+}
+```
+
+Why each piece matters:
+
+- **Loader always set.** `useLane` runs the loader during render and caches the
+  promise, so the fetch is in flight before the transition — the earliest start,
+  and the entry is subscribed (focus / poll / invalidation live) from mount.
+- **Reveal gated, not the loader.** `if (!reveal)` returns before `use`, so the
+  first render commits the placeholder without suspending. That committed output
+  is the already-revealed content React keeps while the transition is pending.
+- **Flip inside a transition.** A plain `setReveal(true)` would suspend as a
+  non-transition update, and React would replace the placeholder with the nearest
+  Suspense fallback. The transition turns "show the fallback" into "keep the
+  current UI until ready." `isPending` is `true` meanwhile — drive a loading
+  affordance off it.
+
+Multiple deferred reads:
+
+Each loader is set unconditionally, so **every read's fetch starts in parallel on
+mount** — you don't orchestrate it. How they *reveal* is set by how you gate the
+`use()` calls:
+
+- **Gate them together** (one `reveal`, one transition) → they reveal together,
+  when the last resolves. Right when the output needs all of them.
+- **Stagger the gates** (reveal the fast one, switch the next on once it has
+  committed) → fast data shows first. The fetches already started on mount, so the
+  slow one still lands at its own latency, not after the fast one.
+
+The staggering is necessary because **transitions that suspend at the same time
+commit together** (the slower one gates the pair): revealing together is
+automatic, but fast-first needs the staggered gate. Data you don't integrate at
+all is simpler read in its own `<Suspense>` boundary, which reveals independently
+with a fallback.
+
+Caveats:
+
+- **Keep a `<Suspense>` boundary above** as the backstop. The transition holds
+  the committed UI; the boundary is still the safety net.
+- **This defers the reveal, not the key change.** When `selectedId` changes,
+  `useLane` switches to the new key's promise during an ordinary update, which
+  suspends and reveals the fallback again. To keep those swaps flash-free, wrap
+  the state change that drives the key in a transition too (see
+  [Transitions](./integrations.md#transitions-and-the-backforward-caveat)).
+- `use(promise)` resolves to a [`LaneRead<T>`](#lanereadt) — read `.data` (and
+  `.refreshError` if present).
+- This **always fetches**. Deferring the reveal is for data you *will* need but
+  want off the critical paint. When a read may genuinely never be needed, gate
+  the *loader* instead (`loader: undefined`) — see
+  [Conditional reads](#conditional-reads-gating).
+
 ### `LaneUseOptions`
 
 ```ts

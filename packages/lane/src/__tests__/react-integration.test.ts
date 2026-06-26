@@ -597,6 +597,88 @@ describe("React integration", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
+  it("defers the initial read into a transition so the fallback never shows", async () => {
+    const lane = createLane();
+    const load = deferred<string>();
+    const loader = vi.fn(() => load.promise);
+
+    const app = await render(deferredOnMountApp(lane, loader));
+
+    // The loader is set unconditionally, so the fetch is already running while
+    // the placeholder shows. The mount effect switches the reveal on *inside a
+    // transition*, so the now-suspending `use()` does not reveal the Suspense
+    // fallback: the committed placeholder stays on screen and isPending marks it.
+    await waitForText(app.container, "placeholder|pending:1");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // When the background read resolves the transition commits, swapping in the
+    // value without the UI ever flashing "loading".
+    await resolveReload(load, "value");
+    await waitForText(app.container, "value|pending:0");
+  });
+
+  it("starts the fetch on mount even when the reveal never switches on", async () => {
+    const lane = createLane();
+    const load = deferred<string>();
+    const loader = vi.fn(() => load.promise);
+
+    // flip: false — the reveal never switches on, so `use()` is never reached.
+    // The unconditional loader still runs: the fetch is decoupled from the
+    // reveal (owning the read vs. suspending on it are separate acts).
+    const app = await render(deferredOnMountApp(lane, loader, false));
+
+    await waitForText(app.container, "placeholder|pending:0");
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("reveals the fallback when the same gate flip skips the transition", async () => {
+    // The contrast to the test above: flipping the gate *without* a transition
+    // makes the suspending read a non-transition update, so React replaces the
+    // committed placeholder with the Suspense fallback instead of keeping it.
+    const lane = createLane();
+    const load = deferred<string>();
+    const loader = vi.fn(() => load.promise);
+
+    const app = await render(eagerOnMountApp(lane, loader));
+
+    // The fallback is on screen while the read is pending — not the placeholder.
+    expect(app.container.textContent).toContain("loading");
+
+    await resolveReload(load, "value");
+    await waitForText(app.container, "value");
+  });
+
+  it("gated-loader defer also reveals through a transition without a fallback", async () => {
+    const lane = createLane();
+    const load = deferred<string>();
+    const loader = vi.fn(() => load.promise);
+
+    const app = await render(gatedDeferOnMountApp(lane, loader));
+
+    // Same deferred reveal as the inverted form: the committed placeholder is
+    // held through the transition, the fallback never shows.
+    await waitForText(app.container, "placeholder|pending:1");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await resolveReload(load, "value");
+    await waitForText(app.container, "value|pending:0");
+  });
+
+  it("gated-loader defer does not fetch until the reveal switches on", async () => {
+    const lane = createLane();
+    const load = deferred<string>();
+    const loader = vi.fn(() => load.promise);
+
+    // flip: false — the gated loader is never supplied, so nothing fetches. This
+    // is the contrast with the inverted form, whose unconditional loader runs
+    // regardless ("starts the fetch on mount even when the reveal never switches
+    // on"): defer the reveal vs. defer the fetch itself.
+    const app = await render(gatedDeferOnMountApp(lane, loader, false));
+
+    await waitForText(app.container, "placeholder|pending:0");
+    expect(loader).not.toHaveBeenCalled();
+  });
+
   it("keeps the cache for remounts within gcTime", async () => {
     vi.useFakeTimers();
 
@@ -693,6 +775,126 @@ function gatedApp(
       React.Suspense,
       { fallback: "loading" },
       React.createElement(GatedProbe, { enabled, loader }),
+    ),
+  });
+}
+
+// The "defer the reveal" technique: the loader is set unconditionally, so the
+// fetch starts in render; only `use()` is gated. The first commit shows the
+// placeholder without suspending (giving React "already revealed" content to
+// keep), then the mount effect switches the reveal on inside a transition, which
+// suspends without hiding it. With `flip: false` the reveal never switches on,
+// so `use()` is never reached — yet the unconditional loader still runs.
+function DeferredOnMountProbe({
+  loader,
+  flip = true,
+}: {
+  loader: LaneLoader<string>;
+  flip?: boolean;
+}) {
+  const [reveal, setReveal] = React.useState(false);
+  const [isPending, startTransition] = React.useTransition();
+
+  React.useEffect(() => {
+    if (flip) {
+      startTransition(() => {
+        setReveal(true);
+      });
+    }
+  }, [flip]);
+
+  const { promise } = useLane(["tasks"], loader);
+  const value = reveal ? React.use(promise).data : "placeholder";
+
+  return React.createElement("div", null, `${value}|pending:${flag(isPending)}`);
+}
+
+function deferredOnMountApp(
+  lane: Lane,
+  loader: LaneLoader<string>,
+  flip = true,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: "loading" },
+      React.createElement(DeferredOnMountProbe, { loader, flip }),
+    ),
+  });
+}
+
+// Same inverted shape as DeferredOnMountProbe, but the reveal flips WITHOUT a
+// transition, so the now-suspending `use()` reveals the fallback instead of
+// holding the placeholder.
+function EagerOnMountProbe({ loader }: { loader: LaneLoader<string> }) {
+  const [reveal, setReveal] = React.useState(false);
+
+  React.useEffect(() => {
+    setReveal(true);
+  }, []);
+
+  const { promise } = useLane(["tasks"], loader);
+  const value = reveal ? React.use(promise).data : "placeholder";
+
+  return React.createElement("div", null, value);
+}
+
+function eagerOnMountApp(
+  lane: Lane,
+  loader: LaneLoader<string>,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: "loading" },
+      React.createElement(EagerOnMountProbe, { loader }),
+    ),
+  });
+}
+
+// The gated-loader variant of the defer technique: the loader itself is gated
+// off until the reveal switches on, so — unlike the unconditional
+// DeferredOnMountProbe — nothing fetches until then. The reveal still flips
+// inside a transition, so the suspend holds the placeholder rather than
+// revealing the fallback. This is "Conditional reads + a transition"; the
+// inverted form is "fetch now, defer only the reveal".
+function GatedDeferOnMountProbe({
+  loader,
+  flip = true,
+}: {
+  loader: LaneLoader<string>;
+  flip?: boolean;
+}) {
+  const [reveal, setReveal] = React.useState(false);
+  const [isPending, startTransition] = React.useTransition();
+
+  React.useEffect(() => {
+    if (flip) {
+      startTransition(() => {
+        setReveal(true);
+      });
+    }
+  }, [flip]);
+
+  const { promise } = useLane(["tasks"], reveal ? loader : undefined);
+  const value = promise ? React.use(promise).data : "placeholder";
+
+  return React.createElement("div", null, `${value}|pending:${flag(isPending)}`);
+}
+
+function gatedDeferOnMountApp(
+  lane: Lane,
+  loader: LaneLoader<string>,
+  flip = true,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: "loading" },
+      React.createElement(GatedDeferOnMountProbe, { loader, flip }),
     ),
   });
 }

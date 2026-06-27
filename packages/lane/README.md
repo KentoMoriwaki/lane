@@ -173,6 +173,25 @@ for full signatures and semantics.
 - [Supported architectures](https://github.com/KentoMoriwaki/lane/blob/main/docs/architectures.md) — RSC-first and RSC-seeded client ownership.
 - [Design notes](https://github.com/KentoMoriwaki/lane/blob/main/docs/design-notes.md) — why Lane is shaped this way.
 
+## Agent skill
+
+This package ships an [Agent Skills](https://agentskills.io/) skill, so AI coding
+agents get use-lane-aware guidance that is **version-locked to the installed
+package**. It lives at `skills/use-lane/SKILL.md` and is self-contained — the
+full documentation is bundled alongside it as references.
+
+If your project uses an AI agent, point it at the skill from your `AGENTS.md` /
+`CLAUDE.md`:
+
+```md
+## Agent skills
+
+Before editing React data-loading code, read the use-lane skill at
+`node_modules/use-lane/skills/use-lane/SKILL.md` — use it for Suspense, `use()`,
+transitions, invalidation, refetching, optimistic UI, or React Query / SWR
+migration work.
+```
+
 ## License
 
 [MIT](./LICENSE) © Kento Moriwaki

@@ -89,6 +89,14 @@ definitions to `packages/lane/dist/`, keeping the `"use client"` directive at th
 top of each bundle. Inside the workspace the package resolves to `src/` directly;
 `publishConfig` switches the entry points to `dist/` when packing.
 
+The published tarball also bundles an [Agent Skills](https://agentskills.io/)
+skill at `skills/use-lane/SKILL.md`. Its reference docs are projected from the
+canonical `docs/*.md` (the single source of truth) by
+[`scripts/project-docs.mjs`](scripts/project-docs.mjs) — the same script that
+feeds the Nextra site. `prepublishOnly` runs `pnpm skills:sync` so the bundled
+references are always fresh; run `pnpm docs:sync` to regenerate every projection
+locally. Like `dist/`, the projections are git-ignored.
+
 To cut a release, first update [CHANGELOG.md](CHANGELOG.md) (move the
 `[Unreleased]` entries under a new version heading and refresh the compare
 links) and commit it. Then run the matching release script from the repo root:

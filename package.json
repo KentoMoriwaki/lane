@@ -14,7 +14,8 @@
     "release": "pnpm --filter use-lane release",
     "release:patch": "pnpm --filter use-lane release:patch",
     "release:minor": "pnpm --filter use-lane release:minor",
-    "release:major": "pnpm --filter use-lane release:major"
+    "release:major": "pnpm --filter use-lane release:major",
+    "docs:sync": "node scripts/project-docs.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",

@@ -10,3 +10,7 @@ playwright-report
 *.log
 *.tsbuildinfo
 data
+
+# Generated doc projection for the agent skill (docs/*.md is the source of truth).
+# Published via the package's `files` allowlist, exactly like the git-ignored dist/.
+packages/lane/skills/use-lane/references/

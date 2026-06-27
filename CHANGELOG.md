@@ -6,6 +6,17 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Agent skill bundled in the package.** The npm tarball now ships an
+  [Agent Skills](https://agentskills.io/)–format skill at
+  `skills/use-lane/SKILL.md`, with the full documentation projected alongside it
+  under `skills/use-lane/references/`. AI coding agents can load it from
+  `node_modules/use-lane/skills/use-lane/SKILL.md` for use-lane-aware guidance
+  that is version-locked to the installed package. `docs/*.md` stays the single
+  source of truth; the skill (and the Nextra site) are generated from it via
+  `pnpm docs:sync`.
+
 ## [0.3.0] - 2026-06-23
 
 ### Added

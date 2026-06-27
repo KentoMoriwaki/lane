@@ -8,6 +8,7 @@ owns loading (Suspense), errors (Error Boundaries), and optimistic UI
 
 - 📦 **Package** — [`use-lane`](packages/lane) · [npm](https://www.npmjs.com/package/use-lane)
 - 📖 **Docs** — [API reference](docs/api-reference.md) · [Architectures](docs/architectures.md) · [Frameworks & routers](docs/integrations.md) · [Design notes](docs/design-notes.md)
+- 🤖 **Agent skill** — version-locked guidance for AI coding agents · [how to use it](packages/lane/README.md#agent-skill)
 - 🛠 **Local setup & contributing** — [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## What's in here

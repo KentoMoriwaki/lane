@@ -293,6 +293,57 @@ Caveats:
   the *loader* instead (`loader: undefined`) — see
   [Conditional reads](#conditional-reads-gating).
 
+### `prefetch`
+
+Warm a key before any reader mounts: start its load and cache the promise,
+without subscribing or suspending. The next `useLane` / `useLanePromise` for the
+same key adopts the in-flight or settled promise instead of starting its own
+fetch. It is the complement to
+[deferred reads](#deferred-reads-render-first-swap-when-ready) — deferred reads
+start the fetch early *inside* a rendering component; `prefetch` starts it
+*before* the component exists.
+
+```ts
+prefetch<T>(
+  key: LaneKey,
+  loader: LaneLoader<T>,
+  options?: LanePrefetchOptions,
+): Promise<LaneRead<T>>;
+
+type LanePrefetchOptions = Pick<LaneUseOptions, "retry" | "retryDelay">;
+```
+
+`prefetch` is a method on the
+[`Lane` instance](#mutation-convergence--the-lane-instance)
+(`useLaneInstance().prefetch(...)`). The canonical use is intent-driven warming —
+hover (and `focus`, for keyboard users) over a link to warm the destination's
+data before navigation:
+
+```tsx
+const lane = useLaneInstance();
+const warm = () =>
+  lane.prefetch(["component-graph", id], ({ signal }) =>
+    fetchComponentGraph(id, signal),
+  );
+
+<Link href={`/component/${id}`} onMouseEnter={warm} onFocus={warm} />;
+```
+
+- **Deduped.** A repeat `prefetch` of the same key (a re-fired hover) reuses the
+  cached promise — the loader runs once. `prefetch` always reads with
+  `"revalidate"` semantics, so it never discards an in-flight or settled cache.
+- **Not subscribed.** A prefetched entry has no reader, so it does not poll,
+  revalidate on focus, or anchor against GC. Like any read it arms no timer: if
+  no reader adopts it, it is an orphan reclaimed by the lane's sweep (within
+  `gcTime`); if a reader mounts first, the entry becomes live and is kept.
+- **Freshness is the reader's call.** `prefetch` only warms; `staleTime` /
+  `whenStale` are decided by the eventual `useLane`, so `LanePrefetchOptions`
+  exposes only `retry` / `retryDelay`.
+
+The returned `Promise<LaneRead<T>>` is the warmed promise — usually ignored, but
+available to `await` if you want to sequence work after the warm-up. A rejected
+prefetch that nobody consumes does not surface as an unhandled rejection.
+
 ### `LaneUseOptions`
 
 ```ts
@@ -363,10 +414,13 @@ enumerate every key that *could* exist.
 
 ## Mutation convergence — the `Lane` instance
 
-Get the instance from `useLaneInstance()` (or `createLane()`).
+Get the instance from `useLaneInstance()` (or `createLane()`). Most methods
+converge mutations; `prefetch` warms a read ahead of a reader and is covered
+under [Reading data](#prefetch).
 
 ```ts
 type Lane = {
+  prefetch<T>(key: LaneKey, loader: LaneLoader<T>, options?: LanePrefetchOptions): Promise<LaneRead<T>>;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
   set<T>(key: LaneKey, valueOrPromise: T | Promise<T>): Promise<LaneRead<T>>;
@@ -522,7 +576,7 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 ## Type exports
 
 `Lane`, `LaneEntryInfo`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
-`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`, `LaneRead`,
+`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`, `LanePrefetchOptions`, `LaneRead`,
 `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
 `LaneResult`, `LaneRetryDelay`,
 `LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`.

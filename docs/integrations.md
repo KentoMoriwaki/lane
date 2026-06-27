@@ -71,6 +71,16 @@ framework default. For reachability-scoped retention (evict an entry only once i
 route leaves the history stack), drive `lane.remove(key)` from the Navigation API's
 `navigation.entries()` in an app-level adapter; the core stays time-based.
 
+## Prefetching on intent
+
+The retention knobs above make *back*-navigation instant. For *forward*
+navigation, warm the destination's data on intent: call
+[`lane.prefetch(key, loader)`](./api-reference.md#prefetch) from a link's
+`onMouseEnter` / `onFocus`, so its keys are in flight (or settled) before the
+route mounts and the reader adopts the warm cache instead of fetching. Repeat
+hovers dedupe, and a warm-up nothing adopts is reclaimed by GC. Use the same key
+the destination's `useLane` will use, so they line up.
+
 ## Next.js App Router
 
 *Demonstrated by the demo's `/lane` (RSC-seeded) and `/lane-spa` (client-only)

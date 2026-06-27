@@ -39,7 +39,19 @@ export type LaneInvalidateOptions = {
   staleTime?: number;
 };
 
+/**
+ * Options for `Lane.prefetch`. Only the fetch-shaping knobs apply — `staleTime`
+ * / `whenStale` are read-time concerns the eventual reader decides, and prefetch
+ * always uses `"revalidate"` so a repeat call dedupes onto the warm cache.
+ */
+export type LanePrefetchOptions = Pick<LaneUseOptions, "retry" | "retryDelay">;
+
 export type Lane = {
+  prefetch<T>(
+    key: LaneKey,
+    loader: LaneLoader<T>,
+    options?: LanePrefetchOptions,
+  ): Promise<LaneRead<T>>;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
   set<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<LaneRead<T>>;

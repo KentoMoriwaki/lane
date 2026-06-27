@@ -679,6 +679,23 @@ describe("React integration", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
+  it("a mounted reader adopts a prefetched cache without refetching", async () => {
+    const lane = createLane();
+    const loader = vi.fn(async () => "warm");
+
+    // Warm the cache imperatively (e.g. from a link's onMouseEnter), before any
+    // reader mounts, and let it settle.
+    lane.prefetch(["tasks"], loader);
+    await settlePromiseHandlers();
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // Navigating mounts a reader of the same key: it adopts the warm cache and
+    // renders the value without a second fetch.
+    const app = await renderLaneApp({ lane, loader });
+    await waitForText(app.container, "warm|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the cache for remounts within gcTime", async () => {
     vi.useFakeTimers();
 

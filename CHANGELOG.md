@@ -6,6 +6,8 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-27
+
 ### Added
 
 - **Agent skill bundled in the package.** The npm tarball now ships an
@@ -108,7 +110,8 @@ Initial public release.
 
 - React 19.2+ (`useEffectEvent`).
 
-[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/KentoMoriwaki/lane/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/KentoMoriwaki/lane/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/KentoMoriwaki/lane/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/KentoMoriwaki/lane/compare/v0.1.0...v0.1.1

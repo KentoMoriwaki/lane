@@ -23,7 +23,8 @@
     "concurrent",
     "hooks",
     "swr",
-    "react-query"
+    "react-query",
+    "agent-skills"
   ],
   "type": "module",
   "sideEffects": false,
@@ -32,6 +33,7 @@
   },
   "files": [
     "dist",
+    "skills",
     "README.md"
   ],
   "exports": {
@@ -62,7 +64,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "size": "size-limit",
-    "prepublishOnly": "pnpm build",
+    "skills:sync": "node ../../scripts/project-docs.mjs skill",
+    "prepublishOnly": "pnpm skills:sync && pnpm build",
     "release": "pnpm publish && git push --follow-tags",
     "release:patch": "node scripts/release.mjs patch",
     "release:minor": "node scripts/release.mjs minor",

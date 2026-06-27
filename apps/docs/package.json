@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/sync-docs.mjs",
+    "predev": "node ../../scripts/project-docs.mjs nextra",
     "dev": "next dev -p 3005",
-    "prebuild": "node scripts/sync-docs.mjs",
+    "prebuild": "node ../../scripts/project-docs.mjs nextra",
     "build": "next build --webpack",
     "start": "next start -p 3005",
-    "sync": "node scripts/sync-docs.mjs"
+    "sync": "node ../../scripts/project-docs.mjs nextra"
   },
   "dependencies": {
     "next": "16.2.7",

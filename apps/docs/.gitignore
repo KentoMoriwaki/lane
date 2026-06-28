@@ -2,11 +2,10 @@
 /out/
 next-env.d.ts
 
-# Generated from docs/*.md by scripts/sync-docs.mjs (docs/ is the source of truth)
-/content/api-reference.mdx
-/content/architectures.mdx
-/content/integrations.mdx
-/content/design-notes.mdx
+# Generated from docs/*.md by scripts/project-docs.mjs (docs/ is the source of
+# truth; run `pnpm docs:sync`). index.mdx is hand-authored — keep it tracked.
+/content/*.mdx
+!/content/index.mdx
 
 # Pagefind search index (generated at build)
 /public/_pagefind/

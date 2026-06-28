@@ -1,6 +1,6 @@
 ---
 name: use-lane
-description: Use when writing or reviewing React 19 async-data code that uses use-lane — reading data with useLane + use(), Suspense / Error-Boundary wiring, re-reading after a mutation (invalidate / set / update), refetch / polling / focus / reconnect revalidation, conditional or deferred reads, RSC or loader seeding (LaneHydration), router / Next.js integration, prefetching, or migrating React Query / SWR code. Lane owns promise identity; React owns loading, errors, transitions, and optimistic UI — prefer source invalidation over external-store cache patterns.
+description: Use when writing or reviewing React 19 async-data code that uses use-lane — reading data with useLane + use(), Suspense / Error-Boundary wiring, re-reading after a mutation (invalidate / set / update), refetch / polling / focus / reconnect revalidation, conditional or deferred reads, RSC or loader seeding (LaneHydration), router / Next.js integration, prefetching, or migrating React Query / SWR code. Lane owns promise identity; React owns loading, errors, transitions, and optimistic UI — prefer source invalidation over external-store cache patterns. Also use it to avoid common anti-patterns: reading a promise in useEffect/.then + setState instead of use(), hand-rolled isLoading, or patching the cache after a mutation.
 ---
 
 # use-lane
@@ -49,10 +49,10 @@ task touches that rule.
 
 - **Read with `use(promise)`** — never store `data` in your own state or an
   external store. `use()` yields `{ data, refreshError }`; there is no
-  `isLoading` / `error` / `status`. → `references/design-notes.md`
-- **Keep the loader's promise identity stable per key.** Lane dedupes by key, not
-  by loader; don't restructure code so a fresh promise is forced every render.
-  → `references/api-reference.md`
+  `isLoading` / `error` / `status`. → `references/common-mistakes.md`, `references/design-notes.md`
+- **Keep keys stable and serializable.** Lane dedupes by key, not by loader, so a
+  key that changes every render refetches every render; the loader itself can be an
+  inline closure (no `useCallback` needed). → `references/common-mistakes.md`
 - **Converge by invalidating the source**, not by patching a cache. Use `set` /
   `update` only to publish data you *already have* (e.g. a mutation response);
   use `remove` to drop entries on sign-out / team switch. → `references/api-reference.md`
@@ -75,6 +75,7 @@ exact signatures you can also read the package's bundled `dist/index.d.ts`.
 
 | Task / question | Read |
 | --- | --- |
+| Avoiding common mistakes — reading promises in effects, manual loading state, hand-patched mutations | `references/common-mistakes.md` |
 | Exact API: every export, option, return type, and behavior | `references/api-reference.md` |
 | Why Lane is shaped this way; the reasoning behind each gotcha above | `references/design-notes.md` |
 | Where Lane fits: RSC-first vs RSC-seeded ownership; who owns mutations | `references/architectures.md` |

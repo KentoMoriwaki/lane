@@ -18,7 +18,13 @@ const docsDir = resolve(repoRoot, "docs");
 
 // The canonical pages, in reading order. The single source of truth for the set
 // of docs that fan out to every consumer.
-const PAGES = ["api-reference", "architectures", "integrations", "design-notes"];
+const PAGES = [
+  "api-reference",
+  "architectures",
+  "integrations",
+  "design-notes",
+  "common-mistakes",
+];
 
 const TARGETS = {
   // Nextra docs site: .mdx, relative `./name.md` links rewritten to site routes,

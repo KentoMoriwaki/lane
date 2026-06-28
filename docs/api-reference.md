@@ -583,5 +583,6 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 
 ## See also
 
+- [Common mistakes](./common-mistakes.md) — anti-patterns and the use-lane way to write them.
 - [Supported architectures](./architectures.md) — RSC-first and RSC-seeded client ownership.
 - [Design notes](./design-notes.md) — the rationale behind these choices.

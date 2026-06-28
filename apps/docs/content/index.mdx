@@ -13,7 +13,7 @@ nothing else.**
 
 ```tsx
 const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
-const user = use(promise); // Suspense owns loading, Error Boundaries own errors
+const { data: user } = use(promise); // Suspense owns loading, Error Boundaries own errors
 ```
 
 ## Install
@@ -44,6 +44,7 @@ Requires React **19.2+** (`useEffectEvent`).
 ## Learn more
 
 - [API reference](/api-reference) — every export, option, and behavior.
+- [Common mistakes](/common-mistakes) — anti-patterns, and the use-lane way to write them.
 - [Supported architectures](/architectures) — RSC-first and RSC-seeded client
   ownership.
 - [Design notes](/design-notes) — why Lane is shaped this way.

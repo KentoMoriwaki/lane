@@ -6,6 +6,15 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **"Common mistakes" documentation page** covering use-lane anti-patterns —
+  reading a promise in an effect instead of `use()`, hand-rolled loading state,
+  patching the cache after a mutation, deferring reads off the critical paint,
+  editing loaded data as a local draft, transitioning prop-driven key changes,
+  unstable keys, dropped abort signals, and more. Projected into the bundled agent skill as `references/common-mistakes.md`
+  and linked from `SKILL.md`.
+
 ## [0.4.0] - 2026-06-27
 
 ### Added

@@ -187,4 +187,5 @@ When more than one approach is possible, Lane prefers:
 ## See also
 
 - [API reference](./api-reference.md)
+- [Common mistakes](./common-mistakes.md)
 - [Supported architectures](./architectures.md)

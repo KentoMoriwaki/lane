@@ -4,4 +4,5 @@ export default {
   architectures: "Architectures",
   integrations: "Frameworks & Routers",
   "design-notes": "Design Notes",
+  "common-mistakes": "Common mistakes",
 };

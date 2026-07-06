@@ -13,7 +13,6 @@ import type {
   LaneRetryDelay,
   LaneScope,
   LaneUpdater,
-  LaneUseOptions,
   LaneValue,
   LaneWhenStale,
 } from "./types";
@@ -34,16 +33,14 @@ type LaneSubscription = (
 
 type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
 
+// A subscriber is a pure notify hook plus a GC anchor — it carries no policy.
+// When to revalidate (focus / reconnect / mount / stale) is the reader's
+// concern, expressed as per-read invalidations; the store only notifies. Even
+// focus / reconnect stay out of here — they are DOM concerns the provider owns.
 type LaneSubscriber = {
   onInvalidate?: LaneSubscription;
   onRemove?: LaneRemoveSubscription;
-  options: Pick<
-    LaneUseOptions,
-    "refetchInterval" | "refetchOnFocus" | "refetchOnReconnect" | "staleTime"
-  >;
 };
-
-type LaneRevalidateTrigger = boolean | "always" | undefined;
 
 type LaneState = {
   entries: Map<string, LaneEntry>;
@@ -73,8 +70,6 @@ type LaneEntry = {
   // last unsubscribe; cleared while subscribed). The central GC sweep evicts
   // entries idle for longer than the lane's gcTime.
   idleSince: number | undefined;
-  pollInterval: number | undefined;
-  pollTimer: ReturnType<typeof setInterval> | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -116,11 +111,13 @@ export function createLane(options: LaneOptions = {}): Lane {
         return;
       }
 
-      invalidateLaneEntry(state, entry, options, "transition");
+      invalidateLaneEntry(state, entry, options, invalidationSource(options));
     },
     invalidateAll(scope, options = {}) {
+      const source = invalidationSource(options);
+
       for (const entry of matchingEntries(state.entries, scope)) {
-        invalidateLaneEntry(state, entry, options, "transition");
+        invalidateLaneEntry(state, entry, options, source);
       }
     },
     set<T>(key: LaneKey, valueOrPromise: LaneValue<T>) {
@@ -269,31 +266,6 @@ export function invalidateEntry(
   invalidateLaneEntry(state, entry, options, source);
 }
 
-export function refetchOnFocus(lane: Lane): void {
-  revalidateEntries(lane, (options) => options.refetchOnFocus);
-}
-
-export function refetchOnReconnect(lane: Lane): void {
-  revalidateEntries(lane, (options) => options.refetchOnReconnect);
-}
-
-function revalidateEntries(
-  lane: Lane,
-  pick: (options: LaneSubscriber["options"]) => LaneRevalidateTrigger,
-): void {
-  const state = getLaneState(lane);
-
-  for (const entry of [...state.entries.values()]) {
-    const options = invalidateOptionsForTrigger(entry, pick);
-
-    if (!options) {
-      continue;
-    }
-
-    invalidateLaneEntry(state, entry, options, "background");
-  }
-}
-
 export function subscribeLane(
   lane: Lane,
   key: LaneKey,
@@ -305,11 +277,9 @@ export function subscribeLane(
 
   entry.subscribers.add(subscriber);
   entry.idleSince = undefined; // active: not a GC candidate
-  recomputePolling(state, entry);
 
   return () => {
     entry.subscribers.delete(subscriber);
-    recomputePolling(state, entry);
 
     if (entry.subscribers.size > 0) {
       return;
@@ -336,10 +306,7 @@ export function onInvalidate(
   key: LaneKey,
   listener: LaneSubscription,
 ): () => void {
-  return subscribeLane(lane, key, {
-    onInvalidate: listener,
-    options: {},
-  });
+  return subscribeLane(lane, key, { onInvalidate: listener });
 }
 
 export function onRemove(
@@ -347,10 +314,7 @@ export function onRemove(
   key: LaneKey,
   listener: LaneRemoveSubscription,
 ): () => void {
-  return subscribeLane(lane, key, {
-    onRemove: listener,
-    options: {},
-  });
+  return subscribeLane(lane, key, { onRemove: listener });
 }
 
 function invalidateLaneEntry(
@@ -413,7 +377,6 @@ function cleanupEntry(state: LaneState, entry: LaneEntry): void {
     return;
   }
 
-  disarmPolling(entry);
   state.entries.delete(entry.keyId);
 }
 
@@ -471,38 +434,6 @@ function entryInfo(entry: LaneEntry): LaneEntryInfo {
 }
 
 function noop(): void {}
-
-function invalidateOptionsForTrigger(
-  entry: LaneEntry,
-  pick: (options: LaneSubscriber["options"]) => LaneRevalidateTrigger,
-): LaneInvalidateOptions | undefined {
-  let staleTime: number | undefined;
-  let shouldRefetchStale = false;
-
-  for (const subscriber of entry.subscribers) {
-    const trigger = pick(subscriber.options) ?? false;
-
-    if (trigger === "always") {
-      return { onlyIf: "settled" };
-    }
-
-    if (trigger !== true) {
-      continue;
-    }
-
-    shouldRefetchStale = true;
-    staleTime = Math.min(
-      staleTime ?? Infinity,
-      subscriber.options.staleTime ?? 0,
-    );
-  }
-
-  if (!shouldRefetchStale) {
-    return undefined;
-  }
-
-  return { onlyIf: "stale", staleTime };
-}
 
 function matchingEntries(
   entries: Map<string, LaneEntry>,
@@ -580,8 +511,6 @@ function createEntry(
     key,
     keyId,
     lastFulfilled: undefined,
-    pollInterval: undefined,
-    pollTimer: undefined,
     subscribers: new Set(),
   };
 }
@@ -729,66 +658,20 @@ function sweep(state: LaneState): void {
 
 function evictEntry(state: LaneState, entry: LaneEntry): void {
   removeEntryCache(entry);
-  disarmPolling(entry);
   state.entries.delete(entry.keyId);
 }
 
 /**
- * Keeps one interval timer per entry, driven by the smallest positive
- * refetchInterval across current subscribers. Ticks go through the regular
- * settled-only invalidation, so pending reads dedupe naturally and readers
- * converge through their background transition.
+ * Public invalidations converge through a transition by default; `background:
+ * true` routes them through the background transition instead (for automatic
+ * refreshes like a self-scheduled poll, so they don't surface as
+ * `isTransitionPending`). Polling itself is not a core feature — schedule your
+ * own timer and call `invalidate(key, { background: true, onlyIf: "settled" })`.
  */
-function recomputePolling(state: LaneState, entry: LaneEntry): void {
-  const interval = pollIntervalFor(entry);
-
-  if (interval === entry.pollInterval) {
-    return;
-  }
-
-  disarmPolling(entry);
-  entry.pollInterval = interval;
-
-  if (interval === undefined) {
-    return;
-  }
-
-  const timer = setInterval(() => {
-    invalidateLaneEntry(state, entry, { onlyIf: "settled" }, "background");
-  }, interval);
-
-  entry.pollTimer = timer;
-  unrefTimer(timer);
-}
-
-function pollIntervalFor(entry: LaneEntry): number | undefined {
-  let interval: number | undefined;
-
-  for (const subscriber of entry.subscribers) {
-    const candidate = subscriber.options.refetchInterval;
-
-    if (
-      candidate === undefined ||
-      candidate <= 0 ||
-      !Number.isFinite(candidate)
-    ) {
-      continue;
-    }
-
-    interval = Math.min(interval ?? Infinity, candidate);
-  }
-
-  return interval;
-}
-
-function disarmPolling(entry: LaneEntry): void {
-  if (entry.pollTimer === undefined) {
-    return;
-  }
-
-  clearInterval(entry.pollTimer);
-  entry.pollTimer = undefined;
-  entry.pollInterval = undefined;
+function invalidationSource(
+  options: LaneInvalidateOptions,
+): LaneInvalidationSource {
+  return options.background ? "background" : "transition";
 }
 
 function unrefTimer(timer: unknown): void {

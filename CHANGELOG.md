@@ -6,6 +6,38 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Removed `refetchInterval`; polling is now userland.** There is no core polling
+  timer. A poll is a self-scheduled invalidation written with primitives (the same
+  stance Lane takes on mutations): an effect that reschedules after each
+  `use(promise)` load — so it never fires mid-flight — or a `setInterval` with
+  `{ onlyIf: "settled" }`. This shrinks the core (no `recomputePolling` /
+  per-entry poll timer) and drops the per-subscriber `refetchInterval` option.
+- **`invalidate` / `invalidateAll` accept `{ background: true }`.** It converges
+  through the background transition (`isBackgroundPending`) instead of the default
+  explicit one (`isTransitionPending`) — what a self-scheduled poll uses so an
+  automatic refresh doesn't read as a user-driven invalidation. New field on
+  `LaneInvalidateOptions`.
+
+### Added
+
+- **`useLanesAll(reads, options?)`** — read a *dynamic* set of `[key, loader]`
+  pairs with a single hook (a fixed number of hooks regardless of count) and get
+  back one **stable, `use()`-able `Promise.all`** of their values. Each pair is
+  its own keyed read (independently cached, subscribed, and invalidatable,
+  behaving like `useLane`); `options` are shared by every read, and a read is left
+  out by omitting it (loader is required — no per-item gating). The hook's job is
+  to own a stable aggregate identity that `use(Promise.all(...))` built inline
+  can't (fresh promise every render; dead-loops on rejection). `use(promise)`
+  resolves to every read positionally, rejects to the Error Boundary on any
+  initial-load failure, and swaps inside a transition when a member changes (a
+  background refresh keeps the previous values on screen). No `combine` option
+  (Lane is suspense-based, so an aggregate is all-or-nothing — combine in render).
+  Built by composing core primitives (`readOrCreate` / `subscribeLane` /
+  `invalidateEntry`) — it adds no public API beyond the hook. For rendering N
+  independent rows, render a child per row that calls `useLane` instead.
+
 ## [0.4.1] - 2026-06-28
 
 ### Added

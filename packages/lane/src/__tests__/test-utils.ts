@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import { onInvalidate, onRemove, subscribeLane } from "../core";
-import type { Lane, LaneEntryInfo, LaneKey, LaneUseOptions } from "../types";
+import type { Lane, LaneEntryInfo, LaneKey } from "../types";
 
 type TestSubscription = (entry: LaneEntryInfo) => void;
 
@@ -41,17 +41,12 @@ export function subscribeRemove(
   return onRemove(lane, key, listener);
 }
 
-export function subscribeWithOptions(
+// A bare subscription: a notify hook plus the GC anchor. Enough for tests that
+// only need an entry to have a live subscriber (GC, catch-up, notification).
+export function subscribe(
   lane: Lane,
   key: LaneKey,
-  options: Pick<
-    LaneUseOptions,
-    "refetchInterval" | "refetchOnFocus" | "refetchOnReconnect" | "staleTime"
-  >,
   listener: TestSubscription = vi.fn(),
 ): () => void {
-  return subscribeLane(lane, key, {
-    onInvalidate: listener,
-    options,
-  });
+  return subscribeLane(lane, key, { onInvalidate: listener });
 }

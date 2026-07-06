@@ -218,37 +218,30 @@ describe("React integration", () => {
     await waitForText(app.container, "focused-2|background:0|transition:0|refresh:none");
   });
 
-  it("polls with refetchInterval as background refetches", async () => {
-    vi.useFakeTimers();
-
+  it("marks a background invalidation as background pending", async () => {
     const lane = createLane();
     const reload = deferred<string>();
-    const loader = vi
-      .fn<() => Promise<string>>()
-      .mockImplementationOnce(async () => "first")
-      .mockImplementationOnce(() => reload.promise);
+    const loader = vi.fn(() => reload.promise);
 
-    const app = await renderLaneApp({
-      lane,
-      loader,
-      options: {
-        refetchInterval: 1_000,
-      },
+    lane.set(["tasks"], "cached");
+
+    const app = await renderLaneApp({ lane, loader });
+
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:none");
+
+    // `background: true` is what a self-scheduled poll uses instead of the removed
+    // `refetchInterval` — it converges through the background transition.
+    await act(async () => {
+      lane.invalidate(["tasks"], { background: true, onlyIf: "settled" });
+      await settlePromiseHandlers();
     });
 
-    await waitForText(app.container, "first|background:0|transition:0|refresh:none");
+    await waitForText(app.container, "cached|background:1|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
-    });
+    await resolveReload(reload, "refreshed");
 
-    await waitForText(app.container, "first|background:1|transition:0|refresh:none");
-    expect(loader).toHaveBeenCalledTimes(2);
-
-    await resolveReload(reload, "polled");
-
-    await waitForText(app.container, "polled|background:0|transition:0|refresh:none");
+    await waitForText(app.container, "refreshed|background:0|transition:0|refresh:none");
   });
 
   it("marks refetchOnMount as background pending", async () => {

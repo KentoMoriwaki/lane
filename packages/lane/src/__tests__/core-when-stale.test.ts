@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readOrCreate } from "../core";
 import { createLane } from "../index";
-import { deferred, resetVitest, subscribeWithOptions } from "./test-utils";
+import { deferred, resetVitest, subscribe } from "./test-utils";
 
 afterEach(resetVitest);
 
@@ -73,7 +73,7 @@ describe("whenStale", () => {
 
     const lane = createLane();
     const loader = vi.fn(async () => "loaded");
-    subscribeWithOptions(lane, ["k"], {});
+    subscribe(lane, ["k"]);
 
     await expect(readOrCreate(lane, ["k"], loader, refetch(0))).resolves.toEqual({ data: "loaded" });
 

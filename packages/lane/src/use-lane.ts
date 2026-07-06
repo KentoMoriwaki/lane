@@ -8,13 +8,13 @@ import {
   useTransition,
 } from "react";
 import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
-import type { LaneInvalidationSource, LaneReadOptions } from "./core";
+import type { LaneInvalidationSource } from "./core";
 import { serializeKey } from "./keys";
-import { useLaneInstance } from "./provider";
+import { useLaneInstance, useLaneRevalidation } from "./provider";
+import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
   Lane,
   LaneGatedResult,
-  LaneInvalidateOptions,
   LaneKey,
   LaneLoader,
   LaneRead,
@@ -38,17 +38,13 @@ export function useLane<T>(
   options: LaneUseOptions = {},
 ): LaneResult<T> | LaneGatedResult<T> {
   const lane = useLaneInstance();
+  const revalidation = useLaneRevalidation();
   // A read is "enabled" exactly when a loader is supplied. Lane only loads
   // external data, so an absent loader has no other meaning and is the single,
   // unambiguous disable signal: no fetch, no subscription, no stored entry.
   const enabled = loader !== undefined;
   const keyId = serializeKey(key);
-  const readOptions: LaneReadOptions = {
-    retry: options.retry,
-    retryDelay: options.retryDelay,
-    staleTime: options.staleTime,
-    whenStale: options.whenStale,
-  };
+  const readOptions = toReadOptions(options);
   const [isTransitionPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
   const [promise, setPromise] = useState<Promise<LaneRead<T>> | undefined>(() =>
@@ -134,24 +130,52 @@ export function useLane<T>(
 
   const refetchOnMount = useEffectEvent(
     (targetLane: Lane, targetKeyId: string) => {
-      const invalidateOptions = invalidateOptionsForRefetchOnMount(options);
+      const invalidateOptions = revalidateOptions(
+        options.refetchOnMount,
+        options.staleTime,
+      );
 
       if (!invalidateOptions) {
         return;
       }
 
-      invalidateEntry(
-        targetLane,
-        targetKeyId,
-        invalidateOptions,
-        "background",
-      );
+      invalidateEntry(targetLane, targetKeyId, invalidateOptions, "background");
     },
   );
+
+  // Focus / reconnect are lane-level events the provider fans out; each reader
+  // refreshes its own key with the trigger's policy. Read latest options at
+  // fire time, so toggling the flag never re-subscribes.
+  const revalidateOnFocus = useEffectEvent(() => {
+    const invalidateOptions = revalidateOptions(
+      options.refetchOnFocus,
+      options.staleTime,
+    );
+
+    if (!invalidateOptions) {
+      return;
+    }
+
+    invalidateEntry(lane, keyId, invalidateOptions, "background");
+  });
+
+  const revalidateOnReconnect = useEffectEvent(() => {
+    const invalidateOptions = revalidateOptions(
+      options.refetchOnReconnect,
+      options.staleTime,
+    );
+
+    if (!invalidateOptions) {
+      return;
+    }
+
+    invalidateEntry(lane, keyId, invalidateOptions, "background");
+  });
 
   useEffect(() => {
     // A disabled read owns no entry: no subscription, no GC anchor, no
     // revalidation. The effect re-runs when `enabled` flips and subscribes then.
+    // The subscription is pure notify + GC; option changes never re-run it.
     if (!enabled) {
       return;
     }
@@ -163,26 +187,26 @@ export function useLane<T>(
       onRemove: (entry) => {
         onRemove(lane, entry.key);
       },
-      options: {
-        refetchInterval: options.refetchInterval,
-        refetchOnFocus: options.refetchOnFocus,
-        refetchOnReconnect: options.refetchOnReconnect,
-        staleTime: options.staleTime,
-      },
     });
 
     syncAfterSubscribe(lane, key);
 
     return unsubscribe;
-  }, [
-    enabled,
-    lane,
-    keyId,
-    options.refetchInterval,
-    options.refetchOnFocus,
-    options.refetchOnReconnect,
-    options.staleTime,
-  ]);
+  }, [enabled, lane, keyId]);
+
+  useEffect(() => {
+    // Focus / reconnect belong to the provider; the reader just registers its
+    // handlers. They read the latest key/options at fire time, so nothing here
+    // depends on the key or a flag — only on being enabled.
+    if (!enabled) {
+      return;
+    }
+
+    return revalidation.subscribe({
+      onFocus: revalidateOnFocus,
+      onReconnect: revalidateOnReconnect,
+    });
+  }, [enabled, revalidation]);
 
   useEffect(() => {
     if (!enabled) {
@@ -220,18 +244,4 @@ export function useLanePromise<T>(
   options?: LaneUseOptions,
 ): Promise<LaneRead<T>> | undefined {
   return useLane(key, loader, options ?? {}).promise;
-}
-
-function invalidateOptionsForRefetchOnMount(
-  options: LaneUseOptions,
-): LaneInvalidateOptions | undefined {
-  const refetchOnMount = options.refetchOnMount ?? false;
-
-  if (refetchOnMount === false) {
-    return undefined;
-  }
-
-  return refetchOnMount === "always"
-    ? { onlyIf: "settled" }
-    : { onlyIf: "stale", staleTime: options.staleTime };
 }

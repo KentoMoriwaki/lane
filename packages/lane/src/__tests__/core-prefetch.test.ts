@@ -2,11 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readOrCreate } from "../core";
 import { createLane } from "../index";
 import type { Lane } from "../types";
-import {
-  resetVitest,
-  settlePromiseHandlers,
-  subscribeWithOptions,
-} from "./test-utils";
+import { resetVitest, settlePromiseHandlers, subscribe } from "./test-utils";
 
 afterEach(resetVitest);
 
@@ -18,7 +14,7 @@ describe("prefetch", () => {
   // The lane sweep is armed only by an entry losing its last subscriber.
   async function armSweepViaChurn(lane: Lane): Promise<void> {
     await readOrCreate(lane, ["__churn__"], async () => "churn");
-    subscribeWithOptions(lane, ["__churn__"], {})();
+    subscribe(lane, ["__churn__"])();
   }
 
   it("warms the cache and dedupes a repeat prefetch", async () => {
@@ -78,7 +74,7 @@ describe("prefetch", () => {
     const loader = vi.fn(async () => "warm");
 
     await lane.prefetch(["tasks"], loader);
-    const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
+    const unsubscribe = subscribe(lane, ["tasks"]);
 
     // Sweeps run (armed by churn), yet the adopted entry survives every cycle.
     await armSweepViaChurn(lane);

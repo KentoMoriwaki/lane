@@ -13,6 +13,7 @@ import {
   LaneHydration,
   useLane,
   useLanePromise,
+  useLanesAll,
   useLaneInstance,
   createLane,
 } from "use-lane";
@@ -136,7 +137,7 @@ type LaneResult<T> = {
 | --- | --- |
 | `promise` | The current promise for the key. Unwrap with `use(promise)` to get a [`LaneRead<T>`](#lanereadt). |
 | `isTransitionPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
-| `isBackgroundPending` | `true` while a background revalidation (focus / mount / polling / reconnect / subscription catch-up) is converging. |
+| `isBackgroundPending` | `true` while a background revalidation (focus / mount / reconnect / a `background: true` invalidation / subscription catch-up) is converging. |
 | `invalidate` | Invalidate this exact key and re-read through a transition. Convenience for `lane.invalidate(key)`. |
 
 ### `LaneRead<T>`
@@ -202,6 +203,78 @@ nothing is stored, so no placeholder key is needed. Segments must still be
 serializable, since the key is serialized for identity tracking even while
 disabled.
 
+### `useLanesAll(reads, options?)` — a batch read
+
+Read a **dynamic-length** set of `[key, loader]` pairs with one hook and get back
+a single stable `Promise.all` of their values. `useLane` calls a fixed set of
+hooks, so it can't be called in a loop over a list whose length varies;
+`useLanesAll` orchestrates all the reads internally over the same core primitives.
+
+```ts
+function useLanesAll<T>(
+  reads: readonly (readonly [LaneKey, LaneLoader<T>])[],
+  options?: LaneUseOptions, // shared by every read
+): Promise<LaneRead<T>[]>;
+```
+
+```tsx
+const promise = useLanesAll(
+  ids.map((id) => [["task", id], ({ signal }) => fetchTask(id, signal)]),
+  { staleTime: 60_000 },
+);
+
+// Suspends until all resolve (they load in parallel); a rejecting *initial* load
+// throws to the Error Boundary.
+const tasks = use(promise).map((read) => read.data);
+```
+
+Each `[key, loader]` is its own keyed read — independently cached, deduped,
+subscribed (focus / reconnect / `refetchOnMount`), and invalidatable,
+exactly as if you had called `useLane` for each. Three deliberate simplifications
+versus a per-item API:
+
+- **The loader is required.** To leave a read out, omit it from the array — there
+  is no per-item gating (that is what `loader: undefined` does on a single
+  `useLane`).
+- **`options` are shared** by every read in the batch (changing them
+  re-subscribes all, matching `useLane`'s option reactivity).
+- **The return is just the promise** — one stable, `use()`-able `Promise.all`,
+  not an array of per-item handles.
+
+**Why a single aggregate, not an array of promises.** Mapping `use()` over a
+per-item array is exactly what a child-per-row already does better (each row
+keeps its own boundary), so a parent gains nothing by holding the array. The one
+thing a parent *can't* easily build itself is a **stable** `Promise.all`:
+`use(Promise.all(...))` inline gets a fresh promise every render (re-suspends) and
+dead-loops on a rejection (a suspended component never commits, so a
+per-render/ref memo keeps resetting). `useLanesAll` owns that identity for you and
+swaps it inside a transition when a member changes — so a background refresh keeps
+the previous values on screen (you just don't get a pending flag).
+
+There is deliberately **no `combine` option.** Combine in render from
+`use(promise)`. (react-query's `combine` is incremental over synchronous
+per-query *status*; Lane is suspense-based, so reading the values means
+suspending — an aggregate is all-or-nothing by nature. A partial combine would
+need status fields Lane intentionally does not have.)
+
+Notes:
+
+- **Each member behaves exactly like `useLane`** — transitions, stale-on-error,
+  focus / reconnect, `refetchOnMount`, GC, and reacting to (shared) option changes
+  (`staleTime` / `refetchOnFocus` / `refetchOnReconnect` re-subscribe; `retry` /
+  `whenStale` apply on the next read). A batch is N `useLane`s feeding one
+  `Promise.all`.
+- **Adding a read** subscribes and loads just that read; the reads already on
+  screen are not refetched. **Removing one** unsubscribes it.
+- **Invalidation** is by key: `lane.invalidate(key)` for one, or
+  `lane.invalidateAll(scope)` for a family.
+- **Duplicate keys** in one call share a single entry (like two `useLane` calls
+  with the same key).
+
+For rendering N *independent* rows (not aggregating), don't use `useLanesAll` at
+all — render a child component per row and call `useLane` inside each, so every
+row keeps its own Suspense boundary and pending state.
+
 ### Deferred reads (render first, swap when ready)
 
 Sometimes you want a read's data but don't want its load to gate the surrounding
@@ -249,7 +322,7 @@ Why each piece matters:
 
 - **Loader always set.** `useLane` runs the loader during render and caches the
   promise, so the fetch is in flight before the transition — the earliest start,
-  and the entry is subscribed (focus / poll / invalidation live) from mount.
+  and the entry is subscribed (focus / reconnect / invalidation live) from mount.
 - **Reveal gated, not the loader.** `if (!reveal)` returns before `use`, so the
   first render commits the placeholder without suspending. That committed output
   is the already-revealed content React keeps while the transition is pending.
@@ -332,10 +405,10 @@ const warm = () =>
 - **Deduped.** A repeat `prefetch` of the same key (a re-fired hover) reuses the
   cached promise — the loader runs once. `prefetch` always reads with
   `"revalidate"` semantics, so it never discards an in-flight or settled cache.
-- **Not subscribed.** A prefetched entry has no reader, so it does not poll,
-  revalidate on focus, or anchor against GC. Like any read it arms no timer: if
-  no reader adopts it, it is an orphan reclaimed by the lane's sweep (within
-  `gcTime`); if a reader mounts first, the entry becomes live and is kept.
+- **Not subscribed.** A prefetched entry has no reader, so it does not revalidate
+  on focus, or anchor against GC. If no reader adopts it, it is an orphan
+  reclaimed by the lane's sweep (within `gcTime`); if a reader mounts first, the
+  entry becomes live and is kept.
 - **Freshness is the reader's call.** `prefetch` only warms; `staleTime` /
   `whenStale` are decided by the eventual `useLane`, so `LanePrefetchOptions`
   exposes only `retry` / `retryDelay`.
@@ -352,7 +425,6 @@ type LaneUseOptions = {
   whenStale?: "revalidate" | "refetch";
   retry?: number;
   retryDelay?: (attempt: number, error: unknown) => number;
-  refetchInterval?: number;
   refetchOnFocus?: boolean | "always";
   refetchOnMount?: boolean | "always";
   refetchOnReconnect?: boolean | "always";
@@ -368,7 +440,6 @@ type LaneUseOptions = {
 | `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value (or a prior error) and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. |
 | `retry` | `0` | Number of automatic retries for a failed load. Aborts stop the retry loop. |
 | `retryDelay` | exponential backoff, `min(1000 · 2^attempt, 30000)` | Delay (ms) before retry `attempt`. |
-| `refetchInterval` | — | Poll the entry every N ms. The smallest interval across subscribers is used; ticks are settled-only so pending reads dedupe. |
 | `refetchOnFocus` | `false` | `true` reloads stale entries on window focus; `"always"` reloads settled entries regardless of `staleTime`. |
 | `refetchOnMount` | `false` | `true` reloads stale entries when a reader mounts; `"always"` reloads settled entries on mount. |
 | `refetchOnReconnect` | `false` | Same as `refetchOnFocus`, driven by the browser `online` event. |
@@ -448,12 +519,53 @@ lane.invalidateAll(["tasks"]);
 type LaneInvalidateOptions = {
   onlyIf?: "stale" | "settled";
   staleTime?: number;
+  background?: boolean;
 };
 ```
 
 - omit `onlyIf` → always invalidate.
 - `"stale"` → only fulfilled entries older than `staleTime`.
 - `"settled"` → only entries with a settled promise (skips in-flight reads).
+- `background: true` → converge through the **background** transition
+  (`isBackgroundPending`) instead of the default explicit one
+  (`isTransitionPending`). Use it for automatic refreshes so they don't read as a
+  user-driven invalidation — see [Polling](#polling).
+
+### Polling
+
+Lane has no `refetchInterval` option: polling is just a self-scheduled
+invalidation, written with primitives (the same stance as mutations). Because a
+component only commits *after* `use(promise)` resolves, an effect that reschedules
+after each load never fires mid-flight:
+
+```tsx
+function Polled({ id }: { id: string }) {
+  const { promise } = useLane(["task", id], ({ signal }) => fetchTask(id, signal));
+  const lane = useLaneInstance();
+  const task = use(promise).data;
+
+  useEffect(() => {
+    // Re-armed after each successful load, so it never aborts an in-flight read.
+    const timer = setTimeout(
+      () => lane.invalidate(["task", id], { background: true }),
+      5_000,
+    );
+    return () => clearTimeout(timer);
+  }, [promise, id, lane]);
+
+  return <TaskCard task={task} />;
+}
+```
+
+- **`background: true`** keeps the refresh off `isTransitionPending` (it surfaces
+  as `isBackgroundPending`), so an automatic poll doesn't read like a user action.
+- Depending on `[promise]` makes it a **poll-after-response** loop (a fixed gap
+  after each load). For a fixed **wall-clock** interval, use `setInterval` plus
+  `{ onlyIf: "settled" }` so a tick during an in-flight read is skipped instead of
+  aborting it:
+  ```tsx
+  setInterval(() => lane.invalidate(key, { background: true, onlyIf: "settled" }), 5_000);
+  ```
 
 ### `set`
 
@@ -540,7 +652,7 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 
 - **Stale-on-error.** <a id="stale-on-error"></a> When an entry already has a
   fulfilled value and its next read rejects (after invalidation, focus refetch,
-  polling, or a `set` of a rejecting promise), the cached promise keeps resolving
+  or a `set` of a rejecting promise), the cached promise keeps resolving
   with the **last fulfilled value** and the failure surfaces as `refreshError`.
   Freshness keeps the original fulfillment time, so staleness policies still
   treat the data as old and retry. Only an **initial** load (no previous value)
@@ -560,9 +672,8 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 - **Structural sharing.** When a reload resolves with data deeply equal to the
   previous value, previous references are reused so memoized consumers do not
   re-render.
-- **Polling.** `refetchInterval` keeps one timer per entry, using the smallest
-  interval across subscribers, ticking through settled-only background
-  invalidation.
+- **Polling.** Not a built-in — schedule your own timer and call
+  `invalidate(key, { background: true })`. See [Polling](#polling).
 - **Focus / reconnect.** The provider coalesces `focus` + `visibilitychange`
   into one revalidation per `focusThrottleInterval` (default 5s); `online` drives
   reconnect revalidation (not throttled).
@@ -576,8 +687,8 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 ## Type exports
 
 `Lane`, `LaneEntryInfo`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
-`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`, `LanePrefetchOptions`, `LaneRead`,
-`LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
+`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`,
+`LanePrefetchOptions`, `LaneRead`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
 `LaneResult`, `LaneRetryDelay`,
 `LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`.
 

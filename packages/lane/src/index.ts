@@ -4,6 +4,7 @@ export { createLane } from "./core";
 export { LaneHydration } from "./hydration";
 export { LaneProvider, useLaneInstance } from "./provider";
 export { useLane, useLanePromise } from "./use-lane";
+export { useLanesAll } from "./use-lanes-all";
 export type {
   Lane,
   LaneEntryInfo,

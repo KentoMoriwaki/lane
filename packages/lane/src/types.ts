@@ -37,6 +37,13 @@ export type LaneUpdater<T> = (
 export type LaneInvalidateOptions = {
   onlyIf?: "stale" | "settled";
   staleTime?: number;
+  /**
+   * Converge through the background transition (surfaces as `isBackgroundPending`)
+   * instead of the default explicit one (`isTransitionPending`). Use it for
+   * automatic refreshes — e.g. a self-scheduled poll — so they don't read as a
+   * user-driven invalidation.
+   */
+  background?: boolean;
 };
 
 /**
@@ -119,7 +126,6 @@ export type LaneUseOptions = {
   whenStale?: LaneWhenStale;
   retry?: number;
   retryDelay?: LaneRetryDelay;
-  refetchInterval?: number;
   refetchOnFocus?: LaneRefetchOnFocus;
   refetchOnMount?: LaneRefetchOnMount;
   refetchOnReconnect?: LaneRefetchOnReconnect;

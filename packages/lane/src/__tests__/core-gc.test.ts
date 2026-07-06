@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_GC_TIME, readOrCreate } from "../core";
 import { createLane } from "../index";
 import type { Lane, LaneLoaderContext } from "../types";
-import { resetVitest, subscribeWithOptions } from "./test-utils";
+import { resetVitest, subscribe } from "./test-utils";
 
 afterEach(resetVitest);
 
@@ -17,7 +17,7 @@ describe("garbage collection", () => {
   // collection of other idle/orphan entries on the same lane.
   async function armSweepViaChurn(lane: Lane): Promise<void> {
     await readOrCreate(lane, ["__churn__"], async () => "churn");
-    subscribeWithOptions(lane, ["__churn__"], {})();
+    subscribe(lane, ["__churn__"])();
   }
 
   it("collects an orphaned entry on a later lane-wide sweep", async () => {
@@ -45,7 +45,7 @@ describe("garbage collection", () => {
     const loader = vi.fn(async () => "loaded");
 
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
-    const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
+    const unsubscribe = subscribe(lane, ["tasks"]);
 
     // A sweep is running (armed by churn elsewhere), yet the subscribed entry is
     // skipped every cycle.
@@ -63,7 +63,7 @@ describe("garbage collection", () => {
 
     const lane = createLane({ gcTime: 1_000 });
     const loader = vi.fn(async () => "loaded");
-    const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
+    const unsubscribe = subscribe(lane, ["tasks"]);
 
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
 
@@ -82,13 +82,13 @@ describe("garbage collection", () => {
 
     const lane = createLane({ gcTime: 1_000 });
     const loader = vi.fn(async () => "loaded");
-    const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
+    const unsubscribe = subscribe(lane, ["tasks"]);
 
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     unsubscribe();
 
     await vi.advanceTimersByTimeAsync(500);
-    const resubscribed = subscribeWithOptions(lane, ["tasks"], {});
+    const resubscribed = subscribe(lane, ["tasks"]);
     await vi.advanceTimersByTimeAsync(10_000);
 
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
@@ -102,7 +102,7 @@ describe("garbage collection", () => {
 
     const lane = createLane({ gcTime: Infinity });
     const loader = vi.fn(async () => "loaded");
-    const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
+    const unsubscribe = subscribe(lane, ["tasks"]);
 
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
     unsubscribe();
@@ -140,7 +140,7 @@ describe("garbage collection", () => {
 
     const lane = createLane({ gcTime: 0 });
     const loader = vi.fn(async () => "loaded");
-    const unsubscribe = subscribeWithOptions(lane, ["tasks"], {});
+    const unsubscribe = subscribe(lane, ["tasks"]);
 
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "loaded" });
 

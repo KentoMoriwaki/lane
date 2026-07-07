@@ -668,10 +668,10 @@ function evictEntry(state: LaneState, entry: LaneEntry): void {
  * `isTransitionPending`). Polling itself is not a core feature — schedule your
  * own timer and call `invalidate(key, { background: true, onlyIf: "settled" })`.
  */
-function invalidationSource(
-  options: LaneInvalidateOptions,
+export function invalidationSource(
+  options?: LaneInvalidateOptions,
 ): LaneInvalidationSource {
-  return options.background ? "background" : "transition";
+  return options?.background ? "background" : "transition";
 }
 
 function unrefTimer(timer: unknown): void {

@@ -7,7 +7,12 @@ import {
   useState,
   useTransition,
 } from "react";
-import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
+import {
+  invalidateEntry,
+  invalidationSource,
+  readOrCreate,
+  subscribeLane,
+} from "./core";
 import type { LaneInvalidationSource } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneInstance, useLaneRevalidation } from "./provider";
@@ -15,6 +20,7 @@ import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
   Lane,
   LaneGatedResult,
+  LaneInvalidateOptions,
   LaneKey,
   LaneLoader,
   LaneRead,
@@ -216,9 +222,12 @@ export function useLane<T>(
     refetchOnMount(lane, keyId);
   }, [enabled, lane, keyId]);
 
-  const invalidate = useCallback(() => {
-    invalidateEntry(lane, keyId);
-  }, [lane, keyId]);
+  const invalidate = useCallback(
+    (options?: LaneInvalidateOptions) => {
+      invalidateEntry(lane, keyId, options, invalidationSource(options));
+    },
+    [lane, keyId],
+  );
 
   return {
     invalidate,

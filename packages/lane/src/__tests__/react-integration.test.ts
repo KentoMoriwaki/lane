@@ -14,6 +14,7 @@ import { serializeKey } from "../keys";
 import type {
   Lane,
   LaneHydrationSnapshots,
+  LaneInvalidateOptions,
   LaneKey,
   LaneLoader,
   LaneLoaderContext,
@@ -235,6 +236,34 @@ describe("React integration", () => {
       lane.invalidate(["tasks"], { background: true, onlyIf: "settled" });
       await settlePromiseHandlers();
     });
+
+    await waitForText(app.container, "cached|background:1|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await resolveReload(reload, "refreshed");
+
+    await waitForText(app.container, "refreshed|background:0|transition:0|refresh:none");
+  });
+
+  it("passes reader-scoped invalidate options through to the background transition", async () => {
+    const lane = createLane();
+    const reload = deferred<string>();
+    const loader = vi.fn(() => reload.promise);
+
+    lane.set(["tasks"], "cached");
+
+    // A self-scheduled poll can call the reader's own `invalidate` with the same
+    // options as `lane.invalidate` — its identity is stable across renders, so no
+    // external key threading is needed.
+    const app = await renderLaneApp({
+      lane,
+      loader,
+      invalidateOptions: { background: true, onlyIf: "settled" },
+    });
+
+    await waitForText(app.container, "cached|background:0|transition:0|refresh:none");
+
+    await click(app.container, "invalidate");
 
     await waitForText(app.container, "cached|background:1|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
@@ -732,10 +761,12 @@ function Probe({
   cacheKey = ["tasks"],
   loader,
   options,
+  invalidateOptions,
 }: {
   cacheKey?: LaneKey;
   loader: LaneLoader<string>;
   options?: LaneUseOptions;
+  invalidateOptions?: LaneInvalidateOptions;
 }) {
   const result = useLane(cacheKey, loader, options);
   const read = React.use(result.promise);
@@ -751,7 +782,7 @@ function Probe({
     "button",
     {
       "data-testid": "invalidate",
-      onClick: result.invalidate,
+      onClick: () => result.invalidate(invalidateOptions),
       type: "button",
     },
     `${value}|background:${flag(result.isBackgroundPending)}|transition:${flag(
@@ -947,10 +978,12 @@ async function renderLaneApp({
   lane,
   loader,
   options,
+  invalidateOptions,
 }: {
   lane: Lane;
   loader: LaneLoader<string>;
   options?: LaneUseOptions;
+  invalidateOptions?: LaneInvalidateOptions;
 }): Promise<RenderedApp> {
   return render(
     React.createElement(
@@ -960,7 +993,7 @@ async function renderLaneApp({
         children: React.createElement(
           React.Suspense,
           { fallback: "loading" },
-          React.createElement(Probe, { loader, options }),
+          React.createElement(Probe, { loader, options, invalidateOptions }),
         ),
       },
     ),

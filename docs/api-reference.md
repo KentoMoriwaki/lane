@@ -129,7 +129,7 @@ type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;
   isTransitionPending: boolean;
   isBackgroundPending: boolean;
-  invalidate: () => void;
+  invalidate: (options?: LaneInvalidateOptions) => void;
 };
 ```
 
@@ -138,7 +138,7 @@ type LaneResult<T> = {
 | `promise` | The current promise for the key. Unwrap with `use(promise)` to get a [`LaneRead<T>`](#lanereadt). |
 | `isTransitionPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / reconnect / a `background: true` invalidation / subscription catch-up) is converging. |
-| `invalidate` | Invalidate this exact key and re-read through a transition. Convenience for `lane.invalidate(key)`. |
+| `invalidate` | Invalidate this exact key and re-read. Convenience for `lane.invalidate(key, options?)`; accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll). Defaults to an explicit transition. |
 
 ### `LaneRead<T>`
 
@@ -573,6 +573,18 @@ function Polled({ id }: { id: string }) {
   (e.g. a serialized key) and read the latest key from a ref, or prefer the
   `setTimeout` form above — it re-arms after each load, so it is naturally
   independent of render frequency.
+- **A reader can poll itself.** The `invalidate` returned from `useLane` accepts
+  the same options and is bound to that read's key, so a per-reader poll needs no
+  external key, and its identity is stable across renders — depend on it directly
+  and the render-path caveat above falls away:
+  ```tsx
+  const { promise, invalidate } = useLane(["task", id], ({ signal }) => fetchTask(id, signal));
+  const task = use(promise).data;
+  useEffect(() => {
+    const timer = setInterval(() => invalidate({ background: true, onlyIf: "settled" }), 5_000);
+    return () => clearInterval(timer);
+  }, [invalidate]);
+  ```
 
 ### `set`
 

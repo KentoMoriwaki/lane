@@ -170,6 +170,7 @@ for full signatures and semantics.
 ## Documentation
 
 - [API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md) — every export, option, and behavior.
+- [Migrating from React Query / SWR](https://github.com/KentoMoriwaki/lane/blob/main/docs/migrating.md) — the mental-model map and the migration gotchas.
 - [Supported architectures](https://github.com/KentoMoriwaki/lane/blob/main/docs/architectures.md) — RSC-first and RSC-seeded client ownership.
 - [Design notes](https://github.com/KentoMoriwaki/lane/blob/main/docs/design-notes.md) — why Lane is shaped this way.
 

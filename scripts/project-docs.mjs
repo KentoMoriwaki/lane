@@ -22,6 +22,7 @@ const PAGES = [
   "api-reference",
   "architectures",
   "integrations",
+  "migrating",
   "design-notes",
   "common-mistakes",
 ];

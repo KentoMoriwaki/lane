@@ -6,6 +6,28 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-07
+
+### Added
+
+- **`useLane(...).invalidate` accepts `LaneInvalidateOptions`** — the reader-bound
+  `invalidate` now takes the same `{ background, onlyIf, staleTime }` as
+  `lane.invalidate`, routed through the same path. It is render-stable and bound to
+  the read's key, so a self-scheduled poll can call
+  `invalidate({ background: true, onlyIf: "settled" })` directly — no external key
+  to thread, and no re-arm on unrelated re-renders.
+- **Migration guide** (`docs/migrating.md`, bundled in the agent skill): the React
+  Query / SWR mental-model map, transitional-adapter cautions, the resilient panel
+  pattern, deferred search, and a checklist.
+- **Common mistakes: "Suspense boundaries decide what stays mounted"** — ephemeral
+  UI (modal / popover / combobox / tab panel) needs its own Suspense boundary, or it
+  unmounts when an initial read suspends.
+
+### Fixed
+
+- Removed stale `refetchInterval` references from the docs, README, and agent skill
+  left over from its removal in 0.5.0 (the API reference was already correct).
+
 ## [0.5.0] - 2026-07-06
 
 ### Changed
@@ -155,7 +177,8 @@ Initial public release.
 
 - React 19.2+ (`useEffectEvent`).
 
-[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/KentoMoriwaki/lane/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/KentoMoriwaki/lane/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/KentoMoriwaki/lane/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/KentoMoriwaki/lane/compare/v0.3.0...v0.4.0

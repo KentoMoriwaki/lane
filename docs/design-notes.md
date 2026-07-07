@@ -163,7 +163,7 @@ adapter option -> conditional cache invalidation -> mounted readers re-read thro
 
 - mount-time stale refresh (`refetchOnMount`)
 - focus / reconnect revalidation (`refetchOnFocus`, `refetchOnReconnect`)
-- polling (`refetchInterval`)
+- polling — userland: a self-scheduled `invalidate(key, { onlyIf: "settled", background: true })` (no core timer)
 - retry / backoff (`retry`, `retryDelay`)
 - inactive-entry garbage collection (`gcTime`, a per-lane policy on `createLane`)
 

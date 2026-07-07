@@ -372,11 +372,20 @@ optimistic display elsewhere is `useOptimistic`, local to the action.
 
 ## Reimplementing refetching
 
-**Don't** wire up `setInterval` to poll or a `focus` listener to revalidate.
+**Don't** hand-roll a `focus` / `reconnect` listener to revalidate, or mirror
+refetch status into `useState` / `useEffect`.
 
-**Do** use the read/instance options: `refetchInterval`, `refetchOnFocus`,
-`refetchOnReconnect`, `staleTime`, `whenStale`, and `gcTime`. See
+**Do** use the read/instance options for revalidation and freshness:
+`refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`, `staleTime`,
+`whenStale`, and `gcTime`. See
 [lifecycle behavior](./api-reference.md#lifecycle-behavior).
+
+**Polling is userland** — there is no `refetchInterval` in core. A poll is a
+self-scheduled invalidation, written with primitives (the same stance Lane takes
+on mutations): `lane.invalidate(key, { onlyIf: "settled", background: true })` on
+an interval, or an effect that re-arms after each `use(promise)` load so it never
+fires mid-flight. It converges through the background transition
+(`isBackgroundPending`). See [polling](./api-reference.md#polling).
 
 ## So when *do* you call `useState` / `setState`?
 

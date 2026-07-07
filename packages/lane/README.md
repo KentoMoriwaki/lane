@@ -143,8 +143,8 @@ function RenameButton({ userId }: { userId: string }) {
   to exact keys; `LaneHydration` seeds promises from RSC-loaded data and
   overwrites authoritatively on navigation.
 - **Lifecycle built in.** Garbage collection (`gcTime`, default 5 min), `retry` /
-  `retryDelay`, `refetchInterval` polling, and `refetchOnFocus` /
-  `refetchOnMount` / `refetchOnReconnect` revalidation.
+  `retryDelay`, and `refetchOnFocus` / `refetchOnMount` / `refetchOnReconnect`
+  revalidation. Polling is userland — a self-scheduled `invalidate`.
 - **Optimistic UI stays local.** Lane ships no mutation helper; use
   `useOptimistic` / `useActionState` in the component that owns the action.
 
@@ -161,8 +161,8 @@ function RenameButton({ userId }: { userId: string }) {
 
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
 `updateAll`, `remove` / `removeAll`. `useLane` options: `staleTime`, `whenStale`,
-`retry`, `retryDelay`, `refetchInterval`, `refetchOnFocus`, `refetchOnMount`,
-`refetchOnReconnect`. `createLane` options: `gcTime`.
+`retry`, `retryDelay`, `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
+`createLane` options: `gcTime`.
 
 See the **[API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md)**
 for full signatures and semantics.

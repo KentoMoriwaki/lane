@@ -87,7 +87,7 @@ export type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;
   isBackgroundPending: boolean;
   isTransitionPending: boolean;
-  invalidate: () => void;
+  invalidate: (options?: LaneInvalidateOptions) => void;
 };
 
 /**

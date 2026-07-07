@@ -200,6 +200,52 @@ target. `useDeferredValue` defers the *reveal* only — the fetch still runs, an
 genuine first load still suspends, so keep a `<Suspense>` above. See
 [transitions & the back/forward caveat](./integrations.md#transitions-and-the-backforward-caveat).
 
+## Suspense boundaries decide what stays mounted
+
+A boundary is not just where the spinner goes — it is the unit of UI that
+**survives its own initial reads**. A read with no prior value suspends to the
+*nearest ancestor* boundary, and React replaces everything below it with that
+fallback until the read resolves. So a lazily mounted surface that fires an initial
+read — a **modal, popover, combobox, dropdown, tab panel, drawer** — *unmounts
+itself* (closes, loses focus, drops in-progress input) when its only boundary is
+out on the page.
+
+This is the one migration surprise with no analogue in the `isLoading` world: a
+flag renders a spinner *in place*, but a suspend tears the subtree down to the
+ancestor fallback.
+
+**Don't** rely on a page-level boundary for content that opens in an overlay:
+
+```tsx
+// The page's <Suspense> is the nearest boundary. Opening this modal fires an
+// initial read → it suspends → the *page* fallback replaces the modal. It closes.
+<Modal isOpen={open}>
+  <FilterEditor id={id} /> {/* reads options via useLane → suspends */}
+</Modal>
+```
+
+**Do** give each ephemeral surface its own boundary at its content root, so the
+fallback renders *inside* it and the surface stays mounted:
+
+```tsx
+<Modal isOpen={open}>
+  <Suspense fallback={<Spinner />}>
+    <FilterEditor id={id} />
+  </Suspense>
+</Modal>
+```
+
+The same rule covers **tab panels** — switching to a tab that reads should keep the
+tab bar live, so put a boundary per panel and change tabs in a transition — and
+**popover / combobox option lists** — the boundary goes inside the popover, not on
+the trigger.
+
+Mind the split: this is a surface's *initial* read (no prior value — it *must*
+suspend). Once a value exists, changing a filter or key *inside* the surface rides
+a transition and keeps it live (see [key changes that
+flash](#key-changes-that-flash-filters-navigation-props)) — no extra boundary
+needed for that.
+
 ## Keys & the loader
 
 The two inputs to `useLane`: the **key** that identifies a read, and the

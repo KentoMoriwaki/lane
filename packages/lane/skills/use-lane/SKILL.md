@@ -68,14 +68,31 @@ task touches that rule.
   `undefined`; unwrap conditionally: `result.promise ? use(result.promise) : fallback`.
   → `references/api-reference.md#conditional-reads-gating`
 
+## Migrating React Query / SWR? Five traps
+
+- **Map the model, don't port the shape.** `isLoading` → Suspense; `error` →
+  `refreshError` only (an initial failure hits the Error Boundary, never a field);
+  `refetchInterval` → a userland poll; `onMutate` → `useOptimistic`. Don't rebuild
+  a status object on top of Lane. → `references/migrating.md`
+- **Ephemeral UI needs its own boundary.** A modal / popover / combobox / tab panel
+  that fires an initial read suspends to the nearest ancestor and *unmounts the
+  surface* — put a `Suspense` inside it. → `references/common-mistakes.md`
+- **Search / filter:** derive **both the key and the loader** from a
+  `useDeferredValue` input so the list stays live. → `references/common-mistakes.md`
+- **Polling off the render path:** don't put the key array in the effect deps;
+  re-arm after each load or use a stable key id. → `references/api-reference.md#polling`
+- **Forward `({ signal })` from each loader** — don't thread it through a module
+  global. → `references/common-mistakes.md`
+
 ## Read next (progressive disclosure)
 
-Load the reference that matches the task — don't read all four up front. For
+Load the reference that matches the task — don't read them all up front. For
 exact signatures you can also read the package's bundled `dist/index.d.ts`.
 
 | Task / question | Read |
 | --- | --- |
 | Avoiding common mistakes — reading promises in effects, manual loading state, hand-patched mutations | `references/common-mistakes.md` |
+| Migrating React Query / SWR — the mental-model map, the transitional adapter, and the gotchas | `references/migrating.md` |
 | Exact API: every export, option, return type, and behavior | `references/api-reference.md` |
 | Why Lane is shaped this way; the reasoning behind each gotcha above | `references/design-notes.md` |
 | Where Lane fits: RSC-first vs RSC-seeded ownership; who owns mutations | `references/architectures.md` |

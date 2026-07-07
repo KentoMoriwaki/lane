@@ -566,6 +566,13 @@ function Polled({ id }: { id: string }) {
   ```tsx
   setInterval(() => lane.invalidate(key, { background: true, onlyIf: "settled" }), 5_000);
   ```
+- **Keep the schedule off the render path.** Don't put the key *array* in the
+  effect's dependency list — it is a fresh reference every render, so the effect
+  tears down and recreates the timer on each render, and if the component
+  re-renders faster than the interval it never fires. Depend on a stable key id
+  (e.g. a serialized key) and read the latest key from a ref, or prefer the
+  `setTimeout` form above — it re-arms after each load, so it is naturally
+  independent of render frequency.
 
 ### `set`
 

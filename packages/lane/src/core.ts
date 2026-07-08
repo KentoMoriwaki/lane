@@ -250,24 +250,16 @@ function reuseCache(
     return cache;
   }
 
-  // refetch is a deliberate read-time choice on an idle remount, not a
-  // background trigger — so it does not inherit core's "rejected is never
-  // stale" rule (which exists only to stop focus/poll/mount from hammering a
-  // failing endpoint). Re-surfacing a prior error on remount helps no one, so
-  // always retry it. This is checked before the mount gate below because a
-  // rejected read throws to an error boundary (it never suspends), so it can
-  // never drive the pre-commit retry loop — an error-boundary reset must be
-  // able to retry the loader even though the read never committed.
+  // Errors are checked before the mount gate: a rejected read throws to an error
+  // boundary instead of suspending, so it never drives the loop, and a boundary
+  // reset must be able to retry it even though the read never committed.
   if (cache.settlement.kind === "rejected") {
     return undefined;
   }
 
-  // A fulfilled value with no subscriber that has never been adopted is a
-  // pre-commit suspense retry (or a fresh prefetch/hydration read), not a
-  // remount. Discarding it would loop — the retry re-reads, re-judges the
-  // just-settled value stale, and refetches forever, never committing. Reuse
-  // until the reader has actually mounted at least once; a genuine remount of
-  // previously-live data (everSubscribed) still discards when stale.
+  // Never adopted → a pre-commit retry or a first prefetch/hydration read, not a
+  // remount; reuse so it can't loop. Only a real remount (everSubscribed)
+  // refetches a stale value.
   if (!entry.everSubscribed) {
     return cache;
   }
@@ -742,10 +734,7 @@ function isStale(cache: LanePromiseCache, staleTime: number): boolean {
     return false;
   }
 
-  if (staleTime <= 0) {
-    return true;
-  }
-
+  // `at` is a past timestamp, so `now - at >= 0`: any staleTime <= 0 is stale.
   return Date.now() - cache.settlement.at >= staleTime;
 }
 

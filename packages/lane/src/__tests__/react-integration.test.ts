@@ -574,6 +574,73 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
+  it("whenStale 'refetch' + staleTime 0 does not refetch-loop on first mount", async () => {
+    // A never-yet-mounted entry looks exactly like an idle remount to the store
+    // (settled cache, zero subscribers) during a pre-commit suspense retry. With
+    // staleTime 0 every retry would judge the just-settled value stale, discard
+    // it, and refetch — a loop that never commits. The read must reuse the value
+    // until the reader has actually mounted at least once.
+    const lane = createLane();
+    const gates: Array<ReturnType<typeof deferred<string>>> = [];
+    const loader = vi.fn(() => {
+      const gate = deferred<string>();
+      gates.push(gate);
+      return gate.promise;
+    });
+    const options = { whenStale: "refetch" as const, staleTime: 0 };
+
+    const app = await renderLaneApp({ lane, loader, options });
+    await waitForText(app.container, "loading");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      gates[0].resolve("loaded");
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refetch a fast sibling that goes stale while a slow sibling suspends", async () => {
+    // Two refetch reads in one component. The component commits only when both
+    // resolve in the same render pass, so it stays un-mounted (subscribers 0)
+    // until then. When the fast read settles and the slow one is still in
+    // flight, the retry must not treat the fast read as a stale idle remount.
+    const lane = createLane();
+    const gatesA: Array<ReturnType<typeof deferred<string>>> = [];
+    const loaderA = vi.fn(() => {
+      const gate = deferred<string>();
+      gatesA.push(gate);
+      return gate.promise;
+    });
+    const gatesB: Array<ReturnType<typeof deferred<string>>> = [];
+    const loaderB = vi.fn(() => {
+      const gate = deferred<string>();
+      gatesB.push(gate);
+      return gate.promise;
+    });
+
+    const app = await render(twoReadApp(lane, loaderA, loaderB));
+    expect(loaderA).toHaveBeenCalledTimes(1);
+    expect(loaderB).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      gatesA[0].resolve("a");
+      await settlePromiseHandlers();
+    });
+    // A settled before B; it must not be refetched just for being "stale".
+    expect(loaderA).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      gatesB[0].resolve("b");
+      await settlePromiseHandlers();
+    });
+    await waitForText(app.container, "a|b");
+    expect(loaderA).toHaveBeenCalledTimes(1);
+    expect(loaderB).toHaveBeenCalledTimes(1);
+  });
+
   it("gates the read by omitting the loader and loads once it is supplied", async () => {
     const lane = createLane();
     const loader = vi.fn(async () => "value");
@@ -789,6 +856,35 @@ function Probe({
       result.isTransitionPending,
     )}|refresh:${refresh}`,
   );
+}
+
+function TwoReadProbe({
+  loaderA,
+  loaderB,
+}: {
+  loaderA: LaneLoader<string>;
+  loaderB: LaneLoader<string>;
+}) {
+  const a = useLane(["a"], loaderA, { whenStale: "refetch", staleTime: 0 });
+  const b = useLane(["b"], loaderB, { whenStale: "refetch", staleTime: 0 });
+  const va = React.use(a.promise).data;
+  const vb = React.use(b.promise).data;
+  return React.createElement("div", null, `${va}|${vb}`);
+}
+
+function twoReadApp(
+  lane: Lane,
+  loaderA: LaneLoader<string>,
+  loaderB: LaneLoader<string>,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: "loading" },
+      React.createElement(TwoReadProbe, { loaderA, loaderB }),
+    ),
+  });
 }
 
 function GatedProbe({

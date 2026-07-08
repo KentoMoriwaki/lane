@@ -6,6 +6,22 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Run Lane in any React renderer — CLI (Ink), React Native, and beyond.** The
+  provider's focus / reconnect signals now come from a pluggable `eventSource`
+  prop on `LaneProvider` instead of hard-wired `window` / `document` listeners.
+  Three sources ship: `domEventSource` (default — browser events, feature-detected
+  so it safely no-ops off the web), `noopEventSource` (opt out, e.g. a CLI), and
+  `createReactNativeEventSource({ AppState, netInfo? })` (React Native, with the
+  native modules passed in so Lane never depends on `react-native`). The store and
+  hooks were already DOM-free, so this removes Lane's last browser coupling.
+  **Fully backward compatible** — existing web apps need no change; the default is
+  the previous behavior. New type exports: `LaneEventSource`,
+  `LaneRevalidateHandlers`, `ReactNativeAppState`, `ReactNativeNetInfo`,
+  `ReactNativeEventSourceOptions`. See
+  [docs/environments.md](./docs/environments.md).
+
 ### Fixed
 
 - **`whenStale: "refetch"` no longer loops on mount with a small `staleTime`.** A

@@ -4,6 +4,7 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { LaneEventSource, LaneRevalidateHandlers } from "../event-source";
 import { LaneProvider, useLaneRevalidation } from "../provider";
 import type { Revalidator } from "../provider";
 import { resetVitest, settlePromiseHandlers } from "./test-utils";
@@ -40,9 +41,28 @@ function Probe({ revalidator }: { revalidator: Revalidator }) {
   return null;
 }
 
+// A source whose focus / reconnect signals the test drives by hand — no DOM
+// events involved, so it doubles as proof the provider fans out from an injected
+// source, not from `window` / `document`.
+function controllableSource() {
+  let captured: LaneRevalidateHandlers | undefined;
+  const cleanup = vi.fn();
+  const source: LaneEventSource = (handlers) => {
+    captured = handlers;
+    return cleanup;
+  };
+
+  return {
+    source,
+    cleanup,
+    fireFocus: () => captured?.onFocus(),
+    fireReconnect: () => captured?.onReconnect(),
+  };
+}
+
 async function renderProvider(
   children: React.ReactNode,
-  props: { focusThrottleInterval?: number } = {},
+  props: { focusThrottleInterval?: number; eventSource?: LaneEventSource } = {},
 ): Promise<Root> {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -160,5 +180,77 @@ describe("LaneProvider revalidation", () => {
 
     await fire("focus");
     expect(onFocus).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("LaneProvider with a custom event source", () => {
+  it("fans an injected source's focus and reconnect out to revalidators", async () => {
+    const source = controllableSource();
+    const onFocus = vi.fn();
+    const onReconnect = vi.fn();
+    await renderProvider(
+      React.createElement(Probe, { revalidator: { onFocus, onReconnect } }),
+      { eventSource: source.source },
+    );
+
+    await act(async () => {
+      source.fireFocus();
+      await settlePromiseHandlers();
+    });
+    expect(onFocus).toHaveBeenCalledTimes(1);
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    await act(async () => {
+      source.fireReconnect();
+      await settlePromiseHandlers();
+    });
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies the focus throttle to an injected source", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+
+    const source = controllableSource();
+    const onFocus = vi.fn();
+    await renderProvider(
+      React.createElement(Probe, { revalidator: { onFocus } }),
+      { eventSource: source.source, focusThrottleInterval: 5_000 },
+    );
+
+    await act(async () => {
+      source.fireFocus();
+      await settlePromiseHandlers();
+    });
+    expect(onFocus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      source.fireFocus();
+      await settlePromiseHandlers();
+    });
+    expect(onFocus).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(15_000);
+    await act(async () => {
+      source.fireFocus();
+      await settlePromiseHandlers();
+    });
+    expect(onFocus).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs the source's cleanup when the provider unmounts", async () => {
+    const source = controllableSource();
+    const root = await renderProvider(
+      React.createElement(Probe, { revalidator: { onFocus: vi.fn() } }),
+      { eventSource: source.source },
+    );
+
+    expect(source.cleanup).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(source.cleanup).toHaveBeenCalledTimes(1);
   });
 });

@@ -46,6 +46,12 @@ and lets React own the UI state it was designed to own in React 19.
 
 React **19.2+** (Lane uses `useEffectEvent`). React is a peer dependency.
 
+Lane leans on React core (`use`, Suspense, `useTransition`, `useEffectEvent`),
+never `react-dom`, so it runs in **any React renderer** — the browser, **React
+Native**, an **Ink** CLI, or your own. See
+[Environments](https://github.com/KentoMoriwaki/lane/blob/main/docs/environments.md)
+for CLI / React Native setup.
+
 ## Install
 
 ```sh
@@ -152,7 +158,7 @@ function RenameButton({ userId }: { userId: string }) {
 
 | Export | Purpose |
 | --- | --- |
-| `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation. |
+| `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation via a pluggable `eventSource` (browser default; React Native / CLI / custom). |
 | `useLane(key, loader, options?)` | Read a key. Returns `{ promise, isTransitionPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
 | `useLanePromise(key, loader, options?)` | Thin wrapper returning just `promise`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
@@ -172,6 +178,7 @@ for full signatures and semantics.
 - [API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md) — every export, option, and behavior.
 - [Migrating from React Query / SWR](https://github.com/KentoMoriwaki/lane/blob/main/docs/migrating.md) — the mental-model map and the migration gotchas.
 - [Supported architectures](https://github.com/KentoMoriwaki/lane/blob/main/docs/architectures.md) — RSC-first and RSC-seeded client ownership.
+- [Environments](https://github.com/KentoMoriwaki/lane/blob/main/docs/environments.md) — CLI (Ink), React Native, and other React renderers.
 - [Design notes](https://github.com/KentoMoriwaki/lane/blob/main/docs/design-notes.md) — why Lane is shaped this way.
 
 ## Agent skill

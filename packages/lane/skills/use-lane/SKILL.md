@@ -97,6 +97,7 @@ exact signatures you can also read the package's bundled `dist/index.d.ts`.
 | Why Lane is shaped this way; the reasoning behind each gotcha above | `references/design-notes.md` |
 | Where Lane fits: RSC-first vs RSC-seeded ownership; who owns mutations | `references/architectures.md` |
 | Wiring to Next.js / React Router / TanStack / plain SPA; the back-forward (`popstate`) flash caveat | `references/integrations.md` |
+| Running outside the browser — CLI (Ink), React Native, other renderers; the `eventSource` prop | `references/environments.md` |
 | Conditional / deferred reads | `references/api-reference.md#conditional-reads-gating`, `#deferred-reads-render-first-swap-when-ready` |
 | `staleTime` / `whenStale`, polling, focus / reconnect, `gcTime` retention | `references/api-reference.md#laneuseoptions`, `#lifecycle-behavior` |
 | Keys, and scoped (prefix / predicate) operations | `references/api-reference.md#keys` |

@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { createLane } from "./core";
+import { domEventSource } from "./event-source";
+import type { LaneEventSource } from "./event-source";
 import type { Lane } from "./types";
 
 // A reader's opt-in to activity-based revalidation. Focus / reconnect are DOM
@@ -57,6 +59,7 @@ function createRegistry(): {
 export function LaneProvider({
   lane: providedLane,
   focusThrottleInterval = DEFAULT_FOCUS_THROTTLE_INTERVAL,
+  eventSource = domEventSource,
   children,
 }: {
   lane?: Lane;
@@ -65,6 +68,14 @@ export function LaneProvider({
    * revalidations within this window are coalesced into one (default 5s).
    */
   focusThrottleInterval?: number;
+  /**
+   * Where focus / reconnect signals come from. Defaults to browser DOM events
+   * (`domEventSource`), feature-detected so it safely no-ops off the web. Pass
+   * `noopEventSource` for a CLI, `createReactNativeEventSource(...)` for React
+   * Native, or your own {@link LaneEventSource}. Use a stable reference — it is
+   * an effect dependency (the shipped sources are stable).
+   */
+  eventSource?: LaneEventSource;
   children: React.ReactNode;
 }) {
   // Both are created once and never re-created, so they are refs, not state.
@@ -76,9 +87,13 @@ export function LaneProvider({
   const { revalidators, revalidation } = (registryRef.current ??= createRegistry());
 
   React.useEffect(() => {
+    // Throttle focus here, not in the source: coalescing repeated focus signals
+    // is policy that applies whatever the source (DOM, AppState, custom), so the
+    // source emits raw signals and the provider owns the window. Reconnect is not
+    // throttled. The source wires the environment and returns its own cleanup.
     let lastFocusAt = 0;
 
-    const fireFocus = () => {
+    const onFocus = () => {
       const now = Date.now();
 
       if (now - lastFocusAt < focusThrottleInterval) {
@@ -92,28 +107,14 @@ export function LaneProvider({
       }
     };
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        fireFocus();
-      }
-    };
-
-    const fireReconnect = () => {
+    const onReconnect = () => {
       for (const revalidator of [...revalidators]) {
         revalidator.onReconnect?.();
       }
     };
 
-    window.addEventListener("focus", fireFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("online", fireReconnect);
-
-    return () => {
-      window.removeEventListener("focus", fireFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("online", fireReconnect);
-    };
-  }, [revalidators, focusThrottleInterval]);
+    return eventSource({ onFocus, onReconnect });
+  }, [revalidators, focusThrottleInterval, eventSource]);
 
   // `revalidation` is stable, so this changes only when `lane` does.
   const value = React.useMemo<LaneContextValue>(

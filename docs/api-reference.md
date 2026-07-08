@@ -25,11 +25,11 @@ Requires React **19.2+** (`useEffectEvent`). React is a peer dependency.
 
 ### `LaneProvider`
 
-Provides a `Lane` instance to the tree and wires window focus / reconnect
-revalidation.
+Provides a `Lane` instance to the tree and wires focus / reconnect revalidation
+from a pluggable event source.
 
 ```tsx
-<LaneProvider lane?={Lane} focusThrottleInterval?={number}>
+<LaneProvider lane?={Lane} focusThrottleInterval?={number} eventSource?={LaneEventSource}>
   {children}
 </LaneProvider>
 ```
@@ -37,11 +37,39 @@ revalidation.
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
 | `lane` | `Lane` | a fresh `createLane()` | The Lane instance to provide. Omit to let the provider create and own one. |
-| `focusThrottleInterval` | `number` | `5000` | Window `focus` and `visibilitychange` both fire on a tab switch; focus revalidations within this window are coalesced into one. Reconnect is not throttled. |
+| `focusThrottleInterval` | `number` | `5000` | Focus and `visibilitychange` both fire on a tab switch; focus revalidations within this window are coalesced into one. Reconnect is not throttled. |
+| `eventSource` | `LaneEventSource` | `domEventSource` | Where focus / reconnect signals originate. Defaults to browser DOM events. Pass `noopEventSource` (CLI), `createReactNativeEventSource(...)` (React Native), or your own — see [Event sources](#event-sources) and [Environments](./environments.md). Use a stable reference. |
 
-The provider listens to `window` `focus`, `document` `visibilitychange`
-(visible only), and `window` `online`, and triggers `refetchOnFocus` /
-`refetchOnReconnect` revalidation for subscribed entries.
+With the default `domEventSource`, the provider listens to `window` `focus`,
+`document` `visibilitychange` (visible only), and `window` `online`, and triggers
+`refetchOnFocus` / `refetchOnReconnect` revalidation for subscribed entries. The
+source is feature-detected, so importing it off the web (Node, Ink, React Native)
+safely no-ops instead of throwing.
+
+### Event sources
+
+`eventSource` decides where "the app came to the foreground" and "the network
+reconnected" signals come from — the only environment-coupled input Lane has. The
+provider owns the policy (throttling, fanning out to readers); a source owns only
+the signal. Three are shipped, all stable references safe to pass directly:
+
+| Export | Use |
+| --- | --- |
+| `domEventSource` | **Default.** Browser `focus` / `visibilitychange` / `online`, feature-detected (no-ops off the web). |
+| `noopEventSource` | Emits nothing — opt out of focus / reconnect revalidation (e.g. a CLI). |
+| `createReactNativeEventSource({ AppState, netInfo? })` | React Native: focus from `AppState` returning to the foreground, reconnect from NetInfo (optional). You pass the native modules in, so Lane never imports `react-native`. |
+
+```ts
+type LaneEventSource = (handlers: {
+  onFocus: () => void;
+  onReconnect: () => void;
+}) => (() => void) | void;
+```
+
+Write your own for any other renderer: call `onFocus` / `onReconnect` when the
+environment signals them and return a cleanup. Pass a **stable reference** — it is
+a provider effect dependency (the shipped sources are module constants). See
+[Environments](./environments.md) for full CLI (Ink) and React Native recipes.
 
 ### `useLaneInstance()`
 
@@ -705,11 +733,15 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 
 ## Type exports
 
-`Lane`, `LaneEntryInfo`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
+`Lane`, `LaneEntryInfo`, `LaneEventSource`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`,
 `LanePrefetchOptions`, `LaneRead`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
-`LaneResult`, `LaneRetryDelay`,
-`LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`.
+`LaneResult`, `LaneRetryDelay`, `LaneRevalidateHandlers`,
+`LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`,
+`ReactNativeAppState`, `ReactNativeEventSourceOptions`, `ReactNativeNetInfo`.
+
+Runtime exports beyond the hooks and `createLane`: `domEventSource`,
+`noopEventSource`, `createReactNativeEventSource` (see [Event sources](#event-sources)).
 
 ## See also
 

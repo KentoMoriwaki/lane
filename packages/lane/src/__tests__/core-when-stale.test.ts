@@ -31,9 +31,14 @@ describe("whenStale", () => {
     const lane = createLane();
     const loader = vi.fn(async () => "loaded");
 
+    // Adopt once so later idle reads are genuine remounts. Without a prior
+    // subscription an idle read is a pre-commit suspense retry, which reuses to
+    // avoid a refetch loop (see the "never adopted" case below).
+    const unsubscribe = subscribe(lane, ["k"]);
     await expect(
       readOrCreate(lane, ["k"], loader, refetch(1_000)),
     ).resolves.toEqual({ data: "loaded" });
+    unsubscribe();
 
     // Within staleTime → reuse.
     await vi.advanceTimersByTimeAsync(999);
@@ -42,12 +47,33 @@ describe("whenStale", () => {
     ).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
 
-    // Past staleTime, idle → discard and fetch fresh (the reader would suspend).
+    // Past staleTime, idle remount → discard and fetch fresh (reader suspends).
     await vi.advanceTimersByTimeAsync(2);
     await expect(
       readOrCreate(lane, ["k"], loader, refetch(1_000)),
     ).resolves.toEqual({ data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("'refetch' reuses a stale value that has never been adopted (no refetch loop)", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "loaded");
+
+    // A never-subscribed entry (a pre-commit suspense retry, or a prefetch/
+    // hydration read a reader is adopting for the first time) is not a remount.
+    // Re-reading a stale value must reuse it, never discard-and-refetch — the
+    // latter loops forever because each retry re-settles and re-judges it stale.
+    await expect(
+      readOrCreate(lane, ["k"], loader, refetch(0)),
+    ).resolves.toEqual({ data: "loaded" });
+
+    await vi.advanceTimersByTimeAsync(5_000); // well past staleTime
+    await expect(
+      readOrCreate(lane, ["k"], loader, refetch(0)),
+    ).resolves.toEqual({ data: "loaded" });
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it("'refetch' still shares an in-flight read (same-transition dedupe)", async () => {

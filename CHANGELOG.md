@@ -6,6 +6,22 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`whenStale: "refetch"` no longer loops on mount with a small `staleTime`.** A
+  reader that suspends re-runs its read on every pre-commit retry, and React
+  discards a component's fiber (state and refs alike) until its first commit — so
+  a not-yet-mounted entry is indistinguishable from an idle remount (settled
+  cache, zero subscribers). With `staleTime` at or near `0`, `"refetch"` judged
+  the just-settled value stale on each retry, discarded it, and refetched forever
+  without committing (worse with sibling reads: a fast read went stale while
+  waiting on a slow one). A stale fulfilled value is now discarded only on a
+  genuine remount of previously-adopted data (an entry that has had a live
+  subscriber); a first adoption — a pre-commit retry or a prefetched/hydrated
+  value being read for the first time — reuses the value instead. Prior errors
+  are still always retried. Use `refetchOnMount` to force a fresh load on first
+  mount.
+
 ## [0.6.0] - 2026-07-07
 
 ### Added

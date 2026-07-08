@@ -70,6 +70,12 @@ type LaneEntry = {
   // last unsubscribe; cleared while subscribed). The central GC sweep evicts
   // entries idle for longer than the lane's gcTime.
   idleSince: number | undefined;
+  // Whether the entry has ever had a live subscriber (a reader that committed).
+  // Never-subscribed entries look identical to an idle remount — settled cache,
+  // zero subscribers — but a pre-commit suspense retry is not a remount. This
+  // flag lets `whenStale: "refetch"` fire only on a genuine remount of
+  // previously-live data instead of looping on the retry of a first mount.
+  everSubscribed: boolean;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -216,9 +222,15 @@ export function readOrCreate<T>(
  *
  * `"refetch"` discards a stale value (or a prior error) and suspends on a fresh
  * read, but never discards an in-flight read (would break same-transition
- * sharing) or a value a live subscriber is showing (would yank a shared promise
- * from active readers) — so it only forces a fresh load on an otherwise idle
- * remount.
+ * sharing), a value a live subscriber is showing (would yank a shared promise
+ * from active readers), or a fulfilled value the entry has never had a
+ * subscriber for — that last case is a pre-commit suspense retry (or a first
+ * adoption of a prefetched/hydrated value), not a remount, and discarding it
+ * would loop forever: React re-reads on each retry, re-judges the just-settled
+ * value stale, and refetches without ever committing. So a stale fulfilled
+ * value is only discarded on a genuine idle remount of previously-live data.
+ * A prior error is always retried (it throws to an error boundary rather than
+ * suspending, so it cannot drive that loop).
  */
 function reuseCache(
   entry: LaneEntry,
@@ -238,13 +250,18 @@ function reuseCache(
     return cache;
   }
 
-  // refetch is a deliberate read-time choice on an idle remount, not a
-  // background trigger — so it does not inherit core's "rejected is never
-  // stale" rule (which exists only to stop focus/poll/mount from hammering a
-  // failing endpoint). Re-surfacing a prior error on remount helps no one, so
-  // always retry it; a fulfilled value follows the usual staleness rule.
+  // Errors are checked before the mount gate: a rejected read throws to an error
+  // boundary instead of suspending, so it never drives the loop, and a boundary
+  // reset must be able to retry it even though the read never committed.
   if (cache.settlement.kind === "rejected") {
     return undefined;
+  }
+
+  // Never adopted → a pre-commit retry or a first prefetch/hydration read, not a
+  // remount; reuse so it can't loop. Only a real remount (everSubscribed)
+  // refetches a stale value.
+  if (!entry.everSubscribed) {
+    return cache;
   }
 
   return isStale(cache, options?.staleTime ?? 0) ? undefined : cache;
@@ -277,6 +294,7 @@ export function subscribeLane(
 
   entry.subscribers.add(subscriber);
   entry.idleSince = undefined; // active: not a GC candidate
+  entry.everSubscribed = true; // adopted: future idle reads are true remounts
 
   return () => {
     entry.subscribers.delete(subscriber);
@@ -507,6 +525,7 @@ function createEntry(
 ): LaneEntry {
   return {
     cache: undefined,
+    everSubscribed: false,
     idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
     key,
     keyId,
@@ -715,10 +734,7 @@ function isStale(cache: LanePromiseCache, staleTime: number): boolean {
     return false;
   }
 
-  if (staleTime <= 0) {
-    return true;
-  }
-
+  // `at` is a past timestamp, so `now - at >= 0`: any staleTime <= 0 is stale.
   return Date.now() - cache.settlement.at >= staleTime;
 }
 

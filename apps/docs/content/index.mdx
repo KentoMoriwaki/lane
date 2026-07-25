@@ -1,15 +1,18 @@
 # use-lane
 
-**Transition-native data fetching for React 19.** Refetches run inside React
-transitions, so the screen you're looking at stays live while the next data
-loads — no spinner flash, no torn UI.
+**Promise-first. Transition-native.**
+
+Lane is a minimal data layer for React 19. It keeps each keyed read's promise in
+React state, so Suspense reads it, transitions replace it, and the screen you're
+looking at stays live while the next data loads. No spinner flash, no torn UI,
+no parallel query state machine.
 
 React 19 ships the primitives to _render_ async data — `use(promise)` for data,
 Suspense for loading, Error Boundaries for errors, transitions for non-blocking
 updates, and `useOptimistic` for mutations. It doesn't ship the layer
-underneath: something to cache those promises by key, share one request across
-components, and re-fetch after a change. **Lane is exactly that layer — and
-nothing else.**
+underneath: stable promise identity by key, one shared request across components,
+and a way to replace that promise after the source changes. **Lane is exactly
+that layer — and nothing React already provides.**
 
 ```tsx
 const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
@@ -31,15 +34,20 @@ Requires React **19.2+** (`useEffectEvent`).
 
 ## Why Lane
 
-- **Every update is a transition.** SWR and React Query keep the previous screen
-  during a refetch with a library flag (`keepPreviousData` / `placeholderData`).
-  Lane keeps each key's promise in React state, so wrapping a key change or an
-  `invalidate` in `startTransition` — or `useDeferredValue` — just works.
+- **The promise is the state.** Lane keeps each key's current promise in React
+  state. `use(promise)` is the only read path; Suspense and Error Boundaries own
+  the first load and failure.
+- **Promise replacement is transition-native.** Invalidation and revalidation
+  replace the promise through a transition. Key changes compose with
+  `startTransition` or `useDeferredValue`, keeping the current screen live.
 - **No parallel state machine.** No `data` / `error` / `isLoading` result
   object. You read with `use(promise)`; Suspense and Error Boundaries do the
   rest.
 - **No mutation helper, by design.** Mutations stay in React primitives, so
   optimistic UI lives next to the action that triggered it.
+- **Minimal on purpose.** A typical `LaneProvider` + `useLane` import is about
+  **3.1 kB** minified and Brotli-compressed because Lane does not reimplement
+  state machinery React already provides.
 
 ## Learn more
 

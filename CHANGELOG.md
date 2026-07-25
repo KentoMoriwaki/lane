@@ -6,6 +6,13 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Reframed the public documentation around Lane's core model:
+  **Promise-first. Transition-native.** Lane keeps each keyed read's promise in
+  React state and stays minimal by leaving loading, errors, pending, and
+  optimistic UI to React.
+
 ## [0.7.0] - 2026-07-08
 
 ### Added

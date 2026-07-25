@@ -1,9 +1,9 @@
 # API Reference
 
-`use-lane` is transition-native data fetching for React 19. Lane caches the
-promise behind each key and re-reads it inside React transitions; React owns
-loading (Suspense), errors (Error Boundaries), and optimistic UI (`useOptimistic`
-/ `useActionState`).
+`use-lane` is promise-first, transition-native data fetching for React 19. Lane
+keeps each keyed read's promise in React state and replaces it through React
+transitions; React owns loading (Suspense), errors (Error Boundaries), pending,
+and optimistic UI (`useOptimistic` / `useActionState`).
 
 Everything is exported from the package root:
 

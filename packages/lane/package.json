@@ -1,7 +1,7 @@
 {
   "name": "use-lane",
   "version": "0.7.0",
-  "description": "Transition-native data fetching for React 19 — Lane caches the promise behind each key and re-reads it inside transitions, while React owns loading, errors, and optimistic UI.",
+  "description": "Promise-first, transition-native data fetching for React 19 — a minimal data layer that keeps keyed promises in React state while React owns the UI.",
   "license": "MIT",
   "author": "Kento Moriwaki <kentomoriwaki@gmail.com>",
   "homepage": "https://github.com/KentoMoriwaki/lane/tree/main/packages/lane#readme",
@@ -17,6 +17,8 @@
     "react",
     "react-19",
     "data-fetching",
+    "promise",
+    "promise-first",
     "cache",
     "suspense",
     "transition",

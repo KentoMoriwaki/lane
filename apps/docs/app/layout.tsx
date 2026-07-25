@@ -9,7 +9,8 @@ export const metadata = {
     default: "use-lane",
     template: "%s – use-lane",
   },
-  description: "Transition-native data fetching for React 19.",
+  description:
+    "Promise-first, transition-native data fetching for React 19. A minimal data layer that keeps promises in React state.",
 };
 
 const navbar = (

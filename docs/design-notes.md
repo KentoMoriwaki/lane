@@ -1,11 +1,11 @@
 # Design notes
 
-Why Lane is shaped the way it is. For *how* to use it, see the
-[API reference](./api-reference.md); for where it fits, see
-[supported architectures](./architectures.md).
+Why Lane is shaped the way it is. **Promise-first. Transition-native.** For
+*how* to use it, see the [API reference](./api-reference.md); for where it fits,
+see [supported architectures](./architectures.md).
 
-The throughline: **Lane owns promise identity; React owns UI state.** Every
-decision below follows from keeping that split clean.
+The throughline: **the promise is the state. Lane owns promise identity; React
+owns UI state.** Every decision below follows from keeping that split clean.
 
 ## Source invalidation is the primary convergence model
 

@@ -3,17 +3,19 @@
 [![npm version](https://img.shields.io/npm/v/use-lane.svg)](https://www.npmjs.com/package/use-lane)
 [![license](https://img.shields.io/npm/l/use-lane.svg)](https://github.com/KentoMoriwaki/lane/blob/main/packages/lane/LICENSE)
 
-**Transition-native data fetching for React 19.** Refetches run inside React
-transitions — invalidate after a mutation, revalidate on focus, or defer a
-filter change, and the screen you're looking at stays live while the next data
-loads. No spinner flash, no torn UI.
+**Promise-first. Transition-native.**
+
+Lane is a minimal data layer for React 19. It keeps each keyed read's promise in
+React state, so Suspense reads it, transitions replace it, and the screen you're
+looking at stays live while the next data loads. No spinner flash, no torn UI,
+no parallel query state machine.
 
 React 19 ships the primitives to *render* async data — `use(promise)` for data,
 Suspense for loading, Error Boundaries for errors, transitions for non-blocking
 updates, and `useOptimistic` / `useActionState` for mutations. It doesn't ship
-the layer underneath: something to cache those promises by key, share one request
-across components, and re-fetch after a change. Lane is exactly that layer — and
-nothing else.
+the small coordination layer underneath: stable promise identity by key, one
+shared request across components, and a way to replace that promise after the
+source changes. Lane is exactly that layer — and nothing React already provides.
 
 ```tsx
 const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
@@ -24,15 +26,18 @@ const { data: user } = use(promise); // Suspense owns loading, Error Boundaries 
 
 Libraries like SWR and TanStack Query own a resolved-value cache plus their own
 loading/error/status objects, optimistic patches, and mutation helpers. Lane
-takes the opposite split: it owns only the **promise identity** behind each key
-and lets React own the UI state it was designed to own in React 19.
+takes the opposite split: the **promise is the state**. Lane owns only the
+promise identity and lifecycle behind each key; React owns the UI state it was
+designed to own.
 
-- **Every update is a transition.** SWR and React Query keep the previous screen
-  during a refetch with a library flag (`keepPreviousData` / `placeholderData`).
-  Lane keeps each key's promise in React state, so wrapping a key change or an
-  `invalidate` in `startTransition` — or `useDeferredValue` — *just works*: the
-  same transition you use everywhere else, interruptible, with a real pending
-  flag.
+- **Promise-first by construction.** Lane keeps each key's current promise in
+  React state instead of reading resolved query state from an external store.
+  `use(promise)` is the only read path: Suspense owns the first load, an Error
+  Boundary owns the first failure, and a refresh swaps in the next promise.
+- **Promise replacement is transition-native.** Invalidation and revalidation
+  replace the promise through a transition. Key changes compose with
+  `startTransition` or `useDeferredValue`, so the same interruptible transition
+  model drives the rest of your app and keeps the current screen live.
 - **One mental model.** Mutate the source, invalidate the read, render from the
   next promise — the same model you already use next to Server Components.
 - **No parallel state machine.** No `isLoading` / `isError` / `status` fields.
@@ -41,6 +46,9 @@ and lets React own the UI state it was designed to own in React 19.
 - **No mutation helper, by design.** Mutations stay in React primitives, so
   optimistic UI lives next to the action that triggered it instead of in a
   global cache that needs rollback semantics.
+- **Minimal on purpose.** A typical `LaneProvider` + `useLane` import is about
+  **3.1 kB** minified and Brotli-compressed. Lane stays small because it does not
+  reimplement the UI state machine React already ships.
 
 ## Requirements
 

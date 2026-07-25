@@ -12,6 +12,7 @@ import {
   toGraphQLFilters,
 } from "@/app/relay/api/filters";
 import { useWorkspace } from "@/app/relay/api/workspace-provider";
+import { useDebounced } from "@/lib/use-debounced";
 import {
   type MutationKind,
   type WorkspaceRefresh,
@@ -110,12 +111,15 @@ function WorkspaceShell({
 
   // Every view change is a transition: the current screen stays live while the
   // next query (tasks for new filters, the selected task's detail) loads.
-  const applyFilters = React.useCallback(
-    (next: TaskFilters) => {
-      startView(() => setFilters(next));
-    },
-    [],
-  );
+  const applyFilters = React.useCallback((next: TaskFilters) => {
+    startView(() => setFilters(next));
+  }, []);
+  // Typing is the urgent source of truth: the input reads `filters.q` directly
+  // (instant, IME-safe). The query reads a debounced + deferred copy, so the list
+  // lags behind without the input ever trailing a transition.
+  const setSearch = React.useCallback((q: string) => {
+    setFilters((prev) => ({ ...prev, q }));
+  }, []);
   const applyView = React.useCallback(
     (view: Partial<TaskFilters>) => {
       applyFilters({ ...EMPTY_FILTERS, ...view });
@@ -182,7 +186,7 @@ function WorkspaceShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
           search={filters.q}
-          onSearchChange={(q) => applyFilters({ ...filters, q })}
+          onSearchChange={setSearch}
           onNewTask={() => setCreateOpen(true)}
           onRefresh={refresh}
           isRefreshing={isViewPending}
@@ -297,9 +301,19 @@ function TasksPane({
   onFilterChange: (filters: TaskFilters) => void;
 }) {
   const { tasksKey } = useWorkspaceRefresh();
+  // `filters.q` is the urgent value the input shows. Debounce it for the network,
+  // then defer it so the list keeps the current rows while the next query loads.
+  // Typing never goes through a transition, so dim on the deferred value lagging.
+  const debouncedQ = useDebounced(filters.q, 300);
+  const deferredQ = React.useDeferredValue(debouncedQ);
+  const queryFilters = React.useMemo(
+    () => ({ ...filters, q: deferredQ }),
+    [filters, deferredQ],
+  );
+  const listPending = isPending || filters.q !== deferredQ;
   const data = useLazyLoadQuery<RelayTasksQuery>(
     tasksQuery,
-    { filters: toGraphQLFilters(filters) },
+    { filters: toGraphQLFilters(queryFilters) },
     { fetchKey: tasksKey, fetchPolicy: "store-or-network" },
   );
 
@@ -310,7 +324,7 @@ function TasksPane({
           query={query}
           filters={filters}
           taskCount={data.tasks.length}
-          isPending={isPending}
+          isPending={listPending}
           onFilterChange={onFilterChange}
           onResetFilters={onResetFilters}
         />
@@ -320,7 +334,7 @@ function TasksPane({
           tasks={data.tasks}
           currentUserId={currentUserId}
           hasActiveFilters={hasActiveFilters}
-          dimmed={isPending}
+          dimmed={listPending}
           selectedTaskId={selectedTaskId}
           onSelectTask={onSelectTask}
           onClearSelection={onClearSelection}

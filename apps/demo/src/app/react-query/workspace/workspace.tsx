@@ -2,6 +2,7 @@
 
 import type { TaskPriority, TaskScope, TaskStatus } from "@/server/api";
 import * as React from "react";
+import type { TaskFilters } from "@/app/react-query/api/endpoints";
 import { useWorkspaceRefresh } from "@/app/react-query/api/hooks";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { FilterBar } from "./filter-bar";
@@ -11,6 +12,7 @@ import { SignInScreen } from "./sign-in-screen";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { TaskList } from "./task-list";
 import { Topbar } from "./topbar";
+import { useDebouncedSearchField } from "./use-debounced-search-field";
 import { useWorkspaceUrl } from "./use-workspace-url";
 import { useWorkspace } from "./workspace-provider";
 
@@ -42,6 +44,29 @@ function WorkspaceShell() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const { refresh, isRefreshing } = useWorkspaceRefresh();
 
+  const commitSearch = React.useCallback(
+    (q: string) => patchFilters({ q }, "replace"),
+    [patchFilters],
+  );
+  const searchField = useDebouncedSearchField(filters.q, commitSearch);
+  const { cancel: cancelSearch } = searchField;
+
+  // A view change owns the whole filter set, search included. Dropping the
+  // scheduled commit keeps a half-typed query from landing on top of the view
+  // a moment after it was applied.
+  const handleApplyView = React.useCallback(
+    (view: Partial<TaskFilters>) => {
+      cancelSearch();
+      applyView(view);
+    },
+    [applyView, cancelSearch],
+  );
+
+  const handleResetFilters = React.useCallback(() => {
+    cancelSearch();
+    resetFilters();
+  }, [cancelSearch, resetFilters]);
+
   const hasActiveFilters =
     filters.scope !== "all" ||
     filters.status.length > 0 ||
@@ -62,12 +87,11 @@ function WorkspaceShell() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <Sidebar filters={filters} onApplyView={applyView} />
+      <Sidebar filters={filters} onApplyView={handleApplyView} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
-          search={filters.q}
-          onSearchChange={(q) => patchFilters({ q }, "replace")}
+          searchField={searchField}
           onNewTask={() => setCreateOpen(true)}
           onRefresh={refresh}
           isRefreshing={isRefreshing}
@@ -75,7 +99,7 @@ function WorkspaceShell() {
 
         <div className="flex min-h-0 flex-1">
           <section className="flex min-w-0 flex-1 flex-col">
-            <InsightStrip onApplyView={applyView} />
+            <InsightStrip onApplyView={handleApplyView} />
             <FilterBar
               filters={filters}
               onScopeChange={(scope: TaskScope) => patchFilters({ scope })}
@@ -86,7 +110,7 @@ function WorkspaceShell() {
                 patchFilters({ priority: toggle(filters.priority, priority) })
               }
               onPatch={patchFilters}
-              onResetAll={resetFilters}
+              onResetAll={handleResetFilters}
             />
             <div className="scrollbar-calm min-h-0 flex-1 overflow-y-auto">
               <TaskList
@@ -95,7 +119,7 @@ function WorkspaceShell() {
                 selectedTaskId={selectedTaskId}
                 onSelectTask={selectTask}
                 onClearSelection={clearSelectionFor}
-                onResetFilters={resetFilters}
+                onResetFilters={handleResetFilters}
               />
             </div>
           </section>

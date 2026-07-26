@@ -2,7 +2,6 @@
 
 import type { TaskPriority, TaskScope, TaskStatus } from "@/server/api";
 import * as React from "react";
-import type { TaskFilters } from "@/app/react-query/api/endpoints";
 import { useWorkspaceRefresh } from "@/app/react-query/api/hooks";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { FilterBar } from "./filter-bar";
@@ -49,23 +48,6 @@ function WorkspaceShell() {
     [patchFilters],
   );
   const searchField = useDebouncedSearchField(filters.q, commitSearch);
-  const { cancel: cancelSearch } = searchField;
-
-  // A view change owns the whole filter set, search included. Dropping the
-  // scheduled commit keeps a half-typed query from landing on top of the view
-  // a moment after it was applied.
-  const handleApplyView = React.useCallback(
-    (view: Partial<TaskFilters>) => {
-      cancelSearch();
-      applyView(view);
-    },
-    [applyView, cancelSearch],
-  );
-
-  const handleResetFilters = React.useCallback(() => {
-    cancelSearch();
-    resetFilters();
-  }, [cancelSearch, resetFilters]);
 
   const hasActiveFilters =
     filters.scope !== "all" ||
@@ -87,7 +69,7 @@ function WorkspaceShell() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <Sidebar filters={filters} onApplyView={handleApplyView} />
+      <Sidebar filters={filters} onApplyView={applyView} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
@@ -99,7 +81,7 @@ function WorkspaceShell() {
 
         <div className="flex min-h-0 flex-1">
           <section className="flex min-w-0 flex-1 flex-col">
-            <InsightStrip onApplyView={handleApplyView} />
+            <InsightStrip onApplyView={applyView} />
             <FilterBar
               filters={filters}
               onScopeChange={(scope: TaskScope) => patchFilters({ scope })}
@@ -110,7 +92,7 @@ function WorkspaceShell() {
                 patchFilters({ priority: toggle(filters.priority, priority) })
               }
               onPatch={patchFilters}
-              onResetAll={handleResetFilters}
+              onResetAll={resetFilters}
             />
             <div className="scrollbar-calm min-h-0 flex-1 overflow-y-auto">
               <TaskList
@@ -119,7 +101,7 @@ function WorkspaceShell() {
                 selectedTaskId={selectedTaskId}
                 onSelectTask={selectTask}
                 onClearSelection={clearSelectionFor}
-                onResetFilters={handleResetFilters}
+                onResetFilters={resetFilters}
               />
             </div>
           </section>

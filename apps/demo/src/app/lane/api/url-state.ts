@@ -50,7 +50,10 @@ export function parseWorkspaceState(get: ParamGetter): WorkspaceUrlState {
     selectedTaskId: nonEmpty(get("task")),
     filters: {
       scope: includesValue(SCOPE_VALUES, scope) ? scope : "all",
-      q: get("q")?.trim() ?? "",
+      // Deliberately not trimmed: the search field is an optimistic overlay on
+      // this value, so the round trip has to return exactly what was typed.
+      // Trimming happens at the fetch layer (`toTaskQuery`) instead.
+      q: get("q") ?? "",
       status: parseList(get("status"), STATUS_VALUES),
       priority: parseList(get("priority"), PRIORITY_VALUES),
       projectId: nonEmpty(get("project")),
@@ -66,7 +69,7 @@ export function buildWorkspaceSearch(state: WorkspaceUrlState): string {
 
   if (state.teamId) params.set("team", state.teamId);
   if (filters.scope !== "all") params.set("scope", filters.scope);
-  if (filters.q.trim()) params.set("q", filters.q.trim());
+  if (filters.q) params.set("q", filters.q);
   if (filters.status.length) params.set("status", filters.status.join(","));
   if (filters.priority.length)
     params.set("priority", filters.priority.join(","));

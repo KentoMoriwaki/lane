@@ -4,7 +4,7 @@
     "path": "dist/index.js",
     "import": "{ createLane }",
     "ignore": ["react", "react-dom"],
-    "limit": "2 kB"
+    "limit": "2.1 kB"
   },
   {
     "name": "LaneProvider + useLane (typical)",

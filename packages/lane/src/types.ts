@@ -44,6 +44,29 @@ export type LaneInvalidateOptions = {
    * user-driven invalidation.
    */
   background?: boolean;
+  /**
+   * Invalidate now, but hold the re-reads behind this promise. Readers go pending
+   * immediately (still showing their current value through the transition) and
+   * only fetch once `after` settles.
+   *
+   * This is the answer to the mutation window: `await action(); invalidate()`
+   * cannot signal anything until the action finishes, because notification is the
+   * only channel and it fires last. Passing the action as `after` moves the
+   * notification to the start:
+   *
+   * ```ts
+   * startTransition(async () => {
+   *   const saved = saveTodo(patch);
+   *   lane.invalidateAll(["todos"], { after: saved });
+   *   await saved;
+   * });
+   * ```
+   *
+   * `after` decides *when* the reads run, never *whether* — a rejected action
+   * leaves the key invalidated, so the next read still reflects whatever the
+   * source actually holds. Only the settlement is observed; the value is ignored.
+   */
+  after?: Promise<unknown>;
 };
 
 /**

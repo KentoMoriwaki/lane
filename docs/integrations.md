@@ -36,7 +36,8 @@ is the pattern React itself recommends for routers: update router state inside
 Lane is built for this. It keeps each key's promise in `useState` + `useTransition`
 — **not** in a `useSyncExternalStore` read during render — so a Lane read never
 forces a synchronous fallback during a transition the way an external-store read
-can.
+can. What that costs, stated exactly, is in
+[Cross-reader consistency](./consistency.md).
 
 The one place this breaks is **browser back/forward (`popstate`)**. The legacy
 `popstate` event must run synchronously (for scroll and form restoration), so a

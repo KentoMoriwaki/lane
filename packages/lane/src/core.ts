@@ -29,6 +29,9 @@ export type LaneReadOptions = {
 type LaneSubscription = (
   entry: LaneEntryInfo,
   source: LaneInvalidationSource,
+  // Set by `invalidate(..., { after })`: the re-read this notification triggers
+  // must wait for it before fetching. Pass it straight back to `readOrCreate`.
+  gate: Promise<void> | undefined,
 ) => void;
 
 type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
@@ -76,6 +79,12 @@ type LaneEntry = {
   // flag lets `whenStale: "refetch"` fire only on a genuine remount of
   // previously-live data instead of looping on the retry of a first mount.
   everSubscribed: boolean;
+  // The source of the most recent notification for this key. A reader that
+  // subscribes after one has already gone out has no notification to read the
+  // source from, so it reads it here and converges through the matching
+  // transition — otherwise siblings of one key disagree about which pending flag
+  // is set for the same update.
+  lastNotifySource: LaneInvalidationSource | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -196,6 +205,7 @@ export function readOrCreate<T>(
   key: LaneKey,
   loader: LaneLoader<T>,
   options?: LaneReadOptions,
+  gate?: Promise<void>,
 ): Promise<LaneRead<T>> {
   const state = getLaneState(lane);
   const keyId = serializeKey(key);
@@ -208,7 +218,10 @@ export function readOrCreate<T>(
   }
 
   const controller = new AbortController();
-  const promise = runLoader(loader, key, controller.signal, options);
+  const load = () => runLoader(loader, key, controller.signal, options);
+  // A gated read is an in-flight read that has not begun: readers see it as
+  // pending and hold their last value on screen until the action lands.
+  const promise = gate ? gate.then(load) : load();
 
   return setEntryCache(state, entry, promise, controller);
 }
@@ -319,6 +332,19 @@ export function subscribeLane(
   };
 }
 
+/**
+ * The source of the last notification for a key, for a reader catching up on one
+ * it was not subscribed in time to receive. `undefined` when the key has never
+ * been notified — or no longer exists — in which case the reader has no reason
+ * to treat its catch-up as user-driven.
+ */
+export function latestNotifySource(
+  lane: Lane,
+  keyId: string,
+): LaneInvalidationSource | undefined {
+  return getLaneState(lane).entries.get(keyId)?.lastNotifySource;
+}
+
 export function onInvalidate(
   lane: Lane,
   key: LaneKey,
@@ -345,8 +371,35 @@ function invalidateLaneEntry(
     return;
   }
 
+  // `{ after }` rides the notification: subscribers re-read synchronously during
+  // the fan-out, the first one installs a cache whose load waits for the gate,
+  // and the rest dedupe onto it. The gate only has to outlive the fan-out, so it
+  // is an argument rather than state. Settlement is all that is observed — a
+  // rejected action still invalidates, because `after` chooses *when* to
+  // converge rather than whether the key is suspect, and swallowing it keeps a
+  // caller-owned failure from surfacing through Lane.
+  const gate = options.after?.then(noop, noop);
+
+  if (gate && entry.subscribers.size === 0) {
+    // Nobody to announce it to, and nobody to refill the cache the fan-out would
+    // empty — so emptying it would leave a reader arriving mid-action fetching
+    // straight into the pre-mutation source. Leave the entry intact and converge
+    // when the action lands, which is what `await action; invalidate(key)` does.
+    // Resolved by key, so an action outliving its entry still converges whatever
+    // occupies the slot.
+    void gate.then(() => {
+      const current = state.entries.get(entry.keyId);
+
+      if (current) {
+        invalidateLaneEntry(state, current, {}, source);
+      }
+    });
+
+    return;
+  }
+
   removeEntryCache(entry);
-  notifyInvalidate(entry, source);
+  notifyInvalidate(entry, source, gate);
   cleanupEntry(state, entry);
 }
 
@@ -401,11 +454,14 @@ function cleanupEntry(state: LaneState, entry: LaneEntry): void {
 function notifyInvalidate(
   entry: LaneEntry,
   source: LaneInvalidationSource,
+  gate?: Promise<void>,
 ): void {
   const info = entryInfo(entry);
 
+  entry.lastNotifySource = source;
+
   for (const subscriber of [...entry.subscribers]) {
-    subscriber.onInvalidate?.(info, source);
+    subscriber.onInvalidate?.(info, source, gate);
   }
 }
 
@@ -527,6 +583,7 @@ function createEntry(
     cache: undefined,
     everSubscribed: false,
     idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
+    lastNotifySource: undefined,
     key,
     keyId,
     lastFulfilled: undefined,

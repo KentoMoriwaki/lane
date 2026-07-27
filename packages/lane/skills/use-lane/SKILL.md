@@ -53,6 +53,11 @@ task touches that rule.
 - **Keep keys stable and serializable.** Lane dedupes by key, not by loader, so a
   key that changes every render refetches every render; the loader itself can be an
   inline closure (no `useCallback` needed). → `references/common-mistakes.md`
+- **One owner per key per subtree.** Dedupe makes re-reading a key in a child
+  free in requests, but each reader is another subscription, pending flag, and
+  suspend point — read where the data enters the screen and pass the value down.
+  Read the same key twice only across genuinely separate surfaces.
+  → `references/common-mistakes.md`, `references/consistency.md`
 - **Converge by invalidating the source**, not by patching a cache. Use `set` /
   `update` only to publish data you *already have* (e.g. a mutation response);
   use `remove` to drop entries on sign-out / team switch. → `references/api-reference.md`
@@ -95,6 +100,7 @@ exact signatures you can also read the package's bundled `dist/index.d.ts`.
 | Migrating React Query / SWR — the mental-model map, the transitional adapter, and the gotchas | `references/migrating.md` |
 | Exact API: every export, option, return type, and behavior | `references/api-reference.md` |
 | Why Lane is shaped this way; the reasoning behind each gotcha above | `references/design-notes.md` |
+| Two readers of one key showing different values; why Lane skips `useSyncExternalStore` | `references/consistency.md` |
 | Where Lane fits: RSC-first vs RSC-seeded ownership; who owns mutations | `references/architectures.md` |
 | Wiring to Next.js / React Router / TanStack / plain SPA; the back-forward (`popstate`) flash caveat | `references/integrations.md` |
 | Running outside the browser — CLI (Ink), React Native, other renderers; the `eventSource` prop | `references/environments.md` |

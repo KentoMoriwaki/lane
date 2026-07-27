@@ -10,6 +10,7 @@ import {
 import {
   invalidateEntry,
   invalidationSource,
+  latestNotifySource,
   readOrCreate,
   subscribeLane,
 } from "./core";
@@ -82,6 +83,7 @@ export function useLane<T>(
     targetLane: Lane,
     targetKey: LaneKey,
     source: LaneInvalidationSource,
+    gate: Promise<void> | undefined,
   ) => {
     // Only fires while subscribed, which never happens without a loader; the
     // guard also narrows `loader` to non-undefined for the read below.
@@ -90,7 +92,7 @@ export function useLane<T>(
     }
 
     const updatePromise = () => {
-      setPromise(readOrCreate(targetLane, targetKey, loader, readOptions));
+      setPromise(readOrCreate(targetLane, targetKey, loader, readOptions, gate));
     };
 
     if (source === "background") {
@@ -129,9 +131,22 @@ export function useLane<T>(
       return;
     }
 
-    startBackgroundTransition(() => {
+    const apply = () => {
       setPromise(nextPromise);
-    });
+    };
+
+    // Converge through the same kind of transition as the notification this
+    // reader was not subscribed in time to receive, so siblings of one key agree
+    // on which pending flag the update sets. Nothing recorded means nothing
+    // user-driven to join: stay in the background.
+    if (
+      latestNotifySource(targetLane, serializeKey(targetKey)) === "transition"
+    ) {
+      startTransition(apply);
+      return;
+    }
+
+    startBackgroundTransition(apply);
   });
 
   const refetchOnMount = useEffectEvent(
@@ -187,8 +202,8 @@ export function useLane<T>(
     }
 
     const unsubscribe = subscribeLane(lane, key, {
-      onInvalidate: (entry, source) => {
-        onInvalidate(lane, entry.key, source);
+      onInvalidate: (entry, source, gate) => {
+        onInvalidate(lane, entry.key, source, gate);
       },
       onRemove: (entry) => {
         onRemove(lane, entry.key);

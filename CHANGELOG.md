@@ -6,7 +6,58 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`invalidate(key, { after })` / `invalidateAll(scope, { after })`** — invalidate
+  now, fetch later. The invalidation is announced synchronously, so every reader
+  goes pending immediately and keeps its current value on screen through the
+  transition, while the actual re-read is held behind `after` and starts the
+  moment it settles. This closes the window in
+  `startTransition(async () => { await action(); invalidate() })`, where
+  notification — Lane's only channel to a reader — fires last and readers show
+  nothing for the whole mutation. Use it when one mutation invalidates keys it
+  does not return values for — but it is not the default shape: `set` with the
+  in-flight promise is strictly better when the action resolves to a key's value,
+  `useOptimistic` when the outcome can be shown before it lands, and the plain
+  `await action; invalidate()` when the pending signal already sits where the
+  user is looking. The docs order those explicitly. `after` decides *when* the reads run,
+  never *whether*: a rejected action still leaves the key invalidated, only
+  settlement is observed, and the rejection never surfaces through Lane. A gated
+  read counts as in-flight, so `onlyIf: "settled"` steps around it.
+
+- **`docs/consistency.md`** — what two readers of one key are guaranteed to show
+  each other, and the one arrangement where they can disagree: an urgent
+  render-phase read of a key (a fresh mount, or a `key` / lane / `enabled`
+  switch) while a transition on that same key is held back by something else.
+  States the guarantees that make the ordinary `invalidate` → refetch path safe,
+  the single rule that removes both entry points, and why reaching for
+  `useSyncExternalStore` or `flushSync` buys the window back at the cost of the
+  transition model. Projected into the docs site and the bundled agent skill as
+  `references/consistency.md`.
+- **One owner per key per subtree**, in `docs/common-mistakes.md`. Dedupe makes
+  re-reading a key in a child free in requests, which reads as permission to do
+  it — but each reader is another subscription, another pending flag, another
+  suspend point, and another thing that has to agree. Read where the data enters
+  the screen and pass the value down; read the same key twice only across
+  genuinely separate surfaces. Cross-linked from the consistency guide, which is
+  where the cost of extra readers is spelled out, and added to the skill's
+  gotcha list.
+
+### Fixed
+
+- A reader that subscribes just too late to receive a notification — it committed
+  on the previous promise and only finds the change when its subscription effect
+  runs — now converges through the same kind of transition that notification
+  used, instead of always the background one. Siblings reading the same key no
+  longer disagree about whether an update is `isTransitionPending` or
+  `isBackgroundPending`.
+
 ### Changed
+
+- Raised the `createLane (core only)` size budget from 2 kB to 2.1 kB. It sat at
+  1.98 kB beforehand, with no room left for a feature. Deliberately tight — the
+  budget is what kept `{ after }` down to a gate on the notification instead of
+  state on the entry.
 
 - Reframed the public documentation around Lane's core model:
   **Promise-first. Transition-native.** Lane keeps each keyed read's promise in

@@ -25,6 +25,7 @@ const PAGES = [
   "environments",
   "migrating",
   "design-notes",
+  "consistency",
   "common-mistakes",
 ];
 

@@ -548,6 +548,7 @@ type LaneInvalidateOptions = {
   onlyIf?: "stale" | "settled";
   staleTime?: number;
   background?: boolean;
+  after?: Promise<unknown>;
 };
 ```
 
@@ -558,6 +559,50 @@ type LaneInvalidateOptions = {
   (`isBackgroundPending`) instead of the default explicit one
   (`isTransitionPending`). Use it for automatic refreshes so they don't read as a
   user-driven invalidation — see [Polling](#polling).
+- `after: promise` → invalidate now, fetch later. See below.
+
+### Announcing an invalidation before the mutation finishes
+
+The obvious way to converge after a mutation leaves every reader in the dark
+while the mutation runs:
+
+```ts
+startTransition(async () => {
+  await saveTodo(patch);   // readers show nothing for the whole request
+  lane.invalidateAll(["todos"]);
+});
+```
+
+Notification is Lane's only channel to a reader, and here it fires last — so
+`isTransitionPending` only turns on once the work is already done. `after` moves
+the notification to the front:
+
+```ts
+startTransition(async () => {
+  const saved = saveTodo(patch);
+  lane.invalidateAll(["todos"], { after: saved });
+  await saved;
+});
+```
+
+Readers go pending immediately and keep their current value on screen through
+the transition; the actual re-read is held behind `saved` and starts the moment
+it settles. Pending is continuous from the click to the fresh data.
+
+Use it whenever one mutation invalidates keys it does not return values for — a
+create that refreshes a list, a counter, and a detail view. When the mutation
+*does* resolve to a key's value, [`set`](#set) is more direct: it
+publishes the in-flight promise under that key, which marks readers pending the
+same way and skips the extra round-trip.
+
+Two things to know:
+
+- **`after` decides when, not whether.** A rejected action still lets the read
+  run: the key was already invalidated, so the next read reflects whatever the
+  source actually holds. Only settlement is observed — the resolved value is
+  ignored, and a rejection never surfaces through Lane.
+- **A gated entry counts as in-flight.** It has no settled promise, so
+  `onlyIf: "settled"` skips it and a poll cannot cut the pending window short.
 
 ### Polling
 

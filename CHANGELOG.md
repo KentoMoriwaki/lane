@@ -6,7 +6,26 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`invalidate(key, { after })` / `invalidateAll(scope, { after })`** — invalidate
+  now, fetch later. The invalidation is announced synchronously, so every reader
+  goes pending immediately and keeps its current value on screen through the
+  transition, while the actual re-read is held behind `after` and starts the
+  moment it settles. This closes the window in
+  `startTransition(async () => { await action(); invalidate() })`, where
+  notification — Lane's only channel to a reader — fires last and readers show
+  nothing for the whole mutation. Use it when one mutation invalidates keys it
+  does not return values for; when it *does* resolve to a key's value, `set` with
+  the in-flight promise remains more direct. `after` decides *when* the reads run,
+  never *whether*: a rejected action still leaves the key invalidated, only
+  settlement is observed, and the rejection never surfaces through Lane. A gated
+  entry counts as in-flight, so `onlyIf: "settled"` steps around it.
+
 ### Changed
+
+- Raised the `createLane (core only)` size budget from 2 kB to 2.2 kB. It sat at
+  1.98 kB before `{ after }`, with no room left for a feature.
 
 - Reframed the public documentation around Lane's core model:
   **Promise-first. Transition-native.** Lane keeps each keyed read's promise in

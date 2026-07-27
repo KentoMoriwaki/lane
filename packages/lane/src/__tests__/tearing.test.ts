@@ -405,6 +405,55 @@ describe("cross-reader consistency", () => {
       expect(text(app)).toBe("[A=v2:t0b0][B=v2:t0b0]");
     });
 
+    it("closes the window with invalidate({ after })", async () => {
+      // The general fix: the invalidation is announced when the action starts and
+      // the re-read is held behind it, so pending covers the whole action even
+      // though the action does not resolve to this key's value.
+      const lane = createLane();
+      const action = deferred<void>();
+      const reload = deferred<string>();
+      const loader = vi.fn(() => reload.promise);
+      lane.set(KEY, "v1");
+
+      const frames = newFrames();
+      const ctl: Controls = {};
+      const app = await render(frames, () =>
+        el(ActionApp, { lane, frames, ctl, loader, after: true }),
+      );
+      await settle(app);
+      expect(text(app)).toBe("[A=v1:t0b0][B=v1:t0b0]");
+
+      await act(async () => {
+        ctl.act?.(action.promise);
+        await settlePromiseHandlers();
+      });
+      await settle(app);
+
+      // Pending from the start, previous value still on screen, and no fetch has
+      // gone out yet — the read is waiting behind the action.
+      expect(text(app)).toBe("[A=v1:t1b0][B=v1:t1b0]");
+      expect(loader).not.toHaveBeenCalled();
+
+      await act(async () => {
+        action.resolve();
+        await settlePromiseHandlers();
+      });
+      await settle(app);
+
+      // Still pending across the hand-off: the fetch starts where the action ends.
+      expect(text(app)).toBe("[A=v1:t1b0][B=v1:t1b0]");
+      expect(loader).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        reload.resolve("v2");
+        await settlePromiseHandlers();
+      });
+      await settle(app);
+
+      expect(text(app)).toBe("[A=v2:t0b0][B=v2:t0b0]");
+      expect(tornFrames(frames)).toEqual([]);
+    });
+
     it("publishing the in-flight promise marks every reader pending at once", async () => {
       // The workaround available today: `set` stores the in-flight promise and
       // notifies synchronously, so pending starts *with* the action instead of
@@ -634,19 +683,28 @@ function ActionApp({
   frames,
   ctl,
   loader,
+  after = false,
 }: {
   lane: Lane;
   frames: Frames;
   ctl: Controls;
   loader: LaneLoader<string>;
+  after?: boolean;
 }) {
   const [, startTransition] = React.useTransition();
 
   React.useEffect(() => {
     ctl.act = (action) => {
       startTransition(async () => {
+        if (after) {
+          lane.invalidate(KEY, { after: action });
+        }
+
         await action;
-        lane.invalidate(KEY);
+
+        if (!after) {
+          lane.invalidate(KEY);
+        }
       });
     };
   });

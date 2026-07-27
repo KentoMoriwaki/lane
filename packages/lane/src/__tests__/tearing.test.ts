@@ -451,6 +451,13 @@ describe("cross-reader consistency", () => {
       await settle(app);
 
       expect(text(app)).toBe("[A=v2:t0b0][B=v2:t0b0]");
+      // Exactly one pending stretch, from the click to the fresh data — no blink
+      // where pending drops at the hand-off from the action to the fetch.
+      expect(frames.list).toEqual([
+        "[A=v1:t0b0][B=v1:t0b0]",
+        "[A=v1:t1b0][B=v1:t1b0]",
+        "[A=v2:t0b0][B=v2:t0b0]",
+      ]);
       expect(tornFrames(frames)).toEqual([]);
     });
 

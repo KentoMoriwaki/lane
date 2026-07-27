@@ -76,11 +76,6 @@ type LaneEntry = {
   // flag lets `whenStale: "refetch"` fire only on a genuine remount of
   // previously-live data instead of looping on the retry of a first mount.
   everSubscribed: boolean;
-  // Set by `invalidate(..., { after })`: new reads chain behind it instead of
-  // starting immediately, so an invalidation can be announced at the start of a
-  // mutation while the actual fetch waits for it to finish. Always a
-  // settle-only promise (never rejects) and cleared once it settles.
-  gate: Promise<void> | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -213,21 +208,9 @@ export function readOrCreate<T>(
   }
 
   const controller = new AbortController();
-  const load = () => runLoader(loader, key, controller.signal, options);
-  // `invalidate(..., { after })` arms a gate; the load then chains behind it
-  // instead of starting now. Either way the promise goes through
-  // `setEntryCache`, so a gated read is just an in-flight read that has not
-  // begun — readers see it as pending and keep their last value on screen. A
-  // read superseded while it waits is already inert: `setEntryCache` drops any
-  // result whose cache is no longer the entry's.
-  const gate = entry.gate;
+  const promise = runLoader(loader, key, controller.signal, options);
 
-  return setEntryCache(
-    state,
-    entry,
-    gate ? gate.then(load) : load(),
-    controller,
-  );
+  return setEntryCache(state, entry, promise, controller);
 }
 
 /**
@@ -320,8 +303,8 @@ export function subscribeLane(
       return;
     }
 
-    if (!entry.cache && !entry.gate) {
-      // No cache, no gate, no subscribers: nothing worth keeping, drop now.
+    if (!entry.cache) {
+      // No cache and no subscribers: nothing worth keeping, drop now.
       if (state.entries.get(entry.keyId) === entry) {
         state.entries.delete(entry.keyId);
       }
@@ -329,8 +312,8 @@ export function subscribeLane(
       return;
     }
 
-    // Idle with a cache (or an armed gate): retained for reuse, collected by the
-    // central sweep once it has been idle for the lane's gcTime.
+    // Idle with a cache: retained for reuse, collected by the central sweep
+    // once it has been idle for the lane's gcTime.
     entry.idleSince = Date.now();
     ensureSweep(state);
   };
@@ -362,26 +345,66 @@ function invalidateLaneEntry(
     return;
   }
 
-  removeEntryCache(entry);
-
-  // Armed before the notification, so the re-read it triggers already chains
-  // behind the gate. Settlement is all that is observed — a rejected action
-  // still lets the read run, because `after` chooses *when* to converge, not
-  // whether the key is suspect; swallowing it here also keeps a caller-owned
-  // failure from surfacing as an unhandled rejection through Lane.
   if (options.after) {
-    const gate = options.after.then(noop, noop);
-
-    entry.gate = gate;
-    void gate.then(() => {
-      if (entry.gate === gate) {
-        entry.gate = undefined;
-      }
-    });
+    holdEntry(state, entry, options.after, source);
+    return;
   }
 
+  removeEntryCache(entry);
   notifyInvalidate(entry, source);
   cleanupEntry(state, entry);
+}
+
+/**
+ * `invalidate(..., { after })`: announce the invalidation now, converge when the
+ * action finishes.
+ *
+ * The entry's current value is republished as a promise that waits for `after`,
+ * so subscribers are notified immediately, go pending, and keep that value on
+ * screen through the transition. The real invalidation is scheduled for when
+ * `after` settles; readers re-read then, with their own loader, exactly as for
+ * any other invalidation. Nothing is stored on the entry — the held promise *is*
+ * the pending window, and the deferred invalidation is a closure.
+ *
+ * Only settlement is observed. A rejected action still invalidates, because
+ * `after` chooses *when* to converge rather than whether the key is suspect, and
+ * swallowing it keeps a caller-owned failure from surfacing through Lane.
+ */
+function holdEntry(
+  state: LaneState,
+  entry: LaneEntry,
+  after: Promise<unknown>,
+  source: LaneInvalidationSource,
+): void {
+  const settled = after.then(noop, noop);
+  const held = entry.lastFulfilled;
+
+  // Registered before the held promise below, so it wins the hand-off: the cache
+  // is already gone by the time the held value would have resolved into it.
+  // Resolved by key rather than by closure, so a long action that outlives the
+  // entry (GC, `remove`) still converges whatever occupies the slot at the end —
+  // the same reach `await action; invalidate(key)` has.
+  void settled.then(() => {
+    const current = state.entries.get(entry.keyId);
+
+    if (!current) {
+      return;
+    }
+
+    removeEntryCache(current);
+    notifyInvalidate(current, source);
+    cleanupEntry(state, current);
+  });
+
+  if (!held) {
+    // No value has ever landed, so every reader is already suspended and there
+    // is nothing to announce. Leave the in-flight read alone and let the
+    // scheduled invalidation do the whole job.
+    return;
+  }
+
+  setEntryCache(state, entry, settled.then(() => held.value), undefined);
+  notifyInvalidate(entry, source);
 }
 
 function removeLaneEntry(state: LaneState, entry: LaneEntry): void {
@@ -425,10 +448,7 @@ function publishEntryValue<T>(
 }
 
 function cleanupEntry(state: LaneState, entry: LaneEntry): void {
-  // An armed gate keeps the entry alive even with nothing to show and no one
-  // reading: dropping it would let a reader that arrives mid-action create a
-  // fresh, ungated entry and fetch straight into the pre-mutation source.
-  if (entry.cache || entry.gate || entry.subscribers.size > 0) {
+  if (entry.cache || entry.subscribers.size > 0) {
     return;
   }
 
@@ -563,7 +583,6 @@ function createEntry(
   return {
     cache: undefined,
     everSubscribed: false,
-    gate: undefined,
     idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
     key,
     keyId,

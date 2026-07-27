@@ -169,6 +169,53 @@ describe("cross-reader consistency", () => {
       ]);
     });
 
+    it("does not tear when the transition only waits on its own key", async () => {
+      // The urgent mount is still there — what is missing is a *second* thing
+      // holding the transition back. Every reader ends up waiting on the one
+      // pending promise, so they wake together. This is the ordinary
+      // "invalidate -> refetch" shape, and it is safe on its own: mixing
+      // priorities is necessary for a tear but not sufficient.
+      const lane = createLane();
+      const slow = deferred<string>();
+      lane.set(KEY, "v1");
+      lane.set(BLOCKER, "b1");
+      lane.set(OTHER, "o1");
+
+      const frames = newFrames();
+      const ctl: Controls = {};
+      const app = await render(frames, () =>
+        el(MixedPriorityApp, { lane, frames, ctl, mode: "urgent-mount-unblocked" }),
+      );
+
+      await settle(app);
+      expect(text(app)).toBe("[A=v1][B=v1][X~b1][D~o1]");
+
+      frames.list.length = 0;
+      await act(async () => {
+        ctl.run?.(slow.promise);
+        await settlePromiseHandlers();
+      });
+      await settle(app);
+
+      // The urgent mount suspends on the very promise the transition is waiting
+      // for, so it shows a fallback rather than a second value.
+      expect(text(app)).toBe("[A=v1][B=v1][X~b1][D~o1][C:loading]");
+      expect(tornFrames(frames)).toEqual([]);
+
+      await act(async () => {
+        slow.resolve("v2");
+        await settlePromiseHandlers();
+      });
+      await settle(app);
+
+      expect(text(app)).toBe("[A=v2][B=v2][X~b1][D~o1][C=v2]");
+      expect(frames.list).toEqual([
+        "[A=v1][B=v1][X~b1][D~o1][C:loading]",
+        "[A=v2][B=v2][X~b1][D~o1][C=v2]",
+      ]);
+      expect(tornFrames(frames)).toEqual([]);
+    });
+
     it("does not tear when the new reader mounts inside the same transition", async () => {
       // The control for the torn cases below. The mount and the store write are
       // one transition, so React holds the previous screen until the whole thing
@@ -485,7 +532,11 @@ function Interleave({ lane }: { lane: Lane }) {
   return null;
 }
 
-type Mode = "urgent-mount" | "urgent-switch" | "transition-mount";
+type Mode =
+  | "urgent-mount"
+  | "urgent-switch"
+  | "transition-mount"
+  | "urgent-mount-unblocked";
 
 // Writes KEY inside a transition that a second, still-loading key holds back,
 // while a render-phase read of KEY happens at a different priority.
@@ -493,6 +544,9 @@ type Mode = "urgent-mount" | "urgent-switch" | "transition-mount";
 //   urgent-mount      a new reader of KEY mounts urgently  -> tears
 //   urgent-switch     an existing reader switches onto KEY -> tears
 //   transition-mount  the mount is inside the transition   -> safe
+//
+// `urgent-mount-unblocked` drops the blocker and makes KEY itself the pending
+// one, which is the ordinary "invalidate -> refetch" shape -> also safe.
 function MixedPriorityApp({
   lane,
   frames,
@@ -514,6 +568,16 @@ function MixedPriorityApp({
         lane.set(KEY, "v2");
         lane.set(BLOCKER, blocker); // pending: holds the transition back
       };
+
+      if (mode === "urgent-mount-unblocked") {
+        setShowC(true); // urgent, same as the torn case
+        // ...but the only pending promise is KEY's own, so every reader —
+        // including the urgent mount — waits on the same one.
+        startTransition(() => {
+          lane.set(KEY, blocker);
+        });
+        return;
+      }
 
       if (mode === "transition-mount") {
         startTransition(() => {

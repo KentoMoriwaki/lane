@@ -30,6 +30,7 @@ import { Sidebar } from "./sidebar";
 import { taskDetailQuery, TaskDetailPanel } from "./task-detail-panel";
 import { TaskList, TaskListSkeleton } from "./task-list";
 import { Topbar } from "./topbar";
+import { useDebouncedSearchField } from "./use-debounced-search-field";
 
 const shellQuery = graphql`
   query RelayShellQuery {
@@ -122,6 +123,13 @@ function WorkspaceShell({
     },
     [applyFilters],
   );
+  // The search commit lands a few hundred milliseconds after the keystroke that
+  // scheduled it, so it patches whatever the filters are by then rather than
+  // replacing them with a set captured when the user was still typing.
+  const commitSearch = React.useCallback((q: string) => {
+    startView(() => setFilters((current) => ({ ...current, q })));
+  }, []);
+  const searchField = useDebouncedSearchField(filters.q, commitSearch);
   const selectTask = React.useCallback(
     (taskId: string | null) => {
       startView(() => {
@@ -181,8 +189,7 @@ function WorkspaceShell({
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
-          search={filters.q}
-          onSearchChange={(q) => applyFilters({ ...filters, q })}
+          searchField={searchField}
           onNewTask={() => setCreateOpen(true)}
           onRefresh={refresh}
           isRefreshing={isViewPending}

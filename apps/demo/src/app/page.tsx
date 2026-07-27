@@ -36,6 +36,13 @@ const VARIANTS: Variant[] = [
     tagline:
       "The transition/Suspense yardstick: a normalized GraphQL store, fragment colocation, preloaded queries refetched in transitions, and @defer streaming. Client-owned, like the SPA variant.",
   },
+  {
+    href: "/jotai",
+    name: "Jotai",
+    badge: "atoms, no cache library",
+    tagline:
+      "No fetching library at all: async atoms are the cache, filters and the selected task are atoms too, and the team is part of the scope every read depends on — so switching teams is a write, not an eviction. Client-owned.",
+  },
 ];
 
 export default function Home() {
@@ -46,13 +53,14 @@ export default function Home() {
           use-lane · live demo
         </p>
         <h1 className="text-balance text-4xl font-semibold tracking-tight">
-          One team-task workspace, four implementations.
+          One team-task workspace, five implementations.
         </h1>
         <p className="text-pretty text-lg text-muted-foreground">
-          The same UI and the same backend, built four ways —{" "}
+          The same UI and the same backend, built five ways —{" "}
           <span className="text-foreground">use-lane</span> server-seeded,
-          use-lane client-only, the TanStack Query baseline, and a Relay GraphQL
-          variant — so you can feel the difference. Switch by changing the route.
+          use-lane client-only, the TanStack Query baseline, a Relay GraphQL
+          variant, and plain jotai atoms — so you can feel the difference. Switch
+          by changing the route.
         </p>
       </header>
 

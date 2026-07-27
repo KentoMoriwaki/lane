@@ -53,6 +53,11 @@ task touches that rule.
 - **Keep keys stable and serializable.** Lane dedupes by key, not by loader, so a
   key that changes every render refetches every render; the loader itself can be an
   inline closure (no `useCallback` needed). → `references/common-mistakes.md`
+- **One owner per key per subtree.** Dedupe makes re-reading a key in a child
+  free in requests, but each reader is another subscription, pending flag, and
+  suspend point — read where the data enters the screen and pass the value down.
+  Read the same key twice only across genuinely separate surfaces.
+  → `references/common-mistakes.md`, `references/consistency.md`
 - **Converge by invalidating the source**, not by patching a cache. Use `set` /
   `update` only to publish data you *already have* (e.g. a mutation response);
   use `remove` to drop entries on sign-out / team switch. → `references/api-reference.md`

@@ -270,6 +270,57 @@ The loader is the opposite: Lane dedupes by **key**, not by loader identity, so
 the loader can be an inline arrow — you do **not** need `useCallback` on it. Just
 let it close over the current inputs.
 
+### Read a key once, then pass the value down
+
+Lane dedupes by key, so reading `["task", id]` in a parent *and* again in its
+child costs one request either way. That makes it tempting to skip the prop and
+just read it wherever it is needed. Don't — the cost isn't the fetch.
+
+**Don't** re-read a key a component above you already has:
+
+```tsx
+function TaskPage({ id }: { id: string }) {
+  const { data: task } = use(useLanePromise(["task", id], loader));
+  return <><TaskHeader id={id} /><TaskBody id={id} /></>;
+}
+
+function TaskHeader({ id }: { id: string }) {
+  const { data: task } = use(useLanePromise(["task", id], loader)); // same data, third reader
+  return <h1>{task.title}</h1>;
+}
+```
+
+**Do** read where the data enters the screen and hand it down:
+
+```tsx
+function TaskPage({ id }: { id: string }) {
+  const { data: task } = use(useLanePromise(["task", id], loader));
+  return <><TaskHeader task={task} /><TaskBody task={task} /></>;
+}
+
+function TaskHeader({ task }: { task: Task }) {
+  return <h1>{task.title}</h1>;
+}
+```
+
+Three readers of one key are three subscriptions, three `isTransitionPending`
+flags to reconcile, three places that can suspend, and three independently
+scheduled convergences — the whole reason
+[cross-reader consistency](./consistency.md) has anything to say. A child taking
+a prop cannot disagree with its parent, needs no Lane provider to test, and reads
+like ordinary React.
+
+**The exception is distance.** Two genuinely separate surfaces — a header badge
+and a detail pane in different subtrees, a modal that mounts on its own — should
+each read the key. Threading a prop there would mean lifting it to a common
+ancestor far above both and routing it through components with no business
+knowing about it, which is worse. The rule is *one owner per key per subtree*,
+not *one reader per key*.
+
+This is about the **same** key. Rendering N rows that each read a *different*
+key — `["task", row.id]` — is the right shape; see
+[batch reads](./api-reference.md#uselanesallreads-options--a-batch-read).
+
 ### Don't drop the abort signal
 
 **Don't** ignore the `signal` the loader is handed — a superseded request keeps

@@ -99,6 +99,18 @@ updates that don't cause a read of the key are irrelevant — the rule is about
 splitting *one key's* update across priorities, not about avoiding urgent
 updates.
 
+### Don't create readers you don't need
+
+Every reader of a key is another independently scheduled convergence, so the
+window above only exists where a key has more than one. Reading `["task", id]`
+in a parent and again in its child costs one request either way — dedupe sees to
+that — but it doubles the number of things that have to agree, for data a prop
+would have carried. Read where the data enters the screen and pass it down; read
+the same key twice only across genuinely separate surfaces, where threading a
+prop would mean routing it through components that have no business knowing
+about it. See
+[read a key once, then pass the value down](./common-mistakes.md#read-a-key-once-then-pass-the-value-down).
+
 ### Decide what the newly revealed content does
 
 This is a presentation choice rather than a consistency one, but it is the one

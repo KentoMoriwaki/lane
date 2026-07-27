@@ -34,6 +34,14 @@ All notable changes to `use-lane` are documented here. The format is based on
   `useSyncExternalStore` or `flushSync` buys the window back at the cost of the
   transition model. Projected into the docs site and the bundled agent skill as
   `references/consistency.md`.
+- **One owner per key per subtree**, in `docs/common-mistakes.md`. Dedupe makes
+  re-reading a key in a child free in requests, which reads as permission to do
+  it — but each reader is another subscription, another pending flag, another
+  suspend point, and another thing that has to agree. Read where the data enters
+  the screen and pass the value down; read the same key twice only across
+  genuinely separate surfaces. Cross-linked from the consistency guide, which is
+  where the cost of extra readers is spelled out, and added to the skill's
+  gotcha list.
 
 ### Fixed
 

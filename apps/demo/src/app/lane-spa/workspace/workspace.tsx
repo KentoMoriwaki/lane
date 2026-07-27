@@ -16,6 +16,7 @@ import { SignInScreen } from "./sign-in-screen";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { TaskList, TaskListSkeleton } from "./task-list";
 import { Topbar } from "./topbar";
+import { useDebouncedSearchField } from "./use-debounced-search-field";
 import { useWorkspaceUrl } from "./use-workspace-url";
 import { useWorkspace } from "./workspace-provider";
 
@@ -99,6 +100,12 @@ export function WorkspaceShell({
   const { refresh, isRefreshing } = useWorkspaceRefresh();
   const usesHrefNavigation = Boolean(hrefForFilters);
 
+  const commitSearch = React.useCallback(
+    (q: string) => patchFilters({ q }, "replace"),
+    [patchFilters],
+  );
+  const searchField = useDebouncedSearchField(filters.q, commitSearch);
+
   const viewHref = React.useCallback(
     (nextView: Partial<TaskFilters>) =>
       hrefForFilters?.({ ...EMPTY_FILTERS, ...nextView }),
@@ -165,8 +172,7 @@ export function WorkspaceShell({
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
-          search={filters.q}
-          onSearchChange={(q) => patchFilters({ q }, "replace")}
+          searchField={searchField}
           onNewTask={() => setCreateOpen(true)}
           onRefresh={refresh}
           isRefreshing={isRefreshing || isViewPending}

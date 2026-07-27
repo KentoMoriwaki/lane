@@ -352,53 +352,28 @@ function invalidateLaneEntry(
     return;
   }
 
-  if (options.after) {
-    holdEntry(state, entry, options.after, source);
-    return;
-  }
+  // `{ after }` rides the notification: subscribers re-read synchronously during
+  // the fan-out, the first one installs a cache whose load waits for the gate,
+  // and the rest dedupe onto it. The gate only has to outlive the fan-out, so it
+  // is an argument rather than state. Settlement is all that is observed — a
+  // rejected action still invalidates, because `after` chooses *when* to
+  // converge rather than whether the key is suspect, and swallowing it keeps a
+  // caller-owned failure from surfacing through Lane.
+  const gate = options.after?.then(noop, noop);
 
-  removeEntryCache(entry);
-  notifyInvalidate(entry, source);
-  cleanupEntry(state, entry);
-}
-
-/**
- * `invalidate(..., { after })`: announce the invalidation now, converge when the
- * action finishes.
- *
- * The gate rides the notification rather than living on the entry. Subscribers
- * re-read synchronously during the fan-out, the first one installs a cache whose
- * load waits for the gate, and the rest dedupe onto it — so the gate only has to
- * outlive the fan-out, which makes it an argument rather than state. Readers go
- * pending on that read immediately and keep their current value on screen.
- *
- * Only settlement is observed. A rejected action still invalidates, because
- * `after` chooses *when* to converge rather than whether the key is suspect, and
- * swallowing it keeps a caller-owned failure from surfacing through Lane.
- */
-function holdEntry(
-  state: LaneState,
-  entry: LaneEntry,
-  after: Promise<unknown>,
-  source: LaneInvalidationSource,
-): void {
-  const gate = after.then(noop, noop);
-
-  if (entry.subscribers.size === 0) {
+  if (gate && entry.subscribers.size === 0) {
     // Nobody to announce it to, and nobody to refill the cache the fan-out would
-    // have emptied. Leave the entry alone and converge when the action lands —
-    // the shape `await action; invalidate(key)` already has. Resolved by key, so
-    // an action outliving its entry still converges whatever occupies the slot.
+    // empty — so emptying it would leave a reader arriving mid-action fetching
+    // straight into the pre-mutation source. Leave the entry intact and converge
+    // when the action lands, which is what `await action; invalidate(key)` does.
+    // Resolved by key, so an action outliving its entry still converges whatever
+    // occupies the slot.
     void gate.then(() => {
       const current = state.entries.get(entry.keyId);
 
-      if (!current) {
-        return;
+      if (current) {
+        invalidateLaneEntry(state, current, {}, source);
       }
-
-      removeEntryCache(current);
-      notifyInvalidate(current, source);
-      cleanupEntry(state, current);
     });
 
     return;

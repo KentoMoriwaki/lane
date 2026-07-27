@@ -2,7 +2,6 @@
 
 import type { Task } from "@/server/api";
 import { Inbox, ListTodo } from "lucide-react";
-import * as React from "react";
 import { useTasks } from "@/app/react-query/api/hooks";
 import type { TaskFilters } from "@/app/react-query/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,18 +26,9 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const { userId } = useWorkspace();
-  const [debouncedQ, setDebouncedQ] = React.useState(filters.q);
 
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQ(filters.q), 300);
-    return () => window.clearTimeout(timer);
-  }, [filters.q]);
-
-  const queryFilters = React.useMemo(
-    () => ({ ...filters, q: debouncedQ }),
-    [filters, debouncedQ],
-  );
-
+  // `filters.q` is already debounced upstream of the URL by the search field,
+  // so the filters that reach here are settled values — no second debounce.
   const {
     data: tasks,
     isPending,
@@ -47,7 +37,7 @@ export function TaskList({
     refetch,
     isFetching,
     isPlaceholderData,
-  } = useTasks(queryFilters);
+  } = useTasks(filters);
 
   // Background refresh / filter change while previous data is on screen.
   const dimmed = isFetching && isPlaceholderData;

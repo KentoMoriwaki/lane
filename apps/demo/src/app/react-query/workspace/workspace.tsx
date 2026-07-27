@@ -11,6 +11,7 @@ import { SignInScreen } from "./sign-in-screen";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { TaskList } from "./task-list";
 import { Topbar } from "./topbar";
+import { useDebouncedSearchField } from "./use-debounced-search-field";
 import { useWorkspaceUrl } from "./use-workspace-url";
 import { useWorkspace } from "./workspace-provider";
 
@@ -42,6 +43,12 @@ function WorkspaceShell() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const { refresh, isRefreshing } = useWorkspaceRefresh();
 
+  const commitSearch = React.useCallback(
+    (q: string) => patchFilters({ q }, "replace"),
+    [patchFilters],
+  );
+  const searchField = useDebouncedSearchField(filters.q, commitSearch);
+
   const hasActiveFilters =
     filters.scope !== "all" ||
     filters.status.length > 0 ||
@@ -66,8 +73,7 @@ function WorkspaceShell() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
-          search={filters.q}
-          onSearchChange={(q) => patchFilters({ q }, "replace")}
+          searchField={searchField}
           onNewTask={() => setCreateOpen(true)}
           onRefresh={refresh}
           isRefreshing={isRefreshing}

@@ -26,9 +26,21 @@ export function useWorkspaceUrl() {
     [searchString],
   );
 
+  // A debounced search commit fires a few hundred milliseconds after the
+  // keystroke that scheduled it, by which time a link navigation may already
+  // have changed the view. Writes therefore merge onto the URL as it is at write
+  // time, not onto a render-time snapshot captured in a closure: a late commit
+  // can only lose `q` to a newer value instead of restoring the whole previous
+  // filter set. Reading `window.location` keeps this out of render, where a
+  // mirrored ref would be written by renders that never commit.
+  const readCurrentState = React.useCallback((): WorkspaceUrlState => {
+    const params = new URLSearchParams(window.location.search);
+    return parseWorkspaceState((key) => params.get(key));
+  }, []);
+
   const write = React.useCallback(
     (next: Partial<WorkspaceUrlState>, mode: HistoryMode) => {
-      const href = buildWorkspaceHref(pathname, state, next);
+      const href = buildWorkspaceHref(pathname, readCurrentState(), next);
       startTransition(() => {
         if (mode === "push") {
           router.push(href, { scroll: false });
@@ -37,7 +49,7 @@ export function useWorkspaceUrl() {
         }
       });
     },
-    [pathname, router, startTransition, state],
+    [pathname, readCurrentState, router, startTransition],
   );
 
   // Discrete filter/view actions push a history entry so Back returns to the
@@ -45,8 +57,8 @@ export function useWorkspaceUrl() {
   // so it does not flood the history stack.
   const patchFilters = React.useCallback(
     (patch: Partial<TaskFilters>, mode: HistoryMode = "push") =>
-      write({ filters: { ...state.filters, ...patch } }, mode),
-    [state.filters, write],
+      write({ filters: { ...readCurrentState().filters, ...patch } }, mode),
+    [readCurrentState, write],
   );
 
   const resetFilters = React.useCallback(

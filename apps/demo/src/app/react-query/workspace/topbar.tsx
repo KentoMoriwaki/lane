@@ -8,16 +8,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { SearchField } from "./use-debounced-search-field";
 
 export function Topbar({
-  search,
-  onSearchChange,
+  searchField,
   onNewTask,
   onRefresh,
   isRefreshing,
 }: {
-  search: string;
-  onSearchChange: (value: string) => void;
+  searchField: SearchField;
   onNewTask: () => void;
   onRefresh: () => void;
   isRefreshing: boolean;
@@ -27,8 +26,9 @@ export function Topbar({
       <div className="relative w-full max-w-md">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <input
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
+          value={searchField.value}
+          onChange={searchField.onChange}
+          onCompositionEnd={searchField.onCompositionEnd}
           placeholder="Search tasks, labels…"
           className="h-9 w-full rounded-md border border-input bg-background/60 pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:bg-surface focus-visible:ring-2 focus-visible:ring-ring/30"
         />

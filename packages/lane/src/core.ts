@@ -79,6 +79,12 @@ type LaneEntry = {
   // flag lets `whenStale: "refetch"` fire only on a genuine remount of
   // previously-live data instead of looping on the retry of a first mount.
   everSubscribed: boolean;
+  // The source of the most recent notification for this key. A reader that
+  // subscribes after one has already gone out has no notification to read the
+  // source from, so it reads it here and converges through the matching
+  // transition — otherwise siblings of one key disagree about which pending flag
+  // is set for the same update.
+  lastNotifySource: LaneInvalidationSource | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -326,6 +332,19 @@ export function subscribeLane(
   };
 }
 
+/**
+ * The source of the last notification for a key, for a reader catching up on one
+ * it was not subscribed in time to receive. `undefined` when the key has never
+ * been notified — or no longer exists — in which case the reader has no reason
+ * to treat its catch-up as user-driven.
+ */
+export function latestNotifySource(
+  lane: Lane,
+  keyId: string,
+): LaneInvalidationSource | undefined {
+  return getLaneState(lane).entries.get(keyId)?.lastNotifySource;
+}
+
 export function onInvalidate(
   lane: Lane,
   key: LaneKey,
@@ -438,6 +457,8 @@ function notifyInvalidate(
   gate?: Promise<void>,
 ): void {
   const info = entryInfo(entry);
+
+  entry.lastNotifySource = source;
 
   for (const subscriber of [...entry.subscribers]) {
     subscriber.onInvalidate?.(info, source, gate);
@@ -562,6 +583,7 @@ function createEntry(
     cache: undefined,
     everSubscribed: false,
     idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
+    lastNotifySource: undefined,
     key,
     keyId,
     lastFulfilled: undefined,

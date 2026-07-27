@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hydrateMany, readOrCreate } from "../core";
+import { hydrateMany, latestNotifySource, readOrCreate } from "../core";
 import { createLane } from "../index";
 import { serializeKey } from "../keys";
 import type { LaneRead } from "../types";
@@ -442,3 +442,23 @@ describe("conditional invalidation", () => {
 // the focus/reconnect cases in react-integration.test.ts); the store has no
 // notion of them. Its role here is the conditional invalidation each reader
 // fires — covered by the "conditional invalidation" suite above.
+
+describe("latestNotifySource", () => {
+  it("records the source of the last notification for a key", () => {
+    const lane = createLane();
+
+    // Never notified — a reader catching up here has nothing user-driven to join.
+    lane.set(["tasks"], "cached");
+    expect(latestNotifySource(lane, serializeKey(["other"]))).toBeUndefined();
+
+    // `set` publishes through the explicit transition.
+    expect(latestNotifySource(lane, serializeKey(["tasks"]))).toBe("transition");
+
+    subscribeInvalidate(lane, ["tasks"], () => {});
+    lane.invalidate(["tasks"], { background: true });
+    expect(latestNotifySource(lane, serializeKey(["tasks"]))).toBe("background");
+
+    lane.invalidate(["tasks"]);
+    expect(latestNotifySource(lane, serializeKey(["tasks"]))).toBe("transition");
+  });
+});

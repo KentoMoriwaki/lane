@@ -22,6 +22,11 @@ notifies every subscriber synchronously, in one tick, so their transitions share
 React's per-event transition lane and land together. No frame shows them
 disagreeing.
 
+**Readers of one key agree on which pending flag is set.** A reader that
+subscribes a moment too late to receive a notification still converges through
+the same kind of transition it missed, so it reports `isTransitionPending` or
+`isBackgroundPending` to match its siblings rather than always the latter.
+
 **An uncommitted mount is never pinned to a superseded promise.** A suspended
 fiber has not committed, so React re-runs its `useState` initializer on every
 retry. Whatever the store holds at the last retry is what renders — a mount
@@ -46,9 +51,9 @@ Three things have to be true at once:
 1. **A render-phase read.** Either a fresh mount, or a reader switching its
    `key` / lane / `enabled`. A reader that is already mounted converges through
    its subscription instead.
-2. **The read does not suspend.** Per the third guarantee above, this is the
-   hard one to satisfy — it needs a promise React can already read
-   synchronously.
+2. **The read does not suspend.** Because `use()` tags a thenable on first
+   sight, this is the hard one to satisfy — it needs a promise React can already
+   read synchronously.
 3. **A transition on that key that cannot commit yet.** Not "the refetch is
    slow": readers waiting on the same promise wake together. It takes something
    *else* holding the transition back.

@@ -10,6 +10,7 @@ import {
 import {
   invalidateEntry,
   invalidationSource,
+  latestNotifySource,
   readOrCreate,
   subscribeLane,
 } from "./core";
@@ -130,9 +131,22 @@ export function useLane<T>(
       return;
     }
 
-    startBackgroundTransition(() => {
+    const apply = () => {
       setPromise(nextPromise);
-    });
+    };
+
+    // Converge through the same kind of transition as the notification this
+    // reader was not subscribed in time to receive, so siblings of one key agree
+    // on which pending flag the update sets. Nothing recorded means nothing
+    // user-driven to join: stay in the background.
+    if (
+      latestNotifySource(targetLane, serializeKey(targetKey)) === "transition"
+    ) {
+      startTransition(apply);
+      return;
+    }
+
+    startBackgroundTransition(apply);
   });
 
   const refetchOnMount = useEffectEvent(

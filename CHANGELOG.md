@@ -32,6 +32,15 @@ All notable changes to `use-lane` are documented here. The format is based on
   transition model. Projected into the docs site and the bundled agent skill as
   `references/consistency.md`.
 
+### Fixed
+
+- A reader that subscribes just too late to receive a notification — it committed
+  on the previous promise and only finds the change when its subscription effect
+  runs — now converges through the same kind of transition that notification
+  used, instead of always the background one. Siblings reading the same key no
+  longer disagree about whether an update is `isTransitionPending` or
+  `isBackgroundPending`.
+
 ### Changed
 
 - Raised the `createLane (core only)` size budget from 2 kB to 2.2 kB. It sat at

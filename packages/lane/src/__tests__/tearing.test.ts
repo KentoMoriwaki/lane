@@ -358,6 +358,89 @@ describe("cross-reader consistency", () => {
     });
   });
 
+  describe("pending flags", () => {
+    it("joins the transition of the notification it missed", async () => {
+      // Effects run in tree order, so `Invalidate` fires between B subscribing
+      // and A subscribing. B is notified and enters its explicit transition; A
+      // committed on the previous promise and only discovers the change when it
+      // subscribes, a moment later. Both are converging on the same update, so
+      // both must report the same pending flag.
+      const lane = createLane({ gcTime: Infinity });
+      const reload = deferred<string>();
+      const loader = vi.fn(() => reload.promise);
+      lane.set(KEY, "v1");
+
+      // Warm-up so React has tagged v1's promise: without it both readers
+      // suspend, never commit, and no effect runs at all.
+      const warm = newFrames();
+      const warmApp = await render(warm, () =>
+        el(LaneProvider, { lane }, boundary("boot", [
+          el(Reader, { id: "A", frames: warm, loader, key: "A" }),
+        ])),
+      );
+      await settle(warmApp);
+      unmount(warmApp);
+
+      const frames = newFrames();
+      const app = await render(frames, () =>
+        el(LaneProvider, { lane }, boundary("boot", [
+          el(Reader, { id: "B", frames, flags: true, loader, key: "B" }),
+          el(Invalidate, { lane, key: "inv" }),
+          el(Reader, { id: "A", frames, flags: true, loader, key: "A" }),
+        ])),
+      );
+      await settle(app);
+
+      // A caught up through the same explicit transition, not the background one.
+      expect(text(app)).toBe("[B=v1:t1b0][A=v1:t1b0]");
+
+      await act(async () => {
+        reload.resolve("v2");
+        await settlePromiseHandlers();
+      });
+      await settle(app);
+
+      expect(text(app)).toBe("[B=v2:t0b0][A=v2:t0b0]");
+      expect(tornFrames(frames)).toEqual([]);
+    });
+
+    it("stays in the background for a background notification", async () => {
+      const lane = createLane({ gcTime: Infinity });
+      const reload = deferred<string>();
+      const loader = vi.fn(() => reload.promise);
+      lane.set(KEY, "v1");
+
+      const warm = newFrames();
+      const warmApp = await render(warm, () =>
+        el(LaneProvider, { lane }, boundary("boot", [
+          el(Reader, { id: "A", frames: warm, loader, key: "A" }),
+        ])),
+      );
+      await settle(warmApp);
+      unmount(warmApp);
+
+      const frames = newFrames();
+      const app = await render(frames, () =>
+        el(LaneProvider, { lane }, boundary("boot", [
+          el(Reader, { id: "B", frames, flags: true, loader, key: "B" }),
+          el(Invalidate, { lane, background: true, key: "inv" }),
+          el(Reader, { id: "A", frames, flags: true, loader, key: "A" }),
+        ])),
+      );
+      await settle(app);
+
+      expect(text(app)).toBe("[B=v1:t0b1][A=v1:t0b1]");
+
+      await act(async () => {
+        reload.resolve("v2");
+        await settlePromiseHandlers();
+      });
+      await settle(app);
+
+      expect(text(app)).toBe("[B=v2:t0b0][A=v2:t0b0]");
+    });
+  });
+
   describe("pending window", () => {
     it("leaves every reader unaware while an awaited action runs", async () => {
       // `startTransition(async () => { await action(); invalidate() })` cannot
@@ -572,6 +655,16 @@ function Reader({
     null,
     `[${id}${foreign ? "~" : "="}${read.data}${pending}]`,
   );
+}
+
+// Invalidates KEY once, from a mount effect. Placed between two readers so it
+// runs after the first has subscribed and before the second has.
+function Invalidate({ lane, background = false }: { lane: Lane; background?: boolean }) {
+  React.useEffect(() => {
+    lane.invalidate(KEY, background ? { background: true } : undefined);
+  }, [lane, background]);
+
+  return null;
 }
 
 // Writes to the store from its own render body — a deterministic stand-in for an

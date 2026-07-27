@@ -2,15 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readOrCreate, subscribeLane } from "../core";
 import { createLane } from "../index";
 import type { Lane, LaneKey, LaneLoader, LaneRead } from "../types";
-import { deferred, resetVitest, settlePromiseHandlers, subscribe } from "./test-utils";
+import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";
 
 afterEach(resetVitest);
 
 /**
- * A subscriber that re-reads on every notification — the store-level shape of
- * what `useLane` does. `{ after }` converges in two notifications (announce,
- * then invalidate for real), so a listener that only counts calls would never
- * see the second read happen.
+ * A subscriber that re-reads on every notification, passing the gate straight
+ * back to `readOrCreate` — the store-level shape of what `useLane` does. A
+ * listener that only counts calls would never make the gated read happen.
  */
 function reader<T>(lane: Lane, key: LaneKey, loader: LaneLoader<T>) {
   const state = {
@@ -19,9 +18,9 @@ function reader<T>(lane: Lane, key: LaneKey, loader: LaneLoader<T>) {
   };
 
   subscribeLane(lane, key, {
-    onInvalidate: () => {
+    onInvalidate: (_entry, _source, gate) => {
       state.notifications += 1;
-      state.promise = readOrCreate(lane, key, loader);
+      state.promise = readOrCreate(lane, key, loader, undefined, gate);
     },
   });
 
@@ -42,7 +41,8 @@ describe("invalidate({ after })", () => {
     lane.invalidate(["tasks"], { after: action.promise });
 
     // The whole point: readers hear about it when the action starts, not when it
-    // ends — and they keep serving the value they already had.
+    // ends. One notification does the whole job — the read it triggers is armed
+    // now and fetches later.
     expect(view.notifications).toBe(1);
     await settlePromiseHandlers();
     expect(loader).not.toHaveBeenCalled();
@@ -50,29 +50,27 @@ describe("invalidate({ after })", () => {
     action.resolve();
     await settlePromiseHandlers();
 
-    expect(view.notifications).toBe(2);
+    expect(view.notifications).toBe(1);
     expect(loader).toHaveBeenCalledTimes(1);
     await expect(view.promise).resolves.toEqual({ data: "fresh" });
   });
 
-  it("keeps the held promise pending for the whole action", async () => {
+  it("keeps the gated read pending for the whole action", async () => {
     const lane = createLane();
     const action = deferred<void>();
     const loader = vi.fn(async () => "fresh");
-    const settledFirst = vi.fn();
+    const settledEarly = vi.fn();
 
     lane.set(["tasks"], "cached");
-    subscribe(lane, ["tasks"]);
+    const view = reader(lane, ["tasks"], loader);
 
     lane.invalidate(["tasks"], { after: action.promise });
-
-    const held = readOrCreate(lane, ["tasks"], loader);
-    void held.then(settledFirst);
+    void view.promise?.then(settledEarly);
     await settlePromiseHandlers();
 
-    // Pending, not resolved to the stale value: this is what a reader suspends
-    // on, so resolving early would end the pending window before the data lands.
-    expect(settledFirst).not.toHaveBeenCalled();
+    // Pending for the whole action: this is what a reader suspends on, so
+    // settling early would end the pending window before the data lands.
+    expect(settledEarly).not.toHaveBeenCalled();
   });
 
   it("still converges when the action rejects", async () => {
@@ -117,11 +115,12 @@ describe("invalidate({ after })", () => {
     expect(unhandled).not.toHaveBeenCalled();
   });
 
-  it("holds a key nobody is reading, and converges it once a reader arrives", async () => {
-    // The reason `invalidateAll` can name a whole family: an unmounted key keeps
-    // the held promise as its cache, so it is not collected as empty, and a
-    // reader arriving mid-action adopts the pending window instead of fetching
-    // straight into the pre-mutation source.
+  it("defers a key nobody is reading instead of emptying it", async () => {
+    // The reason `invalidateAll` can name a whole family. With no subscriber
+    // there is nobody to announce to and nobody to refill the cache the fan-out
+    // would empty, so the entry is left intact and converges when the action
+    // lands. A reader arriving mid-action sees the last known value — the same
+    // as `await action; invalidate(key)` — and is corrected at the end.
     const lane = createLane();
     const action = deferred<void>();
     const loader = vi.fn(async () => "fresh");
@@ -131,47 +130,52 @@ describe("invalidate({ after })", () => {
     await settlePromiseHandlers();
 
     const view = reader(lane, ["tasks"], loader);
-    await settlePromiseHandlers();
+    await expect(view.promise).resolves.toEqual({ data: "cached" });
     expect(loader).not.toHaveBeenCalled();
 
     action.resolve();
     await settlePromiseHandlers();
 
+    expect(view.notifications).toBe(1);
     expect(loader).toHaveBeenCalledTimes(1);
     await expect(view.promise).resolves.toEqual({ data: "fresh" });
   });
 
-  it("leaves an entry with no value yet to its in-flight read", async () => {
-    // Nothing to hold and every reader is already suspended, so there is nothing
-    // to announce. The first load is left alone and the scheduled invalidation
-    // converges it once the action lands.
+  it("restarts an in-flight first load behind the action", async () => {
+    // An entry with no value yet is treated no differently: its read is aborted
+    // and re-armed behind the action, so the source is read once — after the
+    // mutation — instead of racing it and then being thrown away.
     const lane = createLane();
     const action = deferred<void>();
     const first = deferred<string>();
     const loads = [() => first.promise, async () => "fresh"];
     const loader = vi.fn(() => (loads.shift() ?? (async () => "extra"))());
+    const signals: AbortSignal[] = [];
+    const tracked = vi.fn((context: { signal: AbortSignal }) => {
+      signals.push(context.signal);
+      return loader();
+    });
 
-    const view = reader(lane, ["tasks"], loader);
+    const view = reader(lane, ["tasks"], tracked);
     await settlePromiseHandlers();
     expect(loader).toHaveBeenCalledTimes(1);
 
     lane.invalidate(["tasks"], { after: action.promise });
-    expect(view.notifications).toBe(0); // nothing worth announcing
+    expect(view.notifications).toBe(1);
+    expect(signals[0].aborted).toBe(true);
 
-    // The in-flight first load is untouched.
-    first.resolve("initial");
+    // Nothing new goes out while the action runs.
     await settlePromiseHandlers();
     expect(loader).toHaveBeenCalledTimes(1);
 
     action.resolve();
     await settlePromiseHandlers();
 
-    expect(view.notifications).toBe(1);
     expect(loader).toHaveBeenCalledTimes(2);
     await expect(view.promise).resolves.toEqual({ data: "fresh" });
   });
 
-  it("holds every entry an invalidateAll scope matches", async () => {
+  it("gates every entry an invalidateAll scope matches", async () => {
     const lane = createLane();
     const action = deferred<void>();
     const list = vi.fn(async () => "list");
@@ -207,7 +211,7 @@ describe("invalidate({ after })", () => {
     ]);
   });
 
-  it("respects onlyIf when deciding to hold", async () => {
+  it("respects onlyIf when deciding to gate", async () => {
     const lane = createLane();
     const action = deferred<void>();
     const inflight = deferred<string>();
@@ -231,8 +235,8 @@ describe("invalidate({ after })", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a held entry in flight for staleness policies", async () => {
-    // The held promise has no settlement, so a poll that only fires on settled
+  it("keeps a gated entry in flight for staleness policies", async () => {
+    // A gated read has no settlement, so a poll that only fires on settled
     // entries steps around it instead of cutting the pending window short.
     const lane = createLane();
     const action = deferred<void>();

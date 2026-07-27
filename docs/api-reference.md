@@ -601,7 +601,7 @@ Two things to know:
   run: the key was already invalidated, so the next read reflects whatever the
   source actually holds. Only settlement is observed — the resolved value is
   ignored, and a rejection never surfaces through Lane.
-- **A held entry counts as in-flight.** It has no settled promise, so
+- **A gated read counts as in-flight.** It has no settled promise, so
   `onlyIf: "settled"` skips it and a poll cannot cut the pending window short.
 
 ### Polling

@@ -29,6 +29,9 @@ export type LaneReadOptions = {
 type LaneSubscription = (
   entry: LaneEntryInfo,
   source: LaneInvalidationSource,
+  // Set by `invalidate(..., { after })`: the re-read this notification triggers
+  // must wait for it before fetching. Pass it straight back to `readOrCreate`.
+  gate: Promise<void> | undefined,
 ) => void;
 
 type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
@@ -196,6 +199,7 @@ export function readOrCreate<T>(
   key: LaneKey,
   loader: LaneLoader<T>,
   options?: LaneReadOptions,
+  gate?: Promise<void>,
 ): Promise<LaneRead<T>> {
   const state = getLaneState(lane);
   const keyId = serializeKey(key);
@@ -208,7 +212,10 @@ export function readOrCreate<T>(
   }
 
   const controller = new AbortController();
-  const promise = runLoader(loader, key, controller.signal, options);
+  const load = () => runLoader(loader, key, controller.signal, options);
+  // A gated read is an in-flight read that has not begun: readers see it as
+  // pending and hold their last value on screen until the action lands.
+  const promise = gate ? gate.then(load) : load();
 
   return setEntryCache(state, entry, promise, controller);
 }
@@ -359,12 +366,11 @@ function invalidateLaneEntry(
  * `invalidate(..., { after })`: announce the invalidation now, converge when the
  * action finishes.
  *
- * The entry's current value is republished as a promise that waits for `after`,
- * so subscribers are notified immediately, go pending, and keep that value on
- * screen through the transition. The real invalidation is scheduled for when
- * `after` settles; readers re-read then, with their own loader, exactly as for
- * any other invalidation. Nothing is stored on the entry — the held promise *is*
- * the pending window, and the deferred invalidation is a closure.
+ * The gate rides the notification rather than living on the entry. Subscribers
+ * re-read synchronously during the fan-out, the first one installs a cache whose
+ * load waits for the gate, and the rest dedupe onto it — so the gate only has to
+ * outlive the fan-out, which makes it an argument rather than state. Readers go
+ * pending on that read immediately and keep their current value on screen.
  *
  * Only settlement is observed. A rejected action still invalidates, because
  * `after` chooses *when* to converge rather than whether the key is suspect, and
@@ -376,35 +382,31 @@ function holdEntry(
   after: Promise<unknown>,
   source: LaneInvalidationSource,
 ): void {
-  const settled = after.then(noop, noop);
-  const held = entry.lastFulfilled;
+  const gate = after.then(noop, noop);
 
-  // Registered before the held promise below, so it wins the hand-off: the cache
-  // is already gone by the time the held value would have resolved into it.
-  // Resolved by key rather than by closure, so a long action that outlives the
-  // entry (GC, `remove`) still converges whatever occupies the slot at the end —
-  // the same reach `await action; invalidate(key)` has.
-  void settled.then(() => {
-    const current = state.entries.get(entry.keyId);
+  if (entry.subscribers.size === 0) {
+    // Nobody to announce it to, and nobody to refill the cache the fan-out would
+    // have emptied. Leave the entry alone and converge when the action lands —
+    // the shape `await action; invalidate(key)` already has. Resolved by key, so
+    // an action outliving its entry still converges whatever occupies the slot.
+    void gate.then(() => {
+      const current = state.entries.get(entry.keyId);
 
-    if (!current) {
-      return;
-    }
+      if (!current) {
+        return;
+      }
 
-    removeEntryCache(current);
-    notifyInvalidate(current, source);
-    cleanupEntry(state, current);
-  });
+      removeEntryCache(current);
+      notifyInvalidate(current, source);
+      cleanupEntry(state, current);
+    });
 
-  if (!held) {
-    // No value has ever landed, so every reader is already suspended and there
-    // is nothing to announce. Leave the in-flight read alone and let the
-    // scheduled invalidation do the whole job.
     return;
   }
 
-  setEntryCache(state, entry, settled.then(() => held.value), undefined);
-  notifyInvalidate(entry, source);
+  removeEntryCache(entry);
+  notifyInvalidate(entry, source, gate);
+  cleanupEntry(state, entry);
 }
 
 function removeLaneEntry(state: LaneState, entry: LaneEntry): void {
@@ -458,11 +460,12 @@ function cleanupEntry(state: LaneState, entry: LaneEntry): void {
 function notifyInvalidate(
   entry: LaneEntry,
   source: LaneInvalidationSource,
+  gate?: Promise<void>,
 ): void {
   const info = entryInfo(entry);
 
   for (const subscriber of [...entry.subscribers]) {
-    subscriber.onInvalidate?.(info, source);
+    subscriber.onInvalidate?.(info, source, gate);
   }
 }
 

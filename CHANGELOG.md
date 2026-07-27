@@ -19,8 +19,8 @@ All notable changes to `use-lane` are documented here. The format is based on
   does not return values for; when it *does* resolve to a key's value, `set` with
   the in-flight promise remains more direct. `after` decides *when* the reads run,
   never *whether*: a rejected action still leaves the key invalidated, only
-  settlement is observed, and the rejection never surfaces through Lane. A held
-  entry counts as in-flight, so `onlyIf: "settled"` steps around it.
+  settlement is observed, and the rejection never surfaces through Lane. A gated
+  read counts as in-flight, so `onlyIf: "settled"` steps around it.
 
 ### Changed
 

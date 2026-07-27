@@ -43,8 +43,10 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
-- Raised the `createLane (core only)` size budget from 2 kB to 2.2 kB. It sat at
-  1.98 kB before `{ after }`, with no room left for a feature.
+- Raised the `createLane (core only)` size budget from 2 kB to 2.1 kB. It sat at
+  1.98 kB beforehand, with no room left for a feature. Deliberately tight — the
+  budget is what kept `{ after }` down to a gate on the notification instead of
+  state on the entry.
 
 - Reframed the public documentation around Lane's core model:
   **Promise-first. Transition-native.** Lane keeps each keyed read's promise in

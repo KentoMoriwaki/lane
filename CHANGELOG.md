@@ -22,6 +22,16 @@ All notable changes to `use-lane` are documented here. The format is based on
   settlement is observed, and the rejection never surfaces through Lane. A gated
   read counts as in-flight, so `onlyIf: "settled"` steps around it.
 
+- **`docs/consistency.md`** — what two readers of one key are guaranteed to show
+  each other, and the one arrangement where they can disagree: an urgent
+  render-phase read of a key (a fresh mount, or a `key` / lane / `enabled`
+  switch) while a transition on that same key is held back by something else.
+  States the guarantees that make the ordinary `invalidate` → refetch path safe,
+  the single rule that removes both entry points, and why reaching for
+  `useSyncExternalStore` or `flushSync` buys the window back at the cost of the
+  transition model. Projected into the docs site and the bundled agent skill as
+  `references/consistency.md`.
+
 ### Changed
 
 - Raised the `createLane (core only)` size budget from 2 kB to 2.2 kB. It sat at

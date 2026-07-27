@@ -603,6 +603,11 @@ Two things to know:
   ignored, and a rejection never surfaces through Lane.
 - **A gated read counts as in-flight.** It has no settled promise, so
   `onlyIf: "settled"` skips it and a poll cannot cut the pending window short.
+- **A key nobody is reading keeps its value.** There is no reader to mark
+  pending, so the entry is left as it is and invalidated when the action lands —
+  what `await action; invalidate(key)` does. Navigating to it mid-action shows
+  the last known value, then converges. This is what makes naming a whole family
+  with `invalidateAll` safe.
 
 ### Polling
 
@@ -793,3 +798,5 @@ Runtime exports beyond the hooks and `createLane`: `domEventSource`,
 - [Common mistakes](./common-mistakes.md) — anti-patterns and the use-lane way to write them.
 - [Supported architectures](./architectures.md) — RSC-first and RSC-seeded client ownership.
 - [Design notes](./design-notes.md) — the rationale behind these choices.
+- [Cross-reader consistency](./consistency.md) — what two readers of one key are
+  guaranteed to show each other.

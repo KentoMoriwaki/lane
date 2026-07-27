@@ -7,7 +7,7 @@ current UI stays live while the next data loads. Lane owns promise identity;
 React owns loading, errors, pending, and optimistic UI.
 
 - 📦 **Package** — [`use-lane`](packages/lane) · [npm](https://www.npmjs.com/package/use-lane)
-- 📖 **Docs** — [API reference](docs/api-reference.md) · [Migrating from RQ / SWR](docs/migrating.md) · [Common mistakes](docs/common-mistakes.md) · [Architectures](docs/architectures.md) · [Frameworks & routers](docs/integrations.md) · [Design notes](docs/design-notes.md)
+- 📖 **Docs** — [API reference](docs/api-reference.md) · [Migrating from RQ / SWR](docs/migrating.md) · [Common mistakes](docs/common-mistakes.md) · [Architectures](docs/architectures.md) · [Frameworks & routers](docs/integrations.md) · [Design notes](docs/design-notes.md) · [Cross-reader consistency](docs/consistency.md)
 - 🤖 **Agent skill** — version-locked guidance for AI coding agents · [how to use it](packages/lane/README.md#agent-skill)
 - 🛠 **Local setup & contributing** — [CONTRIBUTING.md](CONTRIBUTING.md)
 

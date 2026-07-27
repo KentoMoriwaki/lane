@@ -6,5 +6,6 @@ export default {
   environments: "Environments (CLI / RN)",
   migrating: "Migrating from RQ / SWR",
   "design-notes": "Design Notes",
+  consistency: "Cross-reader consistency",
   "common-mistakes": "Common mistakes",
 };

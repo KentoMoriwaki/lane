@@ -124,9 +124,10 @@ export const insightsAtom = queryAtom(teamScopeAtom, (get) =>
 /**
  * One atom per distinct filter set — the family is what turns "an atom holding
  * a promise" into a keyed cache, so going back to a previous filter shows its
- * result immediately. Unlike a query cache there is no gc timer behind it: an
- * entry lives until something calls `remove`, which is the cost of the family
- * being an ordinary `Map` you can also enumerate (see `publishTask`).
+ * result immediately. Eviction is `remove`, plus `setShouldRemove` for an age
+ * cutoff that the family applies when a param is next looked up rather than on
+ * a timer. This demo sets neither: every cached list stays addressable, which
+ * is what lets a write reconcile all of them (see `publishTask`).
  */
 export const tasksAtomFamily = atomFamily(
   (filters: TaskFilters) =>
@@ -206,25 +207,46 @@ export const selectedTaskAtom = atom((get) => {
 
 /* ------------------------------- Mutations ------------------------------ */
 
+/**
+ * How a mutation hands its store writes back to its caller.
+ *
+ * React's transition does not survive an `await`. Everything a mutation writes
+ * *after* its request resolves would otherwise land as a default-priority
+ * update, so any read it invalidates re-suspends into its fallback instead of
+ * holding what is on screen — a skeleton in place of a list the user is looking
+ * at. Mutations therefore never commit their own writes: they collect them into
+ * one function and pass it to the `commit` they were called with, and
+ * `hooks.ts` supplies a transition. Keeping it a parameter is also what keeps
+ * this module free of React.
+ */
+export type Commit = (publish: () => void) => void;
+
 export const createTaskAtom = atom(
   null,
-  async (get, set, input: CreateTaskInput): Promise<Task> => {
+  async (
+    get,
+    set,
+    commit: Commit,
+    input: CreateTaskInput,
+  ): Promise<Task> => {
     // The context is read once, up front. Everything a write publishes lands in
     // the team it was issued against, even if the user switches teams while the
     // request is in flight.
     const ctx = get(workspaceCtxAtom);
     const task = await createTask(ctx, input);
 
-    set(taskAtomFamily({ teamId: ctx.teamId, taskId: task.id }), {
-      type: "set",
-      value: task,
+    commit(() => {
+      set(taskAtomFamily({ teamId: ctx.teamId, taskId: task.id }), {
+        type: "set",
+        value: task,
+      });
+      // A new task can belong in any list, so none of them can be patched.
+      refreshTaskLists(set);
+      set(insightsAtom, { type: "refresh" });
+      if (task.project) {
+        set(projectsAtom, { type: "refresh" });
+      }
     });
-    // A new task can belong in any list, so none of them can be patched.
-    refreshTaskLists(set);
-    set(insightsAtom, { type: "refresh" });
-    if (task.project) {
-      set(projectsAtom, { type: "refresh" });
-    }
 
     return task;
   },
@@ -235,77 +257,106 @@ export const updateTaskAtom = atom(
   async (
     get,
     set,
+    commit: Commit,
     taskId: string,
     input: UpdateTaskInput,
     strategy: TaskCacheStrategy,
   ): Promise<Task> => {
     const ctx = get(workspaceCtxAtom);
     const task = await updateTask(ctx, taskId, input);
-    publishTask(set, ctx.teamId, task, strategy);
+    commit(() => publishTask(set, ctx.teamId, task, strategy));
     return task;
   },
 );
 
 export const deleteTaskAtom = atom(
   null,
-  async (get, set, taskId: string): Promise<void> => {
+  async (get, set, commit: Commit, taskId: string): Promise<void> => {
     const ctx = get(workspaceCtxAtom);
     await deleteTask(ctx, taskId);
 
-    // Dropping the atoms from their families is this variant's `remove`: the
-    // detail read for a deleted task must never be refetched.
-    const key = { teamId: ctx.teamId, taskId };
-    taskAtomFamily.remove(key);
-    blockedByAtomFamily.remove(key);
-    blockingAtomFamily.remove(key);
+    commit(() => {
+      // Dropping the atoms from their families is this variant's `remove`: the
+      // detail read for a deleted task must never be refetched.
+      const key = { teamId: ctx.teamId, taskId };
+      taskAtomFamily.remove(key);
+      blockedByAtomFamily.remove(key);
+      blockingAtomFamily.remove(key);
 
-    for (const filters of [...tasksAtomFamily.getParams()]) {
-      set(tasksAtomFamily(filters), {
-        type: "update",
-        updater: (tasks) => tasks.filter((item) => item.id !== taskId),
-      });
-    }
+      for (const filters of [...tasksAtomFamily.getParams()]) {
+        set(tasksAtomFamily(filters), {
+          type: "update",
+          updater: (tasks) => tasks.filter((item) => item.id !== taskId),
+        });
+      }
 
-    set(insightsAtom, { type: "refresh" });
-    set(projectsAtom, { type: "refresh" });
-    refreshDependencyReads(set);
+      set(insightsAtom, { type: "refresh" });
+      set(projectsAtom, { type: "refresh" });
+      refreshDependencyReads(set);
+    });
   },
 );
 
 export const addTaskLabelAtom = atom(
   null,
-  async (get, set, taskId: string, label: TeamLabel): Promise<Task> => {
+  async (
+    get,
+    set,
+    commit: Commit,
+    taskId: string,
+    label: TeamLabel,
+  ): Promise<Task> => {
     const ctx = get(workspaceCtxAtom);
     const task = await addTaskLabel(ctx, taskId, label.id);
-    publishTask(set, ctx.teamId, task, taskCacheStrategies.labels);
+    commit(() =>
+      publishTask(set, ctx.teamId, task, taskCacheStrategies.labels),
+    );
     return task;
   },
 );
 
 export const removeTaskLabelAtom = atom(
   null,
-  async (get, set, taskId: string, labelId: string): Promise<Task> => {
+  async (
+    get,
+    set,
+    commit: Commit,
+    taskId: string,
+    labelId: string,
+  ): Promise<Task> => {
     const ctx = get(workspaceCtxAtom);
     const task = await removeTaskLabel(ctx, taskId, labelId);
-    publishTask(set, ctx.teamId, task, taskCacheStrategies.labels);
+    commit(() =>
+      publishTask(set, ctx.teamId, task, taskCacheStrategies.labels),
+    );
     return task;
   },
 );
 
 export const createLabelAtom = atom(
   null,
-  async (get, set, input: CreateLabelInput): Promise<TeamLabel> => {
+  async (
+    get,
+    set,
+    commit: Commit,
+    input: CreateLabelInput,
+  ): Promise<TeamLabel> => {
     const label = await createLabel(get(workspaceCtxAtom), input);
-    set(labelsAtom, { type: "refresh" });
+    commit(() => set(labelsAtom, { type: "refresh" }));
     return label;
   },
 );
 
 export const createProjectAtom = atom(
   null,
-  async (get, set, input: CreateProjectInput): Promise<Project> => {
+  async (
+    get,
+    set,
+    commit: Commit,
+    input: CreateProjectInput,
+  ): Promise<Project> => {
     const project = await createProject(get(workspaceCtxAtom), input);
-    set(projectsAtom, { type: "refresh" });
+    commit(() => set(projectsAtom, { type: "refresh" }));
     return project;
   },
 );

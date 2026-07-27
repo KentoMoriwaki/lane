@@ -1,13 +1,14 @@
 "use client";
 
 import type { TeamLabel, UpdateTaskInput } from "@/server/api";
-import { useAtomValue, useSetAtom, useStore } from "jotai";
+import { useAtomValue, useSetAtom, useStore, type WritableAtom } from "jotai";
 import * as React from "react";
 import {
   activeTeamIdAtom,
   addTaskLabelAtom,
   blockedByAtomFamily,
   blockingAtomFamily,
+  type Commit,
   createLabelAtom,
   createProjectAtom,
   createTaskAtom,
@@ -95,15 +96,37 @@ function useTaskKey(taskId: string): TaskKey {
 
 /**
  * A mutation is a write-only atom, so binding it is just `useSetAtom`. The
- * setter hands back the write function's promise, which is what lets these
- * stay plain async calls that a transition or `useActionState` can await.
+ * setter hands back the write function's promise, which is what lets these stay
+ * plain async calls that a transition or `useActionState` can await.
+ *
+ * What this adds is the `commit` every mutation takes (see `Commit` in
+ * `atoms.ts`): the writes it makes once its request resolves are past an
+ * `await`, so they need a transition of their own or they blank the reads they
+ * land in.
+ *
+ * The transition bound here is the list one. An edit is not only a change to
+ * the open task: it patches or refetches every cached list the edited field
+ * could have moved the task in or out of, so the list is being replaced and
+ * says so the same way a filter change does. Where the edit *came from* is
+ * reported separately, by the detail panel's own "Saving…".
  */
+function useMutation<Args extends unknown[], Result>(
+  mutationAtom: WritableAtom<null, [Commit, ...Args], Promise<Result>>,
+): (...args: Args) => Promise<Result> {
+  const run = useSetAtom(mutationAtom);
+  const { startTransition } = useWorkspaceTransition();
+  return React.useCallback(
+    (...args: Args) => run(startTransition, ...args),
+    [run, startTransition],
+  );
+}
+
 export function useCreateTask() {
-  return useSetAtom(createTaskAtom);
+  return useMutation(createTaskAtom);
 }
 
 export function useUpdateTask(taskId: string) {
-  const update = useSetAtom(updateTaskAtom);
+  const update = useMutation(updateTaskAtom);
   return React.useCallback(
     (input: UpdateTaskInput, strategy: TaskCacheStrategy) =>
       update(taskId, input, strategy),
@@ -112,11 +135,11 @@ export function useUpdateTask(taskId: string) {
 }
 
 export function useDeleteTask() {
-  return useSetAtom(deleteTaskAtom);
+  return useMutation(deleteTaskAtom);
 }
 
 export function useAddTaskLabel(taskId: string) {
-  const addLabel = useSetAtom(addTaskLabelAtom);
+  const addLabel = useMutation(addTaskLabelAtom);
   return React.useCallback(
     (label: TeamLabel) => addLabel(taskId, label),
     [addLabel, taskId],
@@ -124,7 +147,7 @@ export function useAddTaskLabel(taskId: string) {
 }
 
 export function useRemoveTaskLabel(taskId: string) {
-  const removeLabel = useSetAtom(removeTaskLabelAtom);
+  const removeLabel = useMutation(removeTaskLabelAtom);
   return React.useCallback(
     (labelId: string) => removeLabel(taskId, labelId),
     [removeLabel, taskId],
@@ -132,31 +155,46 @@ export function useRemoveTaskLabel(taskId: string) {
 }
 
 export function useCreateLabel() {
-  return useSetAtom(createLabelAtom);
+  return useMutation(createLabelAtom);
 }
 
 export function useCreateProject() {
-  return useSetAtom(createProjectAtom);
+  return useMutation(createProjectAtom);
 }
 
 /* ------------------------------- Refresh ------------------------------- */
 
 /**
- * Manual workspace refresh. The invalidation is a single atom write; the
- * spinner comes from the shared transition, which is also what keeps the
- * current data on screen while the new reads resolve.
+ * Manual workspace refresh. The invalidation is a single atom write, and the
+ * list transition is what keeps the current data on screen while the new reads
+ * resolve.
+ *
+ * The button's own spinner needs one thing the transition cannot tell it. A
+ * filter change and an edit land in the same transition, so `isPending` answers
+ * "is the list being replaced", not "is a refresh running" — and a refresh icon
+ * spinning every time a title is saved would be claiming something that never
+ * happened. Tracking whether this hook is what started the pending transition
+ * is the difference between the two questions.
  */
 export function useWorkspaceRefresh() {
   const refreshWorkspace = useSetAtom(refreshWorkspaceAtom);
   const { isPending, startTransition } = useWorkspaceTransition();
+  const [isRequested, setIsRequested] = React.useState(false);
 
   const refresh = React.useCallback(() => {
+    setIsRequested(true);
     startTransition(() => {
       refreshWorkspace();
     });
   }, [refreshWorkspace, startTransition]);
 
-  return { refresh, isRefreshing: isPending };
+  React.useEffect(() => {
+    if (isRequested && !isPending) {
+      setIsRequested(false);
+    }
+  }, [isPending, isRequested]);
+
+  return { refresh, isRefreshing: isRequested && isPending };
 }
 
 /**

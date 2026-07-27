@@ -38,6 +38,55 @@ type Overlay<Value> = {
   value: Value | Promise<Value>;
 };
 
+/**
+ * A promise that remembers what it settled to.
+ *
+ * `get` hands back the entry's promise whether or not it has resolved, so
+ * patching a list that is already on screen would otherwise have to be
+ * `promise.then(updater)` — a brand new *pending* promise, which `use` has no
+ * choice but to suspend on. The reader would drop to its skeleton in order to
+ * show data it already had, and the "patch in place, don't refetch" path would
+ * look worse than the refetch it was avoiding. Remembering the settled value
+ * lets the patch be applied synchronously instead.
+ */
+type TrackedPromise<Value> = Promise<Value> & {
+  settled?: { value: Value };
+};
+
+function trackSettled<Value>(promise: Promise<Value>): TrackedPromise<Value> {
+  const tracked: TrackedPromise<Value> = promise;
+  promise.then(
+    (value) => {
+      tracked.settled = { value };
+    },
+    () => {
+      // A rejected read has no value to patch. The reader's error boundary owns
+      // it; swallowing here only keeps this bookkeeping chain from being an
+      // unhandled rejection of its own.
+    },
+  );
+  return tracked;
+}
+
+function patch<Value>(
+  current: Value | Promise<Value>,
+  updater: (value: Value) => Value,
+): Value | Promise<Value> {
+  if (!(current instanceof Promise)) {
+    return updater(current);
+  }
+
+  const settled = (current as TrackedPromise<Value>).settled;
+  if (settled) {
+    return updater(settled.value);
+  }
+
+  // Still loading: chain onto the promise rather than dropping the patch. The
+  // reader keeps suspending — correctly, it has nothing to show yet — and sees
+  // the patched result when it lands.
+  return trackSettled(current.then(updater));
+}
+
 export function queryAtom<Value>(
   scopeAtom: Atom<string>,
   load: (get: Getter) => Promise<Value>,
@@ -46,7 +95,7 @@ export function queryAtom<Value>(
     // Reading the scope here is what binds the fetch to the session and team:
     // it re-runs on its own when either changes, refresh action or not.
     get(scopeAtom);
-    return load(get);
+    return trackSettled(load(get));
   });
 
   const overlayAtom = atom<Overlay<Value> | null>(null);
@@ -74,17 +123,10 @@ export function queryAtom<Value>(
         return;
       }
 
-      // `update` needs the value that is on screen. If the entry is still
-      // loading, chain onto its promise rather than dropping the patch — the
-      // reader keeps suspending and sees the patched result when it lands.
-      const current = get(entryAtom);
-      set(overlayAtom, {
-        scope,
-        value:
-          current instanceof Promise
-            ? current.then(action.updater)
-            : action.updater(current),
-      });
+      // `update` needs the value that is on screen, which `patch` takes from
+      // the entry without going back to a pending state for data it already
+      // holds.
+      set(overlayAtom, { scope, value: patch(get(entryAtom), action.updater) });
     },
   );
 

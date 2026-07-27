@@ -21,7 +21,10 @@ import {
   useRefreshSelectedTask,
   useWorkspaceRefresh,
 } from "@/app/jotai/api/hooks";
-import { useWorkspaceTransition } from "@/app/jotai/api/workspace-transition";
+import {
+  useDetailTransition,
+  useWorkspaceTransition,
+} from "@/app/jotai/api/workspace-transition";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { QueryErrorBoundary } from "./error-boundary";
 import { SectionError } from "./feedback";
@@ -231,11 +234,15 @@ type WorkspaceViewController = {
 /**
  * Filters and the selected task are atoms too, so the view and the reads that
  * depend on it are one graph: writing `filtersAtom` is what addresses the next
- * task list. Every write goes through the shared transition, which is what
- * keeps the current list on screen while that read resolves.
+ * task list. Every write goes through a transition, which is what keeps the
+ * current screen on until that read resolves — but not the *same* transition.
+ * A filter change replaces the list; opening a task replaces the detail panel.
+ * Routing them separately is what keeps the filter bar from reporting a task
+ * being opened as the list being refetched.
  */
 function useWorkspaceView(): WorkspaceViewController {
   const { startTransition } = useWorkspaceTransition();
+  const { startTransition: startDetailTransition } = useDetailTransition();
   const setFiltersState = useSetAtom(filtersAtom);
   const patchFiltersState = useSetAtom(patchFiltersAtom);
   const resetFiltersState = useSetAtom(resetFiltersAtom);
@@ -245,7 +252,8 @@ function useWorkspaceView(): WorkspaceViewController {
     () => ({
       patchFilters: (patch) => startTransition(() => patchFiltersState(patch)),
       resetFilters: () => startTransition(() => resetFiltersState()),
-      selectTask: (taskId) => startTransition(() => setSelectedTaskId(taskId)),
+      selectTask: (taskId) =>
+        startDetailTransition(() => setSelectedTaskId(taskId)),
       setFilters: (filters) => startTransition(() => setFiltersState(filters)),
     }),
     [
@@ -253,6 +261,7 @@ function useWorkspaceView(): WorkspaceViewController {
       resetFiltersState,
       setFiltersState,
       setSelectedTaskId,
+      startDetailTransition,
       startTransition,
     ],
   );

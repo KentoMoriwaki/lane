@@ -20,6 +20,7 @@ import {
   useUpdateTask,
 } from "@/app/jotai/api/hooks";
 import { taskCacheStrategies } from "@/app/jotai/api/task-cache-sync";
+import { useDetailTransition } from "@/app/jotai/api/workspace-transition";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -45,8 +46,12 @@ export function TaskDetailPanel({
   onClose: () => void;
   onSelectTask: (taskId: string) => void;
 }) {
+  // The panel's own transition, not the workspace's: opening a task says so
+  // here, the way a filter change says so on the list.
+  const { isPending } = useDetailTransition();
+
   return (
-    <DetailShell>
+    <DetailShell isPending={isPending}>
       <React.Suspense fallback={<DetailSkeleton />}>
         <SelectedTask onClose={onClose} onSelectTask={onSelectTask} />
       </React.Suspense>
@@ -90,9 +95,18 @@ function SelectedTask({
   );
 }
 
-function DetailShell({ children }: { children: React.ReactNode }) {
+function DetailShell({
+  children,
+  isPending,
+}: {
+  children: React.ReactNode;
+  isPending?: boolean;
+}) {
   return (
-    <aside className="scrollbar-calm hidden w-[360px] shrink-0 overflow-y-auto border-l border-border bg-surface lg:block">
+    <aside
+      className="scrollbar-calm hidden w-[360px] shrink-0 overflow-y-auto border-l border-border bg-surface transition-opacity lg:block"
+      style={{ opacity: isPending ? 0.6 : 1 }}
+    >
       {children}
     </aside>
   );

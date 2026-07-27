@@ -119,16 +119,30 @@ lane.invalidateAll(["todos"]);   // readers learn about it only now
 ```
 
 Notification is Lane's only channel to a reader, so this leaves every reader
-showing nothing for the whole request. Publish the in-flight promise with
-[`set`](./api-reference.md#set) when the action resolves to a key's value, or use
-[`invalidate(key, { after })`](./api-reference.md#announcing-an-invalidation-before-the-mutation-finishes)
-when it doesn't:
+showing nothing for the whole request — stale data with no sign that anything is
+happening. Which tool fixes that depends on what the action gives you, in this
+order:
+
+1. **The action resolves to the key's value** → [`set(key, promise)`](./api-reference.md#set)
+   publishes the in-flight promise under that key: pending starts with the
+   action, and there is no second round-trip.
+2. **You can show the outcome before it lands** → `useOptimistic`. The reader
+   already shows the new state, so pending is not the right signal at all.
+3. **Neither** → [`invalidate(key, { after })`](./api-reference.md#announcing-an-invalidation-before-the-mutation-finishes),
+   for the action that refreshes a list, a counter, and a detail view it returns
+   none of:
 
 ```ts
 const saved = saveTodo(patch);
 lane.invalidateAll(["todos"], { after: saved });
 await saved;
 ```
+
+None of this is a default to apply everywhere. When the pending signal is
+already where the user is looking — a submit button on `useActionState` — and
+the affected reads are elsewhere, the plain shape above is the right one. See
+[when to reach for it](./api-reference.md#when-to-reach-for-it) for the rest,
+including the one place `after` costs you something.
 
 ### Let readers of one key agree on freshness
 

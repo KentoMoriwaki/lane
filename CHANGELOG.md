@@ -16,8 +16,11 @@ All notable changes to `use-lane` are documented here. The format is based on
   `startTransition(async () => { await action(); invalidate() })`, where
   notification — Lane's only channel to a reader — fires last and readers show
   nothing for the whole mutation. Use it when one mutation invalidates keys it
-  does not return values for; when it *does* resolve to a key's value, `set` with
-  the in-flight promise remains more direct. `after` decides *when* the reads run,
+  does not return values for — but it is not the default shape: `set` with the
+  in-flight promise is strictly better when the action resolves to a key's value,
+  `useOptimistic` when the outcome can be shown before it lands, and the plain
+  `await action; invalidate()` when the pending signal already sits where the
+  user is looking. The docs order those explicitly. `after` decides *when* the reads run,
   never *whether*: a rejected action still leaves the key invalidated, only
   settlement is observed, and the rejection never surfaces through Lane. A gated
   read counts as in-flight, so `onlyIf: "settled"` steps around it.

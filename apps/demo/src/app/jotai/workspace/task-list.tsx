@@ -1,0 +1,147 @@
+"use client";
+
+import type { Task } from "@/server/api";
+import { useAtomValue } from "jotai";
+import { Inbox, ListTodo } from "lucide-react";
+import { userIdAtom } from "@/app/jotai/api/atoms";
+import { useTasks } from "@/app/jotai/api/hooks";
+import { useWorkspaceTransition } from "@/app/jotai/api/workspace-transition";
+import { Skeleton } from "@/components/ui/skeleton";
+import { PRIORITY_GROUP_ORDER, PRIORITY_META } from "@/lib/task-meta";
+import { EmptyState } from "./feedback";
+import { TaskRow } from "./task-row";
+
+export function TaskList({
+  hasActiveFilters,
+  selectedTaskId,
+  onSelectTask,
+  onClearSelection,
+  onResetFilters,
+}: {
+  hasActiveFilters: boolean;
+  selectedTaskId: string | null;
+  onSelectTask: (taskId: string) => void;
+  onClearSelection: (taskId: string) => void;
+  onResetFilters: () => void;
+}) {
+  const userId = useAtomValue(userIdAtom);
+
+  // No filters prop: the list read derives from `filtersAtom`. The search text
+  // that reaches it is already debounced upstream by the search field.
+  const tasks = useTasks();
+
+  // The atom either resolves or suspends; it has no pending flag of its own.
+  // While a filter change or a refresh is in flight this component is still
+  // rendering the *previous* list, and the shared transition is what says so.
+  const { isPending } = useWorkspaceTransition();
+
+  if (tasks.length === 0) {
+    return hasActiveFilters ? (
+      <EmptyState
+        icon={ListTodo}
+        title="No tasks match these filters"
+        message="Try widening your filters to see more of the team's work."
+        action={
+          <button
+            type="button"
+            onClick={onResetFilters}
+            className="text-sm font-medium text-cobalt hover:underline"
+          >
+            Clear filters
+          </button>
+        }
+      />
+    ) : (
+      <EmptyState
+        icon={Inbox}
+        title="No tasks yet"
+        message="Create the first task to get the team moving."
+      />
+    );
+  }
+
+  const groups = PRIORITY_GROUP_ORDER.map((priority) => ({
+    priority,
+    items: tasks.filter((task) => task.priority === priority),
+  })).filter((group) => group.items.length > 0);
+
+  return (
+    <div
+      className="divide-y divide-border transition-opacity"
+      style={{ opacity: isPending ? 0.6 : 1 }}
+    >
+      {groups.map((group) => (
+        <PriorityGroup
+          key={group.priority}
+          label={PRIORITY_META[group.priority].label}
+          items={group.items}
+          currentUserId={userId}
+          selectedTaskId={selectedTaskId}
+          onSelectTask={onSelectTask}
+          onClearSelection={onClearSelection}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PriorityGroup({
+  label,
+  items,
+  currentUserId,
+  selectedTaskId,
+  onSelectTask,
+  onClearSelection,
+}: {
+  label: string;
+  items: Task[];
+  currentUserId: string;
+  selectedTaskId: string | null;
+  onSelectTask: (taskId: string) => void;
+  onClearSelection: (taskId: string) => void;
+}) {
+  return (
+    <section>
+      <header className="sticky top-0 z-10 flex items-center gap-2 bg-background/85 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur">
+        {label}
+        <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium text-muted-foreground">
+          {items.length}
+        </span>
+      </header>
+      <div className="divide-y divide-border/70 px-1">
+        {items.map((task) => (
+          <TaskRow
+            key={`${task.id}:${task.updatedAt}`}
+            task={task}
+            isMine={task.assignee?.id === currentUserId}
+            isSelected={task.id === selectedTaskId}
+            onSelect={() => onSelectTask(task.id)}
+            onDeleted={onClearSelection}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function TaskListSkeleton() {
+  return (
+    <div className="px-4 py-3">
+      <Skeleton className="mb-3 h-3 w-24 bg-muted-foreground/20" />
+      <div className="space-y-3">
+        {Array.from({ length: 7 }).map((_, index) => (
+          <div key={index} className="flex items-center gap-3">
+            <Skeleton className="size-4 rounded-full bg-muted-foreground/20" />
+            <Skeleton className="size-4 rounded-full bg-muted-foreground/20" />
+            <Skeleton
+              className="h-4 flex-1 bg-muted-foreground/20"
+              style={{ maxWidth: `${60 - index * 4}%` }}
+            />
+            <Skeleton className="h-4 w-12 bg-muted-foreground/20" />
+            <Skeleton className="size-6 rounded-full bg-muted-foreground/20" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

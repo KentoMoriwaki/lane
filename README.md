@@ -14,14 +14,14 @@ React owns loading, errors, pending, and optimistic UI.
 ## What's in here
 
 The workspace pairs the `packages/lane` implementation with a live demo that
-builds the same team-task workspace three ways against one embedded team API, so
-Lane can be evaluated against the TanStack Query baseline while preserving — or
-improving — the same user experience with React transitions.
+builds the same team-task workspace several ways against one embedded team API,
+so Lane can be evaluated against the TanStack Query baseline while preserving —
+or improving — the same user experience with React transitions.
 
 | Path | Description |
 | --- | --- |
 | [`packages/lane`](packages/lane) | The `use-lane` library and its unit/React-integration tests. |
-| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, three implementations switchable by route: `/lane` (use-lane, RSC-seeded), `/lane-spa` (use-lane, client-only), and `/react-query` (the TanStack Query baseline). It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
+| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, five implementations switchable by route: `/lane` (use-lane, RSC-seeded), `/lane-spa` (use-lane, client-only), `/react-query` (the TanStack Query baseline), `/relay` (a normalized GraphQL store), and `/jotai` (async atoms, no fetching library). It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
 | [`apps/docs`](apps/docs) | The Nextra documentation site (sourced from `docs/*.md`). |
 | [`apps/e2e`](apps/e2e) | Playwright suite running the user-facing success criteria (reload restoration, search, mutation convergence, team switching, stale-on-error refresh) against the demo's `/lane` route. |
 
@@ -35,7 +35,7 @@ see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ```sh
 pnpm install
-pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query (+ /api)
+pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query, /relay, /jotai (+ /api)
 ```
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full dev-server matrix,

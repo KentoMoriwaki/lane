@@ -26,7 +26,7 @@ The demo is self-contained — it serves its own team API from `/api`, so one
 process is all you need:
 
 ```sh
-pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query (+ /api)
+pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query, /relay, /jotai (+ /api)
 pnpm dev:docs   # http://localhost:3005
 ```
 

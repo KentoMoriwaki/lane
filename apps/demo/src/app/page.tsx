@@ -118,6 +118,35 @@ export default function Home() {
         </p>
       </div>
 
+      <div className="rounded-xl border border-dashed bg-card/50 px-5 py-4 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold">Infinite scroll lab</span>
+          <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+            separate · not the workspace
+          </span>
+          <code className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+            /infinite
+          </code>
+        </div>
+        <p className="mt-1 text-pretty text-muted-foreground">
+          A measurement rig for paginated lists, on its own generated feed: page
+          size, latency, sort, cursor semantics and injected failures as knobs,
+          and a request log that draws every call on a shared time axis. Built to
+          watch what{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">
+            useInfiniteQuery
+          </code>{" "}
+          really does when you invalidate a five-page list — before use-lane
+          grows an API for it.{" "}
+          <Link
+            href="/infinite"
+            className="text-foreground underline underline-offset-4"
+          >
+            Open →
+          </Link>
+        </p>
+      </div>
+
       <footer className="text-sm text-muted-foreground">
         Docs:{" "}
         <a

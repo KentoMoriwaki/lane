@@ -14,6 +14,7 @@ import {
   useLane,
   useLanePromise,
   useLanesAll,
+  useInfiniteLane,
   useLaneInstance,
   createLane,
 } from "use-lane";
@@ -111,20 +112,49 @@ type LaneOptions = {
 Subscribe a component to a keyed async read.
 
 ```ts
-function useLane<T>(
+function useLane<T, C = T>(
   key: LaneKey,
-  loader: LaneLoader<T>,
+  loader: LaneLoader<T, C>,
   options?: LaneUseOptions,
 ): LaneResult<T>;
 ```
 
 - **`key`** — a structural array (`["task", id]`). See [Keys](#keys).
-- **`loader`** — `({ key, signal }) => Promise<T>`, or `undefined` to gate the
-  read off (see [Conditional reads](#conditional-reads-gating)). Called when the
-  key has no cached promise. The `signal` aborts when the in-flight read is
-  discarded (invalidation, removal, an authoritative `set` over a pending read,
-  or GC).
+- **`loader`** — `({ key, signal, current }) => Promise<T>`, or `undefined` to
+  gate the read off (see [Conditional reads](#conditional-reads-gating)). Called
+  when the key has no cached promise. The `signal` aborts when the in-flight read
+  is discarded (invalidation, removal, an authoritative `set` over a pending
+  read, or GC).
 - **`options`** — see [`LaneUseOptions`](#laneuseoptions).
+
+**`current`** is the entry's last fulfilled value, or `undefined` on a first
+load — snapshotted when the read is created, so every retry of that read sees
+the same value. It lets a loader re-read *as much as it already had* rather than
+only what the key describes: the accumulated pages of a list, a cursor to resume
+from, a revision to send as `If-None-Match`. It survives invalidation, which
+clears the cached promise and not the last fulfilled value, and is `undefined`
+again once the entry itself is gone — [removed](#remove--removeall), collected,
+or invalidated while nothing was subscribed to hold it — so a loader must always
+define what a first load means. It is not a way to skip work: the value is the
+previous read's, and returning it unchanged strands the entry on stale data.
+
+Its type is the read's **second type parameter, defaulting to the loaded type**,
+so annotating the read is what types it:
+
+```tsx
+const { promise } = useLane<Feed>(["feed"], async ({ current, signal }) => {
+  const since = current?.cursor ?? null; // current: Feed | undefined
+  return fetchFeedSince(since, signal);
+});
+```
+
+Reading `current` without that annotation is a type error asking for one, never a
+silent `any`. The loaded type stays in the return position, so a loader that
+ignores `current` keeps inferring exactly as before — `useLane(["task", id], ({
+signal }) => fetchTask(id, signal))` still yields `LaneResult<Task>` with no type
+argument. Give `C` explicitly only for a loader whose `current` is deliberately
+narrower or wider than its result. [Why it is shaped this
+way](./design-notes.md#a-loaders-input-includes-what-it-already-produced).
 
 Returns a [`LaneResult<T>`](#laneresultt). Unwrap `result.promise` with `use()`
 inside a `Suspense` boundary — it resolves to a [`LaneRead<T>`](#lanereadt)
@@ -302,6 +332,127 @@ Notes:
 For rendering N *independent* rows (not aggregating), don't use `useLanesAll` at
 all — render a child component per row and call `useLane` inside each, so every
 row keeps its own Suspense boundary and pending state.
+
+### `useInfiniteLane(key, options, readOptions?)` — a cursor-paginated list
+
+Read an infinite list as **one key holding the whole accumulated list**, with the
+page depth read back out of the cached value rather than kept in the key or in
+component state. It is `useLane` plus a loader that walks the cursor chain as
+deep as [`current`](#uselanekey-loader-options) already is — no core machinery,
+nothing an ordinary read does not already do.
+
+```ts
+function useInfiniteLane<P, C>(
+  key: LaneKey,
+  options: {
+    initialCursor: C;
+    fetchPage: (cursor: C, context: { signal?: AbortSignal }) => Promise<P>;
+    nextCursor: (page: P, cursor: C) => C | null;
+  },
+  readOptions?: LaneUseOptions,
+): {
+  promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
+  loadMore: () => Promise<LaneRead<InfiniteLaneValue<P, C>>> | undefined;
+  isTransitionPending: boolean;
+  isBackgroundPending: boolean;
+  invalidate: (options?: LaneInvalidateOptions) => void;
+};
+```
+
+The value stored under the key — `P` is one page as your endpoint returns it,
+`C` is your cursor type:
+
+```ts
+type InfiniteLaneValue<P, C> = {
+  pages: P[]; // every page loaded so far, in order
+  params: C[]; // the cursor each page was fetched with
+  hasNext: boolean;
+};
+```
+
+```tsx
+const { promise, loadMore, isTransitionPending } = useInfiniteLane(
+  ["feed", filters],
+  {
+    initialCursor: null as string | null,
+    fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+    nextCursor: (page) => page.nextCursor,
+  },
+);
+
+const { data, refreshError } = use(promise);
+const items = data.pages.flatMap((page) => page.items);
+```
+
+Two things about this hook are worth knowing before you use it, because both are
+easy to guess wrong.
+
+**A re-read costs one request per page already loaded, and they run
+sequentially.** Any refresh of the key — `invalidate`, focus, mount, a poll —
+re-walks the chain from the first page, re-deriving each cursor from the page
+that just came back, because page N+1's cursor does not exist until page N has.
+A list five pages deep is five round trips, one after another. That is
+inherent to cursor pagination rather than to Lane, and it is the same cost the
+equivalent React Query list pays; see
+[migrating](./migrating.md#step-6--infinite-lists). What Lane's model buys is
+what the user sees while it happens: the list is held on screen by the
+transition, and a failure part-way through keeps it there with `refreshError`
+instead of moving the read into an error state.
+
+**`hasNext` is in the resolved value, not on the hook.** The hook returns a
+promise it never resolves, so it cannot know — and keeping the flag next to the
+pages it describes is what stops the two disagreeing mid-render, the same reason
+`refreshError` rides inside the value. The rule for this hook: **actions come
+from the hook, data comes from `use(promise)`.**
+
+Notes:
+
+- **`loadMore` appends one page** through `update`, so the key never changes: the
+  reader converges through a transition with the list still on screen, and
+  `isTransitionPending` covers it with no `useTransition` of your own. It is a
+  no-op at the end of the list; gate your control on `data.hasNext` so an
+  over-eager click does not cost even a notification.
+- **`fetchPage`'s `signal` is optional because it is genuinely absent on the
+  append path.** A refresh runs as a read and gets the read's abort signal; an
+  updater is handed the current value and no controller, so a `loadMore` in
+  flight cannot be aborted. It is left optional rather than faked.
+- **A list can come back shorter.** If a re-derived cursor returns `null` before
+  the walk reaches the old depth, the walk stops there — rows were deleted
+  underneath it, and the shorter list is the truth.
+- **`loadMore`'s identity follows `fetchPage` / `nextCursor`.** It is a
+  `useCallback` over those plus the lane and the serialized key, so it is stable
+  exactly when the caller's functions are. An `onClick` does not care; driving it
+  from an effect (a scroll sentinel) is the caller's `useEffectEvent`.
+- **An auto-load trigger must also gate on `refreshError`.** A scroll sentinel is
+  a loop, and only a change in what it observes stops it. A *successful* append
+  stops it by adding rows (the sentinel moves) and eventually clearing
+  `data.hasNext`. A *failed* one changes neither: the value is unchanged, so
+  `hasNext` is still `true`, the sentinel is still on screen, and the pending flag
+  has gone back down — so the observer fires again, forever, against a server that
+  is already failing. Gate on all three facts, which is why they arrive together:
+
+  ```tsx
+  const { data, refreshError } = use(promise);
+  // ...inside the IntersectionObserver effect:
+  if (!data.hasNext || isTransitionPending || refreshError) return;
+  ```
+
+  `refreshError` clears on the next successful read, so recovery is an explicit
+  retry — a button calling `loadMore` again, which resumes from the same cursor.
+  A caller that would rather not route through the rendered value can await
+  `loadMore` instead: it hands back the entry's next promise, which *resolves*
+  with `refreshError` set rather than rejecting.
+  Note that `retry` / `retryDelay` do **not** apply here: they belong to the read
+  path, and an append is an `update`, so a failed page is surfaced rather than
+  retried. (The equivalent React Query list has the same shape — `hasNextPage`
+  stays `true` after a failed `fetchNextPage` — and gates on
+  `isFetchNextPageError` instead.)
+- **Depth is only as durable as the entry.** Remounting reuses the cached value
+  with no request at all, and the depth comes back with it, so the *next* refresh
+  covers every page again. An `invalidate` while *nothing* is mounted is the
+  exception: it drops the entry (no cache, no subscriber), so the next mount
+  starts from one page — the same asymmetry described under
+  [`current`](#uselanekey-loader-options).
 
 ### Deferred reads (render first, swap when ready)
 
@@ -723,6 +874,13 @@ lane.remove(["task", id]);
 lane.removeAll(() => true); // clear everything, e.g. on sign out
 ```
 
+Removal drops the entry's **last fulfilled value** along with its cached promise,
+so nothing can serve the removed data back: neither
+[stale-on-error](#stale-on-error), which would otherwise fall back to it when the
+next read fails, nor the next loader's [`current`](#uselanekey-loader-options).
+This matters because an entry a reader still holds survives the removal itself —
+the key slot stays, the value does not.
+
 ## Hydration (RSC seeding)
 
 ### `LaneHydration`
@@ -773,6 +931,12 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
   Freshness keeps the original fulfillment time, so staleness policies still
   treat the data as old and retry. Only an **initial** load (no previous value)
   rejects the promise and reaches the Error Boundary.
+- **The last fulfilled value.** One value per entry backs both the stale-on-error
+  fallback above and the [`current`](#uselanekey-loader-options) a loader is
+  handed. It outlives invalidation (which clears the cached promise, not the
+  value) and is dropped by [`remove`](#remove--removeall), by garbage collection,
+  and by an invalidation of an entry no reader is holding — that last one deletes
+  the entry outright, since it has neither a cache nor a subscriber left.
 - **Stale reads.** `staleTime` sets how long a value stays fresh; on a stale
   read, `whenStale` decides what happens. `"revalidate"` (default) keeps showing
   the cached value and refreshes in the background. `"refetch"` discards an idle
@@ -802,6 +966,7 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 
 ## Type exports
 
+`InfiniteLaneOptions`, `InfiniteLaneResult`, `InfiniteLaneValue`,
 `Lane`, `LaneEntryInfo`, `LaneEventSource`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`,
 `LanePrefetchOptions`, `LaneRead`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,

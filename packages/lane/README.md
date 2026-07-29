@@ -169,6 +169,7 @@ function RenameButton({ userId }: { userId: string }) {
 | `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation via a pluggable `eventSource` (browser default; React Native / CLI / custom). |
 | `useLane(key, loader, options?)` | Read a key. Returns `{ promise, isTransitionPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
 | `useLanePromise(key, loader, options?)` | Thin wrapper returning just `promise`. |
+| `useInfiniteLane(key, options, readOptions?)` | A cursor-paginated list under one key. Returns `{ promise, loadMore, … }`; `use(promise)` yields `{ pages, params, hasNext }`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
 | `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime }`. |
 | `LaneHydration` | Apply RSC-loaded snapshots as authoritative seed values. |
@@ -176,7 +177,8 @@ function RenameButton({ userId }: { userId: string }) {
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
 `updateAll`, `remove` / `removeAll`. `useLane` options: `staleTime`, `whenStale`,
 `retry`, `retryDelay`, `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
-`createLane` options: `gcTime`.
+`createLane` options: `gcTime`. Loaders receive `{ key, signal, current }`, where
+`current` is the entry's last fulfilled value.
 
 See the **[API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md)**
 for full signatures and semantics.

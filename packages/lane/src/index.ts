@@ -15,6 +15,12 @@ export type {
 } from "./event-source";
 export { LaneHydration } from "./hydration";
 export { LaneProvider, useLaneInstance } from "./provider";
+export { useInfiniteLane } from "./use-infinite-lane";
+export type {
+  InfiniteLaneOptions,
+  InfiniteLaneResult,
+  InfiniteLaneValue,
+} from "./use-infinite-lane";
 export { useLane, useLanePromise } from "./use-lane";
 export { useLanesAll } from "./use-lanes-all";
 export type {

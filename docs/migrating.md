@@ -17,6 +17,7 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `queryKey` | the read **key** (`["user", id]`) — a structural array |
 | `queryFn` / fetcher | the **loader** — forward `({ signal })` to `fetch` |
 | `useQuery().data` | `use(promise).data`, read under a `Suspense` boundary |
+| `useInfiniteQuery` | `useInfiniteLane` — one key holds the accumulated list ([step 6](#step-6--infinite-lists)) |
 | `isLoading` (no data yet) | a **`Suspense` fallback** — there is no flag |
 | `isError` / `error` (initial) | an **Error Boundary** — an initial load rejects |
 | `error` *over existing data* | `refreshError` from `use(promise)` — render it inline |
@@ -140,6 +141,60 @@ its schedule **off the render path**: don't put the key *array* in an effect's
 dependency list (it is a fresh reference every render, so the timer never settles).
 See [polling](./api-reference.md#polling).
 
+## Step 6 — infinite lists
+
+`useInfiniteQuery` becomes [`useInfiniteLane`](./api-reference.md#useinfinitelanekey-options-readoptions--a-cursor-paginated-list).
+The shapes line up almost one for one, and the two caches hold the same thing —
+one entry per list, holding every page:
+
+| React Query | Lane |
+| --- | --- |
+| `InfiniteData<{ pages, pageParams }>` | `use(promise).data` → `{ pages, params, hasNext }` |
+| `getNextPageParam(lastPage, pages)` | `nextCursor(page, cursor)` — `null` ends the list |
+| `initialPageParam` | `initialCursor` |
+| `fetchNextPage()` | `loadMore()` |
+| `isFetchingNextPage` | `isTransitionPending` — it also covers a full re-read |
+| `hasNextPage` | `data.hasNext` — **in the value**, not on the hook |
+
+```tsx
+// Before (React Query)
+const { data, fetchNextPage, hasNextPage } = useInfiniteQuery({
+  queryKey: ["feed", filters],
+  queryFn: ({ pageParam, signal }) => fetchFeed({ cursor: pageParam, filters, signal }),
+  initialPageParam: null as string | null,
+  getNextPageParam: (lastPage) => lastPage.nextCursor,
+});
+const items = data?.pages.flatMap((page) => page.items) ?? [];
+
+// After (Lane)
+const { promise, loadMore } = useInfiniteLane(["feed", filters], {
+  initialCursor: null as string | null,
+  fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+  nextCursor: (page) => page.nextCursor,
+});
+const { data } = use(promise);
+const items = data.pages.flatMap((page) => page.items);
+```
+
+Three things to carry across:
+
+- **The refetch cost is identical, and it is not a Lane tax.** Invalidating a
+  five-page list is five sequential requests in both libraries, because each
+  cursor is re-derived from the page before it. React Query's
+  `infiniteQueryBehavior` walks that loop internally; Lane's loader walks it in
+  front of you. What differs is what the user sees: the transition keeps the list
+  on screen throughout, and a failure part-way through leaves the previous list
+  rendered with `refreshError` beside it rather than flipping the read into an
+  error state.
+- **`hasNextPage` moves into the data.** The hook returns a promise it does not
+  resolve, so it cannot report a flag derived from the pages. Read `data.hasNext`
+  from the same `use(promise)` that gives you the rows — actions from the hook,
+  data from the promise.
+- **Don't keep the page count in component state.** The depth is read back out of
+  the cached value, which is the whole point; mirroring it in a ref reintroduces a
+  desync Lane just removed. See [common
+  mistakes](./common-mistakes.md#holding-an-infinite-lists-depth-in-component-state).
+
 ## Migration checklist
 
 - [ ] Replaced `useQuery` reads with `useLane` + `use(promise)`; deleted the
@@ -151,6 +206,8 @@ See [polling](./api-reference.md#polling).
 - [ ] Mutations converge via `invalidate` / `set`; optimistic UI moved to
       `useOptimistic`; no cache patching.
 - [ ] Any legacy string-key invalidation mapped to Lane scopes and **tested**.
+- [ ] `useInfiniteQuery` lists ported to `useInfiniteLane`, reading `hasNext`
+      from the resolved value and keeping no page count in component state.
 - [ ] Loaders forward `({ signal })` explicitly — not through a shared module global.
 - [ ] Polling is a userland `invalidate`, its schedule independent of render frequency.
 

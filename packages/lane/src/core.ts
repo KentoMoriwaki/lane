@@ -102,9 +102,9 @@ export function createLane(options: LaneOptions = {}): Lane {
   };
 
   const lane: Lane = {
-    prefetch<T>(
+    prefetch<T, C = T>(
       key: LaneKey,
-      loader: LaneLoader<T>,
+      loader: LaneLoader<T, C>,
       options: LanePrefetchOptions = {},
     ) {
       // Warm the cache without subscribing or suspending: start the load and
@@ -113,7 +113,7 @@ export function createLane(options: LaneOptions = {}): Lane {
       // or settled cache instead of refetching. Like any read it arms no GC
       // timer — an unadopted prefetch is an orphan, reclaimed by the lane-wide
       // sweep on whatever cycle a later unsubscribe triggers.
-      return readOrCreate<T>(lane, key, loader, {
+      return readOrCreate<T, C>(lane, key, loader, {
         retry: options.retry,
         retryDelay: options.retryDelay,
         whenStale: "revalidate",
@@ -151,11 +151,11 @@ export function createLane(options: LaneOptions = {}): Lane {
         return undefined;
       }
 
-      return updateEntry(state, entry, updater);
+      return updateLaneEntry(state, entry, updater);
     },
     updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>) {
       return matchingEntries(state.entries, scope).flatMap((entry) => {
-        const promise = updateEntry(state, entry, updater);
+        const promise = updateLaneEntry(state, entry, updater);
         return promise ? [promise] : [];
       });
     },
@@ -200,10 +200,10 @@ export function hydrateMany(
   }
 }
 
-export function readOrCreate<T>(
+export function readOrCreate<T, C = T>(
   lane: Lane,
   key: LaneKey,
-  loader: LaneLoader<T>,
+  loader: LaneLoader<T, C>,
   options?: LaneReadOptions,
   gate?: Promise<void>,
 ): Promise<LaneRead<T>> {
@@ -218,7 +218,13 @@ export function readOrCreate<T>(
   }
 
   const controller = new AbortController();
-  const load = () => runLoader(loader, key, controller.signal, options);
+  // Snapshot the last fulfilled value now, so every retry of this read sees the
+  // same `current` and a value published while the read is in flight cannot
+  // change what it was started from. It outlives invalidation (which clears the
+  // cache, not `lastFulfilled`) and is `undefined` once the entry itself is
+  // gone.
+  const current = entry.lastFulfilled?.value as C | undefined;
+  const load = () => runLoader(loader, key, controller.signal, options, current);
   // A gated read is an in-flight read that has not begun: readers see it as
   // pending and hold their last value on screen until the action lands.
   const promise = gate ? gate.then(load) : load();
@@ -294,6 +300,27 @@ export function invalidateEntry(
   }
 
   invalidateLaneEntry(state, entry, options, source);
+}
+
+/**
+ * `Lane.update` addressed by canonical id instead of key — the update-side twin
+ * of `invalidateEntry`. A hook already holds the serialized id and would
+ * otherwise have to keep the key array alive just to re-serialize it, which
+ * makes the key a dependency of every callback that writes to the entry.
+ */
+export function updateEntry<T>(
+  lane: Lane,
+  keyId: string,
+  updater: LaneUpdater<T>,
+): Promise<LaneRead<T>> | undefined {
+  const state = getLaneState(lane);
+  const entry = state.entries.get(keyId);
+
+  if (!entry) {
+    return undefined;
+  }
+
+  return updateLaneEntry(state, entry, updater);
 }
 
 export function subscribeLane(
@@ -405,11 +432,18 @@ function invalidateLaneEntry(
 
 function removeLaneEntry(state: LaneState, entry: LaneEntry): void {
   removeEntryCache(entry);
+  // Drop the last fulfilled value too. `remove` means the entry no longer
+  // belongs in client state — sign out, team switch, a deleted entity — and
+  // `cleanupEntry` cannot enforce that alone: an entry a reader still holds
+  // survives the removal, so anything left on it outlives the sign-out. That
+  // value is the stale-on-error fallback *and* the `current` handed to the next
+  // loader, either of which would serve the removed data back.
+  entry.lastFulfilled = undefined;
   notifyRemove(entry);
   cleanupEntry(state, entry);
 }
 
-function updateEntry<T>(
+function updateLaneEntry<T>(
   state: LaneState,
   entry: LaneEntry,
   updater: LaneUpdater<T>,
@@ -523,11 +557,12 @@ function matchingEntries(
   );
 }
 
-function runLoader<T>(
-  loader: LaneLoader<T>,
+function runLoader<T, C>(
+  loader: LaneLoader<T, C>,
   key: LaneKey,
   signal: AbortSignal,
   options: LaneReadOptions | undefined,
+  current: C | undefined,
 ): Promise<T> {
   const retry = options?.retry ?? 0;
   const retryDelay = options?.retryDelay ?? DEFAULT_RETRY_DELAY;
@@ -535,7 +570,7 @@ function runLoader<T>(
 
   const attemptLoad = (): Promise<T> =>
     Promise.resolve()
-      .then(() => loader({ key, signal }))
+      .then(() => loader({ current, key, signal }))
       .catch((error: unknown) => {
         if (signal.aborted || attempt >= retry) {
           throw error;

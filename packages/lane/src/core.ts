@@ -71,6 +71,14 @@ type LanePromiseCache = {
   // and `whenStale: "refetch"` then re-judges its own just-settled value stale on
   // every retry and refetches forever.
   adopted: boolean;
+  // Set by `cancel` on a read that is still in flight. Every other abort path
+  // displaces the cache in the same breath, so a late settlement is already
+  // dropped by the identity check below; a cancel deliberately leaves the cache
+  // in place to revert to the previous value, which puts its settlement
+  // handlers back in play. They read this to fold the settlement into the
+  // fallback — so a loader that ignores its `signal` and runs to completion
+  // cannot undo a cancel.
+  cancelled: boolean;
 };
 
 type LaneEntry = {
@@ -176,6 +184,15 @@ export function createLane(options: LaneOptions = {}): Lane {
       for (const entry of matchingEntries(state.entries, scope)) {
         removeLaneEntry(state, entry);
       }
+    },
+    cancel(key) {
+      const entry = state.entries.get(serializeKey(key));
+
+      if (!entry) {
+        return;
+      }
+
+      cancelLaneEntry(entry);
     },
   };
 
@@ -458,6 +475,52 @@ function removeLaneEntry(state: LaneState, entry: LaneEntry): void {
   cleanupEntry(state, entry);
 }
 
+/**
+ * Stop an in-flight read without converging the key.
+ *
+ * Every other abort is a consequence of the cached promise being displaced, so
+ * the key always ends up with something newer. Cancelling is the one case where
+ * stopping *is* the intent, which makes it the only operation that must not
+ * notify: announcing it would make subscribed readers re-read, turning "stop"
+ * into "start again". Readers keep the promise they already hold and it settles
+ * underneath them.
+ *
+ * The cache is always left in place, and that is what makes the stop stick. A
+ * transition has no third outcome: it commits, or it commits an error boundary.
+ * So a cancelled read still has to settle into one of those, and which one is
+ * decided by what the key already had:
+ *
+ * - a previous value — the settlement handlers fold the abort into it. Readers
+ *   keep showing the data they had, and the entry stays exactly as stale as it
+ *   was (freshness keeps the original fulfillment time, so a later staleness
+ *   policy still refreshes it).
+ * - nothing to revert to — the read settles rejected, which is the only end a
+ *   transition with no data can reach. Emptying the entry instead would look
+ *   tidier and quietly undo the cancel: a reader mid-transition is still trying
+ *   to reach that key, React retries the render it never committed, and an empty
+ *   entry turns that retry into a fresh load. Keeping the rejection is what lets
+ *   the retry terminate.
+ *
+ * The rejection is then as sticky as any other failed first load — reused until
+ * the key is invalidated, removed, collected, or read with
+ * `whenStale: "refetch"`. That is deliberately not special-cased: a cancelled
+ * first load recovers the same way every other one does.
+ *
+ * A settled cache is a value (or an error) the key holds, not a request in
+ * progress, so it is left alone — discarding one is what `invalidate` and
+ * `remove` are for.
+ */
+function cancelLaneEntry(entry: LaneEntry): void {
+  const cache = entry.cache;
+
+  if (!cache || cache.settlement !== undefined) {
+    return;
+  }
+
+  cache.cancelled = true;
+  cache.controller?.abort();
+}
+
 function updateLaneEntry<T>(
   state: LaneState,
   entry: LaneEntry,
@@ -558,6 +621,16 @@ function entryInfo(entry: LaneEntry): LaneEntryInfo {
 
 function noop(): void {}
 
+/**
+ * What a cancelled read rejects with when its loader ignored the signal and
+ * resolved anyway — the case where there is no abort error to propagate.
+ *
+ * A shared instance: it carries no per-read information, and a cancellation is
+ * not a failure worth a stack trace. A plain `Error` rather than a
+ * `DOMException` so it works wherever Lane runs (Hermes has no `DOMException`).
+ */
+const CANCELLED = new Error("Lane read cancelled");
+
 function matchingEntries(
   entries: Map<string, LaneEntry>,
   scope: LaneScope,
@@ -655,6 +728,7 @@ function setEntryCache<T>(
       // A cache installed while the key already has a live reader is adopted on
       // arrival — that reader is showing it without any further subscribe.
       adopted: entry.subscribers.size > 0,
+      cancelled: false,
       controller,
       promise: Promise.resolve<LaneRead<T>>({ data: value }),
       settlement: { at: startedAt, kind: "fulfilled" },
@@ -667,16 +741,54 @@ function setEntryCache<T>(
 
   const cache: LanePromiseCache = {
     adopted: entry.subscribers.size > 0,
+    cancelled: false,
     controller,
     promise: undefined as unknown as Promise<unknown>,
     settlement: undefined,
     startedAt,
   };
 
+  /**
+   * Where a read that produced no usable value lands — a rejection, or a
+   * cancelled read whose loader resolved anyway. Both want the same thing, which
+   * is why the fulfilled path routes through here rather than repeating it:
+   *
+   * - **Stale-on-error** when there is a last fulfilled value: keep serving it so
+   *   mounted readers do not lose good data, and carry the failure alongside it
+   *   in the same resolved value (`refreshError`) instead of a separate channel.
+   *   Freshness keeps the original fulfillment time, so staleness policies still
+   *   treat the data as old. A cancel is not a refresh failure, though — the
+   *   caller asked for the stop, so it comes back with nothing beside it, or
+   *   every consumer that renders `refreshError` would have to filter for an
+   *   abort it requested itself.
+   * - **Rejected** when there is not. Nothing else a reader could show.
+   */
+  const settleWithoutValue = (error: unknown): LaneRead<T> => {
+    const fallback = entry.lastFulfilled;
+
+    if (!fallback) {
+      cache.settlement = { at: Date.now(), kind: "rejected" };
+      throw error;
+    }
+
+    cache.settlement = { at: fallback.at, kind: "fulfilled" };
+
+    return cache.cancelled
+      ? { data: fallback.value as T }
+      : { data: fallback.value as T, refreshError: error };
+  };
+
   const guarded: Promise<LaneRead<T>> = valueOrPromise.then(
     (value) => {
       if (entry.cache !== cache) {
         return { data: value };
+      }
+
+      // Cancelled mid-flight. A loader that never forwarded its `signal` still
+      // resolves, and adopting that value would silently undo the cancel, so the
+      // read settles where it would have settled had the abort landed.
+      if (cache.cancelled) {
+        return settleWithoutValue(CANCELLED);
       }
 
       const at = Date.now();
@@ -692,21 +804,7 @@ function setEntryCache<T>(
         throw error;
       }
 
-      const fallback = entry.lastFulfilled;
-
-      if (!fallback) {
-        cache.settlement = { at: Date.now(), kind: "rejected" };
-        throw error;
-      }
-
-      // Stale-on-error: keep serving the last fulfilled value so mounted readers
-      // do not lose good data, and carry the failure alongside it in the same
-      // resolved value (`refreshError`) instead of a separate channel. Freshness
-      // keeps the original fulfillment time, so staleness policies still treat
-      // the data as old.
-      cache.settlement = { at: fallback.at, kind: "fulfilled" };
-
-      return { data: fallback.value as T, refreshError: error };
+      return settleWithoutValue(error);
     },
   );
 

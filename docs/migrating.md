@@ -16,6 +16,8 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | --- | --- |
 | `queryKey` | the read **key** (`["user", id]`) — a structural array |
 | `queryFn` / fetcher | the **loader** — forward `({ signal })` to `fetch` |
+| `queryOptions({ … })` | `laneRead({ key, loader, …options })` ([step 0](#step-0--keep-your-options-factories)) |
+| `infiniteQueryOptions({ … })` | `infiniteLaneRead({ key, initialCursor, fetchPage, nextCursor })` |
 | `useQuery().data` | `use(promise).data`, read under a `Suspense` boundary |
 | `useInfiniteQuery` | `useInfiniteLane` — one key holds the accumulated list ([step 6](#step-6--infinite-lists)) |
 | `isLoading` (no data yet) | a **`Suspense` fallback** — there is no flag |
@@ -30,6 +32,60 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `refetchOnWindowFocus` | `refetchOnFocus` (`LaneProvider` wires focus / reconnect) |
 | `staleTime` / `gcTime` | `staleTime` (read option) / `gcTime` (`createLane`) |
 | `QueryClientProvider` | `LaneProvider` |
+
+## Step 0 — keep your options factories
+
+If the codebase is organised around `queryOptions()` factories, that organisation
+survives the migration intact: `laneRead` is the same idea — one value carrying a
+read's key, its loader, and the options it is read with — and Lane accepts it
+everywhere a key or a `(key, loader)` pair is accepted.
+
+```ts
+// Before (React Query)
+export const taskQueries = {
+  detail: (id: string) =>
+    queryOptions({
+      queryKey: ["task", id],
+      queryFn: ({ signal }) => fetchTask(id, signal),
+      staleTime: 60_000,
+    }),
+};
+
+// After (Lane)
+export const taskLanes = {
+  detail: (id: string) =>
+    laneRead({
+      key: ["task", id],
+      loader: ({ signal }) => fetchTask(id, signal),
+      staleTime: 60_000,
+    }),
+};
+```
+
+The call sites map one for one:
+
+| React Query | Lane |
+| --- | --- |
+| `useQuery(taskQueries.detail(id))` | `useLane(taskLanes.detail(id))` |
+| `useSuspenseQuery(taskQueries.detail(id))` | `useLane(taskLanes.detail(id))` — every read suspends |
+| `queryClient.prefetchQuery(taskQueries.detail(id))` | `lane.prefetch(taskLanes.detail(id))` |
+| `queryClient.invalidateQueries(taskQueries.detail(id))` | `lane.invalidate(taskLanes.detail(id))` |
+| `queryClient.setQueryData(taskQueries.detail(id).queryKey, task)` | `lane.set(taskLanes.detail(id), task)` |
+| `useQueries({ queries: ids.map(taskQueries.detail) })` | `useLanesAll(ids.map(taskLanes.detail))` |
+
+Two differences worth knowing:
+
+- **`invalidateQueries` takes filters; `invalidate` takes one key.** Passing a
+  spec invalidates exactly that read. For a family, use a prefix or predicate
+  scope: `lane.invalidateAll(["tasks"])`.
+- **A spec makes writes type-checked.** `setQueryData` needs the key and infers
+  nothing from it; `lane.set(spec, value)` knows what the read holds and rejects
+  a value that isn't it.
+
+Colocating is not required — `useLane(key, loader, options)` is the same read
+written out — but it is the shape that keeps a key from drifting away from the
+loader and options it belongs to. See
+[`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation).
 
 ## Step 1 — read with `use()`, delete the status object
 
@@ -197,6 +253,8 @@ Three things to carry across:
 
 ## Migration checklist
 
+- [ ] `queryOptions()` factories ported to `laneRead` — key, loader, and options
+      still in one place, now passed to reads *and* to `invalidate` / `set`.
 - [ ] Replaced `useQuery` reads with `useLane` + `use(promise)`; deleted the
       `isLoading` / `error` / `status` branches.
 - [ ] `Suspense` and Error Boundaries placed at the right granularity — including

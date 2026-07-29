@@ -270,6 +270,56 @@ The loader is the opposite: Lane dedupes by **key**, not by loader identity, so
 the loader can be an inline arrow — you do **not** need `useCallback` on it. Just
 let it close over the current inputs.
 
+### Sharing the key but not the loader
+
+A key factory is the usual first step in organising reads, and on its own it
+solves half the problem: the key is shared, while the loader and the options stay
+at each call site.
+
+**Don't** let the halves drift apart:
+
+```tsx
+// keys.ts
+export const taskKeys = { detail: (id: string) => ["task", id] as const };
+
+// One component
+useLane(taskKeys.detail(id), ({ signal }) => fetchTask(id, signal), {
+  staleTime: 60_000,
+});
+
+// Another — same key, different freshness, and (here) the wrong loader entirely.
+useLane(taskKeys.detail(id), ({ signal }) => fetchTaskSummary(id, signal));
+```
+
+Both compile. Both write to the *same entry*, so whichever mounts first decides
+what the key holds, and the second reader shows data it did not ask for.
+
+**Do** define the read once and pass it around:
+
+```tsx
+// lanes/tasks.ts
+export const taskLanes = {
+  detail: (id: string) =>
+    laneRead({
+      key: ["task", id],
+      loader: ({ signal }) => fetchTask(id, signal),
+      staleTime: 60_000,
+    }),
+};
+
+// Every call site, read and write alike
+useLane(taskLanes.detail(id));
+lane.prefetch(taskLanes.detail(id));
+lane.invalidate(taskLanes.detail(id));
+lane.set(taskLanes.detail(task.id), task); // checked against the read's type
+```
+
+Two reads that genuinely differ should differ in their **key** — `["task", id]`
+and `["task-summary", id]` are different data and belong in different entries.
+[`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation) is what
+makes that visible: one definition per entry, so a second loader for the same key
+has nowhere to hide.
+
 ### Read a key once, then pass the value down
 
 Lane dedupes by key, so reading `["task", id]` in a parent *and* again in its

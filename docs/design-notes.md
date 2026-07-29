@@ -278,6 +278,35 @@ scoped matching.
 client state (sign out, team switch, deleted entity), so its notification is
 urgent rather than transition-preserving.
 
+## A read is a value, not three arguments
+
+`useLane(key, loader, options)` spreads one fact across three arguments, and the
+argument list is the only thing holding them together. A shared key factory —
+the usual first move — makes that worse before it makes it better: the key is now
+defined once and the loader and options are still written at each call site, so
+the halves can drift and nothing complains. `useLane(taskKeys.detail(id), () =>
+fetchTasks(filters))` type-checks; two components can read one key with different
+freshness; and the loader that actually fills the entry is whichever one mounted
+first.
+
+`laneRead({ key, loader, ...options })` makes the read itself the value that
+travels, and every consumer accepts it — the read hooks, `prefetch`, and the
+exact-key methods. It is identity at runtime; the whole feature is where the
+types live. Fixing `T` at the definition is what carries the read's type to the
+*write* side: `set` and `update` through a spec are checked against what that key
+holds, which a bare key can never be, because a key carries no type at all.
+
+Two boundaries keep it from becoming a second way to describe everything:
+
+- **Scoped operations still take a scope.** A spec is one read; `invalidateAll`
+  answers a different question ("every entry under this prefix") and a
+  full exact key is not an answer to it. Colocation does not change what
+  [exact vs scoped](#key-matching-exact-vs-scoped) means.
+- **There is no registry behind a spec.** Lane still addresses entries by
+  serialized key, so two objects from the same factory name the same read and
+  nothing has to be memoized, deduplicated, or registered at startup. A spec is
+  worth nothing at runtime — which is exactly why it costs nothing.
+
 ## A deliberately small core
 
 Lane core owns only the lifecycle facts that must stay consistent for a key slot:
@@ -309,6 +338,7 @@ promises that settle late are ignored by comparing cache-object identity.
 When more than one approach is possible, Lane prefers:
 
 - invalidating source data over patching cache entries
+- one definition per read over a key factory the loader has to be paired with
 - exact-key operations for single reads, scoped operations for key families
 - exact-key publication only for authoritative values already in hand
 - local React state for optimistic UI, not shared cache writes

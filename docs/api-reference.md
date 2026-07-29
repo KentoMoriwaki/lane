@@ -16,6 +16,8 @@ import {
   useLanesAll,
   useInfiniteLane,
   useLaneInstance,
+  laneRead,
+  infiniteLaneRead,
   createLane,
 } from "use-lane";
 ```
@@ -117,6 +119,9 @@ function useLane<T, C = T>(
   loader: LaneLoader<T, C>,
   options?: LaneUseOptions,
 ): LaneResult<T>;
+
+// The same read, described in one value — see `laneRead` below.
+function useLane<T, C = T>(spec: LaneReadSpec<T, C>): LaneResult<T>;
 ```
 
 - **`key`** — a structural array (`["task", id]`). See [Keys](#keys).
@@ -179,6 +184,107 @@ the local `invalidate`.
 ```ts
 const { data: task } = use(useLanePromise(["task", id], loader));
 ```
+
+### `laneRead(spec)` — key + loader colocation
+
+Describe a read once — its key, its loader, and the options it is read with —
+and pass that one value wherever the read is named. It is Lane's equivalent of
+react-query's `queryOptions()`.
+
+```ts
+function laneRead<T, C = T>(spec: LaneReadSpec<T, C>): LaneReadSpec<T, C>;
+
+type LaneReadSpec<T, C = T> = LaneUseOptions & {
+  key: LaneKey;
+  loader: LaneLoader<T, C>;
+};
+```
+
+```ts
+// lanes/tasks.ts — the whole read, in one place.
+export const taskLanes = {
+  detail: (id: string) =>
+    laneRead({
+      key: ["task", id],
+      loader: ({ signal }) => fetchTask(id, signal),
+      staleTime: 60_000,
+    }),
+  list: (filters: TaskFilters) =>
+    laneRead({
+      key: ["tasks", filters],
+      loader: ({ signal }) => fetchTasks(filters, signal),
+      refetchOnFocus: true,
+    }),
+};
+```
+
+```tsx
+const { promise, isTransitionPending } = useLane(taskLanes.detail(id));
+const { data: task } = use(promise);
+```
+
+Every consumer accepts a spec wherever it accepts a key:
+
+| Consumer | With a spec |
+| --- | --- |
+| [`useLane`](#uselanekey-loader-options) | `useLane(taskLanes.detail(id))` |
+| [`useLanePromise`](#uselanepromisekey-loader-options) | `use(useLanePromise(taskLanes.detail(id)))` |
+| [`useLanesAll`](#uselanesallreads-options--a-batch-read) | `useLanesAll(ids.map(taskLanes.detail))` |
+| [`useInfiniteLane`](#useinfinitelanekey-options-readoptions--a-cursor-paginated-list) | `useInfiniteLane(feedLanes.list(filters))` — built with [`infiniteLaneRead`](#infinitelanereadspec) |
+| [`prefetch`](#prefetch) | `lane.prefetch(taskLanes.detail(id))` |
+| [`invalidate`](#invalidate--invalidateall) / [`remove`](#remove--removeall) / [`cancel`](#cancel) | `lane.invalidate(taskLanes.detail(id))` |
+| [`set`](#set) / [`update`](#update--updateall) | `lane.set(taskLanes.detail(task.id), task)` |
+
+**Why colocate.** A key factory in one module and a fetcher in another are two
+halves of one fact, and no type checks that a call site pairs them correctly —
+`useLane(taskKeys.detail(id), () => fetchTasks(filters))` compiles and is wrong.
+Options drift the same way, and more quietly: they live at the call site while
+the key does not, so one component reads a key with `staleTime: 60_000` and the
+next reads the same key with none.
+
+**What the factory buys you.** At runtime it returns its argument — the value is
+the point, not the call. What it adds is types:
+
+- **`T` is inferred at the definition** from the loader's return type, so every
+  consumer reads that type back instead of re-inferring it. This is what makes
+  the *write* side checked: `lane.set(spec, value)` and `lane.update(spec, updater)`
+  know what the read holds, where a bare key carries no type and checks nothing.
+- **The shape is checked where it is written**, so a mistyped option is an error
+  at the definition rather than a silently ignored property at three call sites.
+
+`C` — the type of [`current`](#uselanekey-loader-options) — still defaults to `T`
+and is still given explicitly (`laneRead<Feed, Cursor>({ … })`) for a loader whose
+`current` is deliberately narrower or wider than its result.
+
+**Gating works unchanged.** A spec whose `loader` is `undefined` is a
+[gated read](#conditional-reads-gating): `LaneGatedReadSpec<T, C>`, and
+`useLane` hands back a [`LaneGatedResult<T>`](#lanegatedresultt).
+
+```tsx
+const spec = laneRead({
+  key: ["component", componentId],
+  loader: componentId
+    ? ({ signal }) => fetchComponent(componentId, { signal })
+    : undefined,
+});
+const { promise } = useLane(spec);
+const value = promise ? use(promise).data : null;
+```
+
+**No registry, no identity rules.** A spec is a plain object; two calls to the
+same factory produce two objects with equal keys, and Lane addresses entries by
+serialized key. Build them per render, in an event handler, or on the server —
+nothing needs memoizing for identity. (`useLanesAll` still wants a
+[stable `reads` array](#uselanesallreads-options--a-batch-read), for the same
+reason it always did.)
+
+**Scoped operations still take a scope.** `invalidateAll` / `updateAll` /
+`removeAll` deliberately do not accept a spec: a spec describes *one* read, while
+a scope selects a family of existing entries — `lane.invalidateAll(["tasks"])`.
+See [Key matching](./design-notes.md#key-matching-exact-vs-scoped).
+
+> `laneRead` *describes* a read; [`LaneRead<T>`](#lanereadt) is what one
+> *resolves to*.
 
 ### `LaneResult<T>`
 
@@ -273,6 +379,12 @@ function useLanesAll<T>(
   reads: readonly (readonly [LaneKey, LaneLoader<T>])[],
   options?: LaneUseOptions, // shared by every read
 ): Promise<LaneRead<T>[]>;
+
+// Or as specs, which carry their own options (see `laneRead`).
+function useLanesAll<T, C = T>(
+  reads: readonly LaneReadSpec<T, C>[],
+  options?: LaneUseOptions, // the fallback for what a spec does not set
+): Promise<LaneRead<T>[]>;
 ```
 
 ```tsx
@@ -286,8 +398,17 @@ const promise = useLanesAll(
 const tasks = use(promise).map((read) => read.data);
 ```
 
-Each `[key, loader]` is its own keyed read — independently cached, deduped,
-subscribed (focus / reconnect / `refetchOnMount`), and invalidatable,
+A batch is usually derived from a list, which is where
+[`laneRead`](#lanereadspec--key--loader-colocation) fits best — the members are
+the same read applied to different inputs:
+
+```tsx
+const reads = useMemo(() => ids.map(taskLanes.detail), [ids]);
+const tasks = use(useLanesAll(reads)).map((read) => read.data);
+```
+
+Each `[key, loader]` (or spec) is its own keyed read — independently cached,
+deduped, subscribed (focus / reconnect / `refetchOnMount`), and invalidatable,
 exactly as if you had called `useLane` for each. Three deliberate simplifications
 versus a per-item API:
 
@@ -295,7 +416,9 @@ versus a per-item API:
   is no per-item gating (that is what `loader: undefined` does on a single
   `useLane`).
 - **`options` are shared** by every read in the batch (changing them
-  re-subscribes all, matching `useLane`'s option reactivity).
+  re-subscribes all, matching `useLane`'s option reactivity). A **spec carries
+  its own**, which win where it sets them: a member reads exactly the way it is
+  defined, and inherits the rest from the batch.
 - **The return is just the promise** — one stable, `use()`-able `Promise.all`,
   not an array of per-item handles.
 
@@ -358,6 +481,40 @@ function useInfiniteLane<P, C>(
   invalidate: (options?: LaneInvalidateOptions) => void;
 };
 ```
+
+#### `infiniteLaneRead(spec)`
+
+The colocated form, `laneRead` for a list: the key, the pagination, and the read
+options in one value.
+
+```ts
+function infiniteLaneRead<P, C>(
+  spec: InfiniteLaneReadSpec<P, C>,
+): InfiniteLaneReadSpec<P, C>;
+
+type InfiniteLaneReadSpec<P, C> = LaneUseOptions &
+  InfiniteLaneOptions<P, C> & { key: LaneKey };
+```
+
+```ts
+export const feedLanes = {
+  list: (filters: Filters) =>
+    infiniteLaneRead({
+      key: ["feed", filters],
+      initialCursor: null as string | null,
+      fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+      nextCursor: (page) => page.nextCursor,
+      staleTime: 30_000,
+    }),
+};
+
+const { promise, loadMore } = useInfiniteLane(feedLanes.list(filters));
+lane.invalidate(feedLanes.list(filters)); // the key travels with it
+```
+
+Like `laneRead`, it is identity at runtime; what it buys is that `P` and `C` are
+inferred and checked where the list is defined — `nextCursor` must return the
+cursor `fetchPage` takes — instead of at each call site.
 
 The value stored under the key — `P` is one page as your endpoint returns it,
 `C` is your cursor type:
@@ -561,6 +718,7 @@ prefetch<T>(
   loader: LaneLoader<T>,
   options?: LanePrefetchOptions,
 ): Promise<LaneRead<T>>;
+prefetch<T, C = T>(spec: LaneReadSpec<T, C>): Promise<LaneRead<T>>;
 
 type LanePrefetchOptions = Pick<LaneUseOptions, "retry" | "retryDelay">;
 ```
@@ -590,7 +748,10 @@ const warm = () =>
   entry becomes live and is kept.
 - **Freshness is the reader's call.** `prefetch` only warms; `staleTime` /
   `whenStale` are decided by the eventual `useLane`, so `LanePrefetchOptions`
-  exposes only `retry` / `retryDelay`.
+  exposes only `retry` / `retryDelay`. A
+  [spec](#lanereadspec--key--loader-colocation) is warmed the same way — its
+  `retry` / `retryDelay` apply and its freshness options are left to the reader,
+  so `lane.prefetch(taskLanes.detail(id))` is the whole hover handler.
 
 The returned `Promise<LaneRead<T>>` is the warmed promise — usually ignored, but
 available to `await` if you want to sequence work after the warm-up. A rejected
@@ -671,15 +832,27 @@ under [Reading data](#prefetch).
 ```ts
 type Lane = {
   prefetch<T>(key: LaneKey, loader: LaneLoader<T>, options?: LanePrefetchOptions): Promise<LaneRead<T>>;
-  invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
+  invalidate(target: LaneTarget, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
-  set<T>(key: LaneKey, valueOrPromise: T | Promise<T>): Promise<LaneRead<T>>;
-  update<T>(key: LaneKey, updater: LaneUpdater<T>): Promise<LaneRead<T>> | undefined;
+  set<T>(target: LaneTarget, valueOrPromise: T | Promise<T>): Promise<LaneRead<T>>;
+  update<T>(target: LaneTarget, updater: LaneUpdater<T>): Promise<LaneRead<T>> | undefined;
   updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<LaneRead<T>>[];
-  remove(key: LaneKey): void;
+  remove(target: LaneTarget): void;
   removeAll(scope: LaneScope): void;
-  cancel(key: LaneKey): void;
+  cancel(target: LaneTarget): void;
 };
+
+// A key, or anything carrying one — so a `laneRead` spec is accepted wherever
+// its key would be. `set` / `update` / `prefetch` additionally take the spec's
+// type from it, which is what makes those calls checked.
+type LaneTarget = LaneKey | { key: LaneKey };
+```
+
+Every exact-key method takes either form:
+
+```ts
+lane.invalidate(["task", id]);
+lane.invalidate(taskLanes.detail(id)); // same entry, one definition
 ```
 
 ### `invalidate` / `invalidateAll`
@@ -847,6 +1020,16 @@ const saved = await updateTask(id, input);
 lane.set(["task", saved.id], saved);
 ```
 
+Publishing through a [spec](#lanereadspec--key--loader-colocation) is
+type-checked — the read's own type reaches the write, so the value has to be what
+that key holds:
+
+```ts
+lane.set(taskLanes.detail(saved.id), saved);
+// @ts-expect-error — not what this read loads
+lane.set(taskLanes.detail(saved.id), { title: saved.title });
+```
+
 `set` is **not** an optimistic-update mechanism. Optimistic state belongs in
 component-local `useOptimistic`.
 
@@ -862,6 +1045,9 @@ type LaneUpdater<T> = (current: T, entry: LaneEntryInfo) => T | Promise<T>;
 
 lane.update<Task>(["task", id], (task) => ({ ...task, done: true }));
 lane.updateAll<Task[]>(["tasks"], (list) => list.filter((t) => t.id !== id));
+
+// Through a spec, `current` is typed by the read itself — no type argument.
+lane.update(taskLanes.detail(id), (task) => ({ ...task, done: true }));
 ```
 
 ### `remove` / `removeAll`
@@ -1020,16 +1206,18 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 
 ## Type exports
 
-`InfiniteLaneOptions`, `InfiniteLaneResult`, `InfiniteLaneValue`,
-`Lane`, `LaneEntryInfo`, `LaneEventSource`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
+`InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
+`Lane`, `LaneEntryInfo`, `LaneEventSource`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`,
-`LanePrefetchOptions`, `LaneRead`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
+`LanePrefetchOptions`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
 `LaneResult`, `LaneRetryDelay`, `LaneRevalidateHandlers`,
-`LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`,
+`LaneScope`, `LaneSnapshot`, `LaneTarget`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`,
 `ReactNativeAppState`, `ReactNativeEventSourceOptions`, `ReactNativeNetInfo`.
 
-Runtime exports beyond the hooks and `createLane`: `domEventSource`,
-`noopEventSource`, `createReactNativeEventSource` (see [Event sources](#event-sources)).
+Runtime exports beyond the hooks and `createLane`: `laneRead`,
+`infiniteLaneRead` (see [`laneRead`](#lanereadspec--key--loader-colocation)),
+`domEventSource`, `noopEventSource`, `createReactNativeEventSource` (see
+[Event sources](#event-sources)).
 
 ## See also
 

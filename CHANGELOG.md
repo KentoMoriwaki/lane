@@ -8,6 +8,38 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **`laneRead({ key, loader, ...options })`** — a read's key, its loader, and the
+  options it is read with, colocated in one value; react-query's `queryOptions()`
+  for Lane. A key factory shares only half of a read: the loader and the options
+  stay at each call site, where nothing checks that they belong to that key.
+  `useLane(taskKeys.detail(id), () => fetchTasks(filters))` type-checks and is
+  wrong, and two components can read one key with different freshness. A spec
+  makes the whole read the unit that travels, and every consumer takes it —
+  `useLane`, `useLanePromise`, `useLanesAll`, `useInfiniteLane` (via
+  `infiniteLaneRead`), and the exact-key instance methods `prefetch`,
+  `invalidate`, `set`, `update`, `remove`, `cancel`. Scoped operations
+  (`invalidateAll` / `updateAll` / `removeAll`) deliberately keep taking a scope:
+  a spec is one read, and selecting a family of existing entries is a different
+  question. Fixing `T` at the definition is what makes the write side checked —
+  `lane.set(spec, value)` and `lane.update(spec, updater)` know what that read
+  holds, where a bare key carries no type and checks nothing. At runtime the
+  factory is identity and there is no registry behind a spec: Lane still
+  addresses entries by serialized key, so specs can be rebuilt per render, in a
+  handler, or on the server, and nothing needs memoizing for identity. A gated
+  read is a spec whose `loader` is `undefined`, unchanged in meaning.
+
+- **`infiniteLaneRead({ key, initialCursor, fetchPage, nextCursor, ...options })`**
+  — the same, for `useInfiniteLane`, whose loader is a cursor walk rather than a
+  single fetch. `P` and `C` are inferred and checked where the list is defined
+  (`nextCursor` must return the cursor `fetchPage` takes) instead of at each call
+  site.
+
+- **Per-member options in `useLanesAll`.** A batch is usually derived from a list
+  — `ids.map(taskLanes.detail)` — so its members now carry their own options when
+  given as specs, and the batch's shared `options` becomes the fallback for what
+  a spec does not set. Tuple members are unaffected: they have no options of
+  their own and read with the shared ones exactly as before.
+
 - **`current` on the loader context** — the entry's last fulfilled value, or
   `undefined` on a first load, snapshotted when the read is created so every
   retry of that read sees the same input. A loader's contract is to produce the
@@ -131,6 +163,11 @@ All notable changes to `use-lane` are documented here. The format is based on
   `isBackgroundPending`.
 
 ### Changed
+
+- **The core size budget moves 2.2 kB → 2.3 kB.** Accepting a `laneRead` spec
+  wherever a key is accepted adds `keyOf` plus one shared `findEntry` — which
+  replaces four duplicated `entries.get(serializeKey(key))` lookups — for about
+  50 bytes.
 
 - **`remove` / `removeAll` now drop the entry's last fulfilled value**, not just
   its cached promise. Removal means the entry no longer belongs in client state —

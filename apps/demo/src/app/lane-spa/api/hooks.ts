@@ -11,6 +11,7 @@ import type {
 import { useLane, useLaneInstance, type Lane } from "use-lane";
 import * as React from "react";
 import { useWorkspaceCtx } from "@/app/lane-spa/workspace/workspace-provider";
+import type { WorkspaceCtx } from "./client";
 import {
   addTaskLabel,
   createLabel,
@@ -21,6 +22,7 @@ import {
   updateTask,
 } from "./endpoints";
 import type { TaskFilters } from "./endpoints";
+import { laneReads } from "./lane-reads";
 import {
   queryKeys,
   TEAM_SCOPED_KEYS,
@@ -31,90 +33,66 @@ import {
   taskCacheStrategies,
   taskFiltersFromEntry,
 } from "./task-cache-sync";
-import {
-  fetchCurrentUser,
-  fetchInsights,
-  fetchLabels,
-  fetchMembers,
-  fetchProjects,
-  fetchTask,
-  fetchTasks,
-  fetchTasksByIds,
-  fetchTeams,
-} from "./endpoints";
 
 /* -------------------------------- Reads -------------------------------- */
 
 export function useCurrentUser() {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.currentUser, () => fetchCurrentUser(ctx));
+  return useLane(laneReads.currentUser(ctx));
 }
 
 export function useTeams() {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.teams, () => fetchTeams(ctx));
+  return useLane(laneReads.teams(ctx));
 }
 
 export function useTasks(filters: TaskFilters) {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.tasks(filters), () => fetchTasks(ctx, filters), {
-    refetchOnFocus: true,
-    refetchOnMount: true,
-    staleTime: 1_000,
-  });
+  return useLane(laneReads.tasks(ctx, filters));
 }
 
 export function useTask(taskId: string) {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.task(taskId), () => fetchTask(ctx, taskId));
+  return useLane(laneReads.task(ctx, taskId));
 }
 
 export function useProjects() {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.projects, () => fetchProjects(ctx));
+  return useLane(laneReads.projects(ctx));
 }
 
 export function useLabels() {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.labels, () => fetchLabels(ctx));
+  return useLane(laneReads.labels(ctx));
 }
 
 export function useMembers() {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.members, () => fetchMembers(ctx));
+  return useLane(laneReads.members(ctx));
 }
 
 export function useInsights() {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.insights, () => fetchInsights(ctx));
+  return useLane(laneReads.insights(ctx));
 }
 
 /* --------------------------- Dependency reads -------------------------- */
 
 /**
- * The two reads behind the detail panel's dependency status. Each is gated by
- * passing `undefined` for the loader when there is no edge, so a task with no
- * blockers (or that blocks nothing) never fetches — `result.promise` is
- * `undefined` and the reader unwraps it conditionally. Both feed one combined
- * verdict, which is why each stays an independent gated read rather than a
- * conditional mount or a single merged loader.
+ * The two reads behind the detail panel's dependency status. Both are gated —
+ * a task with no blockers (or that blocks nothing) never fetches, and the
+ * reader unwraps `promise` conditionally (see `lane-reads.ts`). They feed one
+ * combined verdict, which is why each stays an independent gated read rather
+ * than a conditional mount or a single merged loader.
  */
 export function useBlockedByTasks(taskId: string, ids: string[]) {
   const ctx = useWorkspaceCtx();
-  return useLane(
-    queryKeys.taskBlockedBy(taskId),
-    ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
-    { staleTime: 5_000, refetchOnMount: true },
-  );
+  return useLane(laneReads.blockedBy(ctx, taskId, ids));
 }
 
 export function useBlockingTasks(taskId: string, ids: string[]) {
   const ctx = useWorkspaceCtx();
-  return useLane(
-    queryKeys.taskBlocking(taskId),
-    ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
-    { staleTime: 5_000, refetchOnMount: true },
-  );
+  return useLane(laneReads.blocking(ctx, taskId, ids));
 }
 
 /* ------------------------------ Mutations ------------------------------ */
@@ -125,7 +103,9 @@ export function useCreateTask() {
 
   return React.useCallback(async (input: CreateTaskInput): Promise<Task> => {
     const task = await createTask(ctx, input);
-    lane.set(queryKeys.task(task.id), task);
+    // Publishing through the read's own definition type-checks the value
+    // against what that key holds — a bare key carries no type at all.
+    lane.set(laneReads.task(ctx, task.id), task);
     lane.invalidateAll(["tasks"]);
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
@@ -144,7 +124,7 @@ export function useUpdateTask(taskId: string) {
     strategy: TaskCacheStrategy,
   ): Promise<Task> => {
     const task = await updateTask(ctx, taskId, input);
-    publishTask(lane, task, strategy);
+    publishTask(lane, ctx, task, strategy);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -171,7 +151,7 @@ export function useAddTaskLabel(taskId: string) {
 
   return React.useCallback(async (label: TeamLabel): Promise<Task> => {
     const task = await addTaskLabel(ctx, taskId, label.id);
-    publishTask(lane, task, taskCacheStrategies.labels);
+    publishTask(lane, ctx, task, taskCacheStrategies.labels);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -182,7 +162,7 @@ export function useRemoveTaskLabel(taskId: string) {
 
   return React.useCallback(async (labelId: string): Promise<Task> => {
     const task = await removeTaskLabel(ctx, taskId, labelId);
-    publishTask(lane, task, taskCacheStrategies.labels);
+    publishTask(lane, ctx, task, taskCacheStrategies.labels);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -234,10 +214,11 @@ export function useWorkspaceRefresh() {
 
 function publishTask(
   lane: Lane,
+  ctx: WorkspaceCtx,
   task: Task,
   strategy: TaskCacheStrategy,
 ) {
-  lane.set(queryKeys.task(task.id), task);
+  lane.set(laneReads.task(ctx, task.id), task);
   lane.updateAll<Task[]>(
     (entry) => {
       const filters = taskFiltersFromEntry(entry);

@@ -271,6 +271,13 @@ const { promise } = useLane(spec);
 const value = promise ? use(promise).data : null;
 ```
 
+**Overriding at a call site is a spread**, as with `queryOptions()` — the spec is
+a plain object, so nothing special is needed and the result stays typed:
+
+```tsx
+const { promise } = useLane({ ...taskLanes.detail(id), refetchOnFocus: true });
+```
+
 **No registry, no identity rules.** A spec is a plain object; two calls to the
 same factory produce two objects with equal keys, and Lane addresses entries by
 serialized key. Build them per render, in an event handler, or on the server —

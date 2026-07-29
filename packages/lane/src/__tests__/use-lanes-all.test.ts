@@ -219,6 +219,36 @@ describe("useLanesAll", () => {
     await waitForText(app.container, "A2");
   });
 
+  it("refetches stale members on mount when the batch asks for it", async () => {
+    const lane = createLane();
+    const reloadA = deferred<string>();
+    const reloadB = deferred<string>();
+    const loaderA = vi.fn(() => reloadA.promise);
+    const loaderB = vi.fn(() => reloadB.promise);
+    lane.set(["a"], "A");
+    lane.set(["b"], "B");
+
+    const app = await render(
+      batchApp(
+        lane,
+        [
+          [["a"], loaderA],
+          [["b"], loaderB],
+        ],
+        { refetchOnMount: "always" },
+      ),
+    );
+
+    // Every member refreshes in the background; the seeded values stay on screen.
+    await waitForText(app.container, "A,B");
+    expect(loaderA).toHaveBeenCalledTimes(1);
+    expect(loaderB).toHaveBeenCalledTimes(1);
+
+    await resolveReload(reloadA, "A2");
+    await resolveReload(reloadB, "B2");
+    await waitForText(app.container, "A2,B2");
+  });
+
   it("re-subscribes on a mid-flight shared option change", async () => {
     const lane = createLane();
     const reload = deferred<string>();

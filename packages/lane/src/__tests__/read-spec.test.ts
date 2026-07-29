@@ -319,6 +319,35 @@ describe("useLanesAll with specs", () => {
     await waitForText(app.container, "A2");
   });
 
+  it("revalidates on focus per member, by that member's own option", async () => {
+    const lane = createLane();
+    const reload = deferred<string>();
+    const loaderA = vi.fn(() => reload.promise);
+    const loaderB = vi.fn(async () => "B");
+    lane.set(["a"], "A");
+    lane.set(["b"], "B");
+
+    const app = await render(
+      batchApp(lane, [
+        laneRead({ key: ["a"], loader: loaderA, refetchOnFocus: true }),
+        laneRead({ key: ["b"], loader: loaderB }),
+      ]),
+    );
+    await waitForText(app.container, "A,B");
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "A,B");
+    expect(loaderA).toHaveBeenCalledTimes(1);
+    expect(loaderB).not.toHaveBeenCalled();
+
+    await resolveReload(reload, "A2");
+    await waitForText(app.container, "A2,B");
+  });
+
   it("lets a member's own options win over the shared ones", async () => {
     const lane = createLane();
     const loaderA = vi.fn(async () => "A");
@@ -403,6 +432,11 @@ function typeExpectations(lane: Lane): void {
   // A definite loader keeps `promise` definite; a gated one does not.
   expectTypeOf(useLane(detail)).toEqualTypeOf<LaneResult<Task>>();
   expectTypeOf(useLanePromise(detail)).toEqualTypeOf<Promise<LaneRead<Task>>>();
+
+  // Overriding one option at a call site is a spread, and stays typed.
+  expectTypeOf(useLane({ ...detail, refetchOnFocus: true })).toEqualTypeOf<
+    LaneResult<Task>
+  >();
 
   const gated = laneRead({
     key: ["task", task.id],

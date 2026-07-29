@@ -183,6 +183,25 @@ describe("cancel", () => {
     expect(other.signal?.aborted).toBe(false);
   });
 
+  // `set` installs its cache with no AbortController, so this is the case that
+  // decides whether "cancelled" can be inferred from the signal or has to be
+  // recorded: there is no signal here to read it from.
+  it("cancels a pending promise published by set", async () => {
+    const lane = createLane();
+    subscribe(lane, ["tasks"]);
+
+    await readOrCreate(lane, ["tasks"], async () => "first");
+
+    const published = deferred<string>();
+    const promise = lane.set(["tasks"], published.promise);
+    await settlePromiseHandlers();
+
+    lane.cancel(["tasks"]);
+    published.resolve("second");
+
+    await expect(promise).resolves.toEqual({ data: "first" });
+  });
+
   it("ignores a key it has never read", () => {
     const lane = createLane();
 

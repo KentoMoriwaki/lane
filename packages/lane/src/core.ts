@@ -61,6 +61,16 @@ type LanePromiseCache = {
   settlement: LanePromiseSettlement | undefined;
   startedAt: number;
   controller: AbortController | undefined;
+  // Whether a reader has ever committed on *this* cache — set when one
+  // subscribes while it is current, and true from birth for a cache installed
+  // while the key already has a live reader.
+  //
+  // It is per-cache rather than per-entry because it guards a suspense retry: an
+  // uncommitted read has no subscriber, so an entry-wide "has ever been
+  // subscribed" flag stops protecting the moment the key has been mounted once,
+  // and `whenStale: "refetch"` then re-judges its own just-settled value stale on
+  // every retry and refetches forever.
+  adopted: boolean;
 };
 
 type LaneEntry = {
@@ -73,12 +83,6 @@ type LaneEntry = {
   // last unsubscribe; cleared while subscribed). The central GC sweep evicts
   // entries idle for longer than the lane's gcTime.
   idleSince: number | undefined;
-  // Whether the entry has ever had a live subscriber (a reader that committed).
-  // Never-subscribed entries look identical to an idle remount — settled cache,
-  // zero subscribers — but a pre-commit suspense retry is not a remount. This
-  // flag lets `whenStale: "refetch"` fire only on a genuine remount of
-  // previously-live data instead of looping on the retry of a first mount.
-  everSubscribed: boolean;
   // The source of the most recent notification for this key. A reader that
   // subscribes after one has already gone out has no notification to read the
   // source from, so it reads it here and converges through the matching
@@ -242,14 +246,20 @@ export function readOrCreate<T, C = T>(
  * `"refetch"` discards a stale value (or a prior error) and suspends on a fresh
  * read, but never discards an in-flight read (would break same-transition
  * sharing), a value a live subscriber is showing (would yank a shared promise
- * from active readers), or a fulfilled value the entry has never had a
- * subscriber for — that last case is a pre-commit suspense retry (or a first
- * adoption of a prefetched/hydrated value), not a remount, and discarding it
- * would loop forever: React re-reads on each retry, re-judges the just-settled
- * value stale, and refetches without ever committing. So a stale fulfilled
- * value is only discarded on a genuine idle remount of previously-live data.
+ * from active readers), or a fulfilled value *no reader has committed on* — that
+ * last case is a pre-commit suspense retry (or a first adoption of a
+ * prefetched/hydrated value), not a remount, and discarding it would loop
+ * forever: React re-reads on each retry, re-judges the just-settled value stale,
+ * and refetches without ever committing. So a stale fulfilled value is only
+ * discarded on a genuine idle remount of previously-live data.
  * A prior error is always retried (it throws to an error boundary rather than
  * suspending, so it cannot drive that loop).
+ *
+ * Adoption is tracked per *cache*, not per entry. An entry-wide "has ever been
+ * subscribed" flag looks equivalent and is not: it stays true once the key has
+ * been mounted at all, so the retry after a remount's *own* refetch is judged a
+ * remount too — and the loop this guard exists to prevent reappears on the
+ * second visit to any key.
  */
 function reuseCache(
   entry: LaneEntry,
@@ -277,9 +287,9 @@ function reuseCache(
   }
 
   // Never adopted → a pre-commit retry or a first prefetch/hydration read, not a
-  // remount; reuse so it can't loop. Only a real remount (everSubscribed)
-  // refetches a stale value.
-  if (!entry.everSubscribed) {
+  // remount; reuse so it can't loop. Only a value some reader actually committed
+  // on is stale enough to throw away.
+  if (!cache.adopted) {
     return cache;
   }
 
@@ -334,7 +344,12 @@ export function subscribeLane(
 
   entry.subscribers.add(subscriber);
   entry.idleSince = undefined; // active: not a GC candidate
-  entry.everSubscribed = true; // adopted: future idle reads are true remounts
+
+  if (entry.cache) {
+    // This reader committed on the cache it is holding, so a later idle read of
+    // that same cache is a true remount rather than a retry.
+    entry.cache.adopted = true;
+  }
 
   return () => {
     entry.subscribers.delete(subscriber);
@@ -616,7 +631,6 @@ function createEntry(
 ): LaneEntry {
   return {
     cache: undefined,
-    everSubscribed: false,
     idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
     lastNotifySource: undefined,
     key,
@@ -638,6 +652,9 @@ function setEntryCache<T>(
     const value = shareWithLastFulfilled(entry, valueOrPromise);
 
     entry.cache = {
+      // A cache installed while the key already has a live reader is adopted on
+      // arrival — that reader is showing it without any further subscribe.
+      adopted: entry.subscribers.size > 0,
       controller,
       promise: Promise.resolve<LaneRead<T>>({ data: value }),
       settlement: { at: startedAt, kind: "fulfilled" },
@@ -649,6 +666,7 @@ function setEntryCache<T>(
   }
 
   const cache: LanePromiseCache = {
+    adopted: entry.subscribers.size > 0,
     controller,
     promise: undefined as unknown as Promise<unknown>,
     settlement: undefined,

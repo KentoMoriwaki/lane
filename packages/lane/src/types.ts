@@ -137,6 +137,36 @@ export type Lane = {
   updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<LaneRead<T>>[];
   remove(key: LaneKey): void;
   removeAll(scope: LaneScope): void;
+  /**
+   * Stop the key's in-flight read. Unlike every other operation here it does not
+   * converge the key: nothing is notified, so subscribed readers keep the
+   * promise they hold rather than starting again.
+   *
+   * **Only cancel a read you started and can still account for.** Two conditions,
+   * both about the call site rather than about the cache:
+   *
+   * 1. *You issued this read* — your own `invalidate`, a load you are explicitly
+   *    offering the user a way to stop, a key whose parameters are spent.
+   * 2. *Nothing else reads this key* — cancelling is addressed by key, so on a
+   *    shared key one call stops your refresh and someone else's first load.
+   *
+   * A read left behind by a superseded transition — switching tabs, retyping a
+   * search — fails the first. Nobody issued it: state changed, React chose to
+   * render, and the read followed. Cancelling it saves a request the caller never
+   * asked for and leaves the key holding a rejection instead of nothing.
+   *
+   * Where the key lands is decided by what it already had. With a last fulfilled
+   * value it reverts to it — readers keep showing the data they had, with no
+   * `refreshError`, since the caller asked for the stop. With nothing to revert
+   * to the read settles rejected, the only end a transition holding no data can
+   * reach, and recovers like any other failed first load: the rejection is reused
+   * until the key is invalidated, removed, collected, or read with
+   * `whenStale: "refetch"`.
+   *
+   * A settled read is not in progress, so cancelling one does nothing; use
+   * `invalidate` or `remove` to discard a value.
+   */
+  cancel(key: LaneKey): void;
 };
 
 /**

@@ -110,6 +110,21 @@ describe("whenStale", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
+  it("'revalidate' (default) reuses a prior error rather than retrying it", async () => {
+    const lane = createLane();
+    const loader = vi.fn(async () => "loaded");
+    loader.mockRejectedValueOnce(new Error("boom"));
+
+    await expect(readOrCreate(lane, ["k"], loader)).rejects.toThrow("boom");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // A fresh read of the key — a remount, an Error Boundary reset — is handed
+    // the same rejected promise, not a new load. Only `refetch` (or an
+    // invalidate/remove) discards it.
+    await expect(readOrCreate(lane, ["k"], loader)).rejects.toThrow("boom");
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
   it("'refetch' does not loop on the retries that follow a remount refetch", async () => {
     const lane = createLane();
     const loader = vi.fn(async () => "loaded");

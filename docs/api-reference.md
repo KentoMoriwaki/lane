@@ -678,6 +678,7 @@ type Lane = {
   updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<LaneRead<T>>[];
   remove(key: LaneKey): void;
   removeAll(scope: LaneScope): void;
+  cancel(key: LaneKey): void;
 };
 ```
 
@@ -880,6 +881,59 @@ so nothing can serve the removed data back: neither
 next read fails, nor the next loader's [`current`](#uselanekey-loader-options).
 This matters because an entry a reader still holds survives the removal itself —
 the key slot stays, the value does not.
+
+### `cancel`
+
+Stop the key's in-flight read. Alone among these methods it does **not** converge
+the key: nothing is notified, so subscribed readers keep the promise they hold
+instead of starting again. A settled read is not in progress, so cancelling one
+does nothing.
+
+```ts
+lane.invalidate(["report", id]);
+lane.cancel(["report", id]); // changed my mind — stop the refresh, keep the rows
+```
+
+There is no `cancelAll`, and `useLane` returns no bound `cancel`. Scoped
+operations exist for the ones that converge — `invalidateAll` / `updateAll` /
+`removeAll` leave every key they touch in a defined state, whatever the
+[scope](#scopes) matched. Cancelling does not: on a key with nothing to revert to
+it leaves a rejection, so applying it to an unenumerated family means leaving one
+on an unknown number of keys. (`set` and `prefetch` have no scoped twin either —
+they need per-key knowledge, and here that knowledge is ownership.) A bound form
+would be safe, but stopping a read is rare enough that it would be dead weight in
+every reader's result.
+
+**Only cancel a read you started and can still account for.** Two conditions,
+both about the call site rather than about the cache:
+
+1. **You issued this read** — your own `invalidate`, a load you are explicitly
+   offering the user a way to stop, a key whose parameters are spent.
+2. **Nothing else reads this key** — cancelling is addressed by key, so on a
+   shared key one call stops your refresh *and* someone else's first load.
+
+A read left behind by a superseded transition — switching tabs, retyping a search
+— fails the first, and is the one place not to reach for this. Nobody issued those
+requests: state changed, React chose to render it, and the read followed. See
+[Cancelling is for reads you own](./design-notes.md#cancelling-is-for-reads-you-own).
+
+Where the key lands is decided by what it already had:
+
+| Key holds | Result |
+| --- | --- |
+| a last fulfilled value | reverts to it — readers keep showing their data, and **no `refreshError`**, since the caller asked for the stop |
+| nothing to revert to | the read settles **rejected** — the only end a transition holding no data can reach |
+
+The rejection is then as sticky as any other failed first load: it is reused until
+the key is invalidated, removed, collected, or read with `whenStale: "refetch"`.
+An Error Boundary reset alone re-reads the same rejected promise, so pair a retry
+with an `invalidate`. That is deliberately not special-cased — a cancelled first
+load recovers the way every other one does.
+
+Cancelling holds whether or not the loader forwards its `signal`: a loader that
+drops it runs to completion, but its result is not adopted. Forwarding it is still
+what makes the request actually stop — see
+[Don't drop the abort signal](./common-mistakes.md#dont-drop-the-abort-signal).
 
 ## Hydration (RSC seeding)
 

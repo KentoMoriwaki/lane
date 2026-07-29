@@ -88,6 +88,27 @@ All notable changes to `use-lane` are documented here. The format is based on
   where the cost of extra readers is spelled out, and added to the skill's
   gotcha list.
 
+- **`lane.cancel(key)`** — stop a key's in-flight read. Alone among the instance
+  methods it does not converge the key: nothing is notified, so subscribed
+  readers keep the promise they hold instead of starting again. Where the key
+  lands is decided by what it already had — a last fulfilled value is reverted to
+  (no `refreshError`, because the caller asked for the stop), and with nothing to
+  revert to the read settles rejected, the only end a transition holding no data
+  can reach. That rejection is kept rather than cleared: emptying the entry looks
+  tidier and quietly undoes the cancel, because a reader mid-transition is still
+  trying to reach the key and React's retry of the render it never committed
+  turns an empty entry into a fresh load. Cancelling holds whether or not the
+  loader forwards its `signal` — one that drops it runs to completion, but its
+  result is not adopted. Cancelling a settled read does nothing; use `invalidate`
+  or `remove` to discard a value. **Only cancel a read you issued and that
+  nothing else is reading**: a request left behind by a superseded transition
+  (switching tabs, retyping a search) was never issued by the caller at all, and
+  is the one place not to reach for this. There is deliberately no `cancelAll`
+  and no bound `cancel` on `useLane`'s result: the scoped twins exist for
+  operations that converge, and cancelling an unenumerated family would leave a
+  rejection on an unknown number of keys — while a bound form would be safe but
+  carried by every reader and called by almost none.
+
 ### Fixed
 
 - **`whenStale: "refetch"` no longer loops on the second visit to a key.**

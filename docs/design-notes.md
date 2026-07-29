@@ -48,6 +48,92 @@ value suspends to a Suspense fallback — a transition can only preserve UI that
 already exists — and `remove` is urgent rather than transition-preserving, so
 stale data cannot linger after sign-out or a team switch.
 
+## Cancelling is for reads you own
+
+Abort is normally a *consequence* rather than an operation. The `signal` a loader
+receives fires in four places, and all four are moments when the in-flight cache
+stops being the entry's cache: `invalidate` and `remove` clear it, `set` replaces
+it with an authoritative value, and GC evicts it. `update` deliberately does not
+abort — it chains onto the in-flight value, so the read it adopts has to stay
+alive. That is also why an appended page in `useInfiniteLane` has no signal at
+all: it arrives through `update`, and an updater is handed the current value, not
+a controller.
+
+`cancel` is the one exception, and it proves the rule rather than breaking it: it
+leaves the cache in place precisely *so that* the settlement handlers still run,
+and reads `cancelled` there to decide where the key lands. A transition has no
+third outcome — it commits, or it commits an Error Boundary — so a cancelled read
+still has to settle into one of those. With a previous value it folds into that
+value; with nothing to revert to it settles rejected, because that is the only
+end a transition holding no data can reach.
+
+Emptying the entry instead looks tidier and quietly undoes the cancel. A reader
+mid-transition is still trying to reach the key it was told to go to; React
+retries the render it never committed, and an empty entry turns that retry into a
+fresh load — one aborted request plus a replacement, which is worse than not
+having cancelled. Keeping the rejection is what lets the retry terminate. It is
+then as sticky as any other failed first load, and recovers the same way, which
+is deliberately not special-cased.
+
+The race that a cancel API usually exists to solve does not arise here, so
+stopping is all it is for. Elsewhere cancellation is load-bearing just before an
+optimistic update — a refetch that started before the mutation must not land after
+it and overwrite the result. Lane closes that path structurally instead: `set`
+aborts and publishes in one step, `update` chains rather than races, and
+`invalidate(key, { after })` gates the re-read on the action. A response that
+arrives late regardless writes into a cache object the entry no longer holds, and
+is ignored.
+
+**So `cancel` is for a read the caller started and can still account for.** Not
+"stop whatever is in flight under this key" — that reading is what makes it
+dangerous, and the two conditions behind it are both about the call site rather
+than about the cache:
+
+- **you issued this read** — your own `invalidate`, a load you are explicitly
+  offering to stop, a key whose parameters you know are spent
+- **nothing else reads this key** — `cancel` is addressed by key, so on a shared
+  key you can stop your own refresh and a stranger's first load with the same call
+
+Which is also why there is no `cancelAll`: the scoped twins exist for operations
+that converge on every key they touch, and cancelling an unenumerated family
+would leave a rejection on an unknown number of them. `useLane` returns no bound
+`cancel` either. Binding one to the reader's own key would be the safest possible
+form of it — but every reader would carry it and almost none would call it, which
+is the wrong trade for a hook result.
+
+A superseded read fails the first condition, which is why switching tabs or
+retyping a search is the wrong place for it. Nobody *issued* those requests: the
+caller changed some state, React decided to render it, and Lane read what the
+render asked for. The request is a downstream consequence of a render the caller
+does not control — and React reports an abandoned render to nobody, so there is no
+event to hang a cancellation on either. Reads are created during render and
+subscriptions during an effect, so a transition that never commits leaves an entry
+that was read but never subscribed: no unsubscribe, no cleanup, nothing.
+
+That is not a gap to be closed. Keying a request by identity is what makes
+starting it during render acceptable at all, because a re-run reuses the work
+instead of repeating it — but idempotent re-runs are not reversible runs, and
+nothing un-starts a request whose render was thrown away. Speculative rendering
+means speculative requests, and letting them finish is the right default rather
+than the convenient one: React comes back to abandoned keys — a deleted character
+restores the previous query — and reuses the in-flight read when it does.
+Collection is left to `gcTime` because the timescales do not match either:
+garbage collection is correct if it happens eventually, cancellation is worthless
+unless it happens now.
+
+Ownership cannot be a runtime check, and deliberately so. Lane exposes no way to
+ask what a key holds, and an option like `onlyIf: "revertable"` — cancel, but only
+where it happens to be safe — would make the same button stop the request or not
+depending on whether the load had committed a moment earlier, which the caller
+cannot observe. `invalidate`'s `onlyIf` works because both of its outcomes
+converge; cancelling's do not. The rule belongs where the knowledge is: at the
+call site, checked by whoever writes it.
+
+Resource saving is a side effect and not the point. A stopped request does spare
+the bandwidth, the radio, and — only if the server bothers to notice the closed
+connection — the server's work. But framing `cancel` that way invites exactly the
+broad, speculative use the conditions above rule out.
+
 ## React owns UI state
 
 `useLane` deliberately returns no query-result fields — no `data`, `error`,
@@ -226,6 +312,8 @@ When more than one approach is possible, Lane prefers:
 - exact-key operations for single reads, scoped operations for key families
 - exact-key publication only for authoritative values already in hand
 - local React state for optimistic UI, not shared cache writes
+- aborting as a consequence of a cache transition, and cancelling only a read the
+  caller issued
 - app-level decisions for mutation effects
 - coordinating promise identity over owning resolved-value cache policy
 

@@ -56,6 +56,58 @@ export type LaneLoader<T, C = T> = (
 
 export type LaneRetryDelay = (attempt: number, error: unknown) => number;
 
+/**
+ * A read described in one place: the key, the loader that fills it, and the
+ * options it is read with. Build one with {@link laneRead} and pass it wherever
+ * a read is named — `useLane(spec)`, `useLanesAll([spec, …])`,
+ * `lane.prefetch(spec)`, `lane.invalidate(spec)`, `lane.set(spec, value)`.
+ *
+ * Colocation is the point. A key defined in one module and a loader in another
+ * are two halves of one fact, and nothing checks that a call site pairs them
+ * correctly: `useLane(taskKeys.detail(id), () => fetchTasks(filters))` type-checks
+ * and is wrong. A spec makes the pair the unit that travels.
+ *
+ * Options ride along flat, so the freshness a read is defined with is the
+ * freshness every call site gets — the drift that a shared key factory cannot
+ * prevent, since options live at the call site and the key does not.
+ *
+ * The type parameters are the read's, unchanged: `T` is what the loader
+ * resolves to and `C` is what it sees in `current`. Fixing them at definition
+ * time is what makes the *writes* type-checked too — `lane.set(spec, value)` and
+ * `lane.update(spec, updater)` know the read's type, where a bare key cannot.
+ */
+export type LaneReadSpec<T, C = T> = LaneUseOptions & {
+  key: LaneKey;
+  loader: LaneLoader<T, C>;
+};
+
+/**
+ * A {@link LaneReadSpec} whose loader may be absent — the colocated form of a
+ * gated read. An absent loader means the same thing it means everywhere in Lane:
+ * nothing is fetched, subscribed, or stored, and `useLane` hands back a
+ * {@link LaneGatedResult} whose `promise` is `undefined`.
+ *
+ * `T` is still inferred from the loader when it is a conditional
+ * (`enabled ? load : undefined`); annotate the spec (`laneRead<Task>({ … })`)
+ * when the loader can be nothing else.
+ */
+export type LaneGatedReadSpec<T, C = T> = LaneUseOptions & {
+  key: LaneKey;
+  loader: LaneLoader<T, C> | undefined;
+};
+
+/**
+ * What an exact-key operation addresses: a key, or anything carrying one — so a
+ * spec is accepted wherever its key would be, and a read defined once is
+ * invalidated, published to, or removed by that same definition.
+ *
+ * Scoped operations (`invalidateAll`, `updateAll`, `removeAll`) deliberately do
+ * *not* take a spec. A spec describes one read; a scope selects a family of
+ * existing entries, which is a different question and still answered by a prefix
+ * key or a predicate.
+ */
+export type LaneTarget = LaneKey | { key: LaneKey };
+
 export type LaneScope =
   | LaneKey
   | ((entry: { key: LaneKey; keyId: string }) => boolean);
@@ -127,15 +179,34 @@ export type Lane = {
     loader: LaneLoader<T, C>,
     options?: LanePrefetchOptions,
   ): Promise<LaneRead<T>>;
-  invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
+  /**
+   * Warm a read from its own definition. Only the fetch-shaping options are
+   * taken from the spec (`retry` / `retryDelay`) — `staleTime` / `whenStale`
+   * stay the eventual reader's call, exactly as with the key form.
+   */
+  prefetch<T, C = T>(spec: LaneReadSpec<T, C>): Promise<LaneRead<T>>;
+  invalidate(target: LaneTarget, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
   set<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<LaneRead<T>>;
+  /**
+   * Publishing through a spec is type-checked: the value must be what that read
+   * loads. A bare key cannot check anything — it carries no type.
+   */
+  set<T, C = T>(
+    spec: LaneGatedReadSpec<T, C>,
+    valueOrPromise: LaneValue<T>,
+  ): Promise<LaneRead<T>>;
   update<T>(
     key: LaneKey,
     updater: LaneUpdater<T>,
   ): Promise<LaneRead<T>> | undefined;
+  /** Type-checked like `set`: the updater's `current` is the read's own type. */
+  update<T, C = T>(
+    spec: LaneGatedReadSpec<T, C>,
+    updater: LaneUpdater<T>,
+  ): Promise<LaneRead<T>> | undefined;
   updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<LaneRead<T>>[];
-  remove(key: LaneKey): void;
+  remove(target: LaneTarget): void;
   removeAll(scope: LaneScope): void;
   /**
    * Stop the key's in-flight read. Unlike every other operation here it does not
@@ -166,7 +237,7 @@ export type Lane = {
    * A settled read is not in progress, so cancelling one does nothing; use
    * `invalidate` or `remove` to discard a value.
    */
-  cancel(key: LaneKey): void;
+  cancel(target: LaneTarget): void;
 };
 
 /**

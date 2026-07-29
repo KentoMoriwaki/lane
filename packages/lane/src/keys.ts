@@ -1,7 +1,21 @@
-import type { LaneKey } from "./types";
+import type { LaneKey, LaneTarget } from "./types";
 
 export function serializeKey(key: LaneKey): string {
   return stableStringify(key);
+}
+
+/**
+ * The key an exact-key operation addresses, from either form it accepts: a key,
+ * or a read spec carrying one. A key is always an array and a spec never is, so
+ * the two are told apart structurally — no marker property, nothing for a caller
+ * to keep in sync.
+ */
+export function keyOf(target: LaneTarget): LaneKey {
+  return isLaneKey(target) ? target : target.key;
+}
+
+export function isLaneKey(target: LaneTarget): target is LaneKey {
+  return Array.isArray(target);
 }
 
 export function isPrefixKey(prefix: LaneKey, key: LaneKey): boolean {

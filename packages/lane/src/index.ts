@@ -15,9 +15,11 @@ export type {
 } from "./event-source";
 export { LaneHydration } from "./hydration";
 export { LaneProvider, useLaneInstance } from "./provider";
-export { useInfiniteLane } from "./use-infinite-lane";
+export { laneRead } from "./read-spec";
+export { infiniteLaneRead, useInfiniteLane } from "./use-infinite-lane";
 export type {
   InfiniteLaneOptions,
+  InfiniteLaneReadSpec,
   InfiniteLaneResult,
   InfiniteLaneValue,
 } from "./use-infinite-lane";
@@ -26,6 +28,7 @@ export { useLanesAll } from "./use-lanes-all";
 export type {
   Lane,
   LaneEntryInfo,
+  LaneGatedReadSpec,
   LaneGatedResult,
   LaneHydrationSnapshots,
   LaneInvalidateOptions,
@@ -35,6 +38,7 @@ export type {
   LaneOptions,
   LanePrefetchOptions,
   LaneRead,
+  LaneReadSpec,
   LaneRefetchOnFocus,
   LaneRefetchOnMount,
   LaneRefetchOnReconnect,
@@ -42,6 +46,7 @@ export type {
   LaneRetryDelay,
   LaneScope,
   LaneSnapshot,
+  LaneTarget,
   LaneUpdater,
   LaneUseOptions,
   LaneValue,

@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { updateEntry } from "./core";
-import { serializeKey } from "./keys";
+import { isLaneKey, serializeKey } from "./keys";
 import { useLaneInstance } from "./provider";
 import type {
   LaneInvalidateOptions,
@@ -47,6 +47,18 @@ export type InfiniteLaneOptions<P, C> = {
   /** The cursor for the page after this one, or `null` at the end of the list. */
   nextCursor: (page: P, cursor: C) => C | null;
 };
+
+/**
+ * An infinite read described in one place — the colocated form of
+ * `useInfiniteLane`, and the same idea as {@link LaneReadSpec} for a list whose
+ * loader is a cursor walk rather than a single fetch. The pagination options,
+ * the key, and the read options travel together; build one with
+ * {@link infiniteLaneRead}.
+ */
+export type InfiniteLaneReadSpec<P, C> = LaneUseOptions &
+  InfiniteLaneOptions<P, C> & {
+    key: LaneKey;
+  };
 
 export type InfiniteLaneResult<P, C> = {
   promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
@@ -111,10 +123,27 @@ export type InfiniteLaneResult<P, C> = {
  * ```
  */
 export function useInfiniteLane<P, C>(
+  spec: InfiniteLaneReadSpec<P, C>,
+): InfiniteLaneResult<P, C>;
+export function useInfiniteLane<P, C>(
   key: LaneKey,
   options: InfiniteLaneOptions<P, C>,
   readOptions?: LaneUseOptions,
+): InfiniteLaneResult<P, C>;
+export function useInfiniteLane<P, C>(
+  keyOrSpec: LaneKey | InfiniteLaneReadSpec<P, C>,
+  maybeOptions?: InfiniteLaneOptions<P, C>,
+  maybeReadOptions?: LaneUseOptions,
 ): InfiniteLaneResult<P, C> {
+  // A spec is all three arguments in one value; unpacked here so the body below
+  // never has to know which form the caller used.
+  const separate = isLaneKey(keyOrSpec);
+  const key = separate ? keyOrSpec : keyOrSpec.key;
+  const options = separate
+    ? (maybeOptions as InfiniteLaneOptions<P, C>)
+    : keyOrSpec;
+  const readOptions = separate ? maybeReadOptions : keyOrSpec;
+
   const lane = useLaneInstance();
   const keyId = serializeKey(key);
 
@@ -216,4 +245,34 @@ export function useInfiniteLane<P, C>(
     loadMore,
     promise,
   };
+}
+
+/**
+ * Colocate an infinite list's key, pagination, and read options — `laneRead` for
+ * `useInfiniteLane`.
+ *
+ * ```ts
+ * export const feedLanes = {
+ *   list: (filters: Filters) =>
+ *     infiniteLaneRead({
+ *       key: ["feed", filters],
+ *       initialCursor: null as string | null,
+ *       fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+ *       nextCursor: (page) => page.nextCursor,
+ *       staleTime: 30_000,
+ *     }),
+ * };
+ *
+ * const { promise, loadMore } = useInfiniteLane(feedLanes.list(filters));
+ * lane.invalidate(feedLanes.list(filters)); // the key travels with it
+ * ```
+ *
+ * Identity at runtime, like `laneRead`: what it buys is that `P` and `C` are
+ * inferred and checked where the list is defined — `nextCursor` must return the
+ * cursor `fetchPage` takes — instead of at each call site.
+ */
+export function infiniteLaneRead<P, C>(
+  spec: InfiniteLaneReadSpec<P, C>,
+): InfiniteLaneReadSpec<P, C> {
+  return spec;
 }

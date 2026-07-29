@@ -8,6 +8,51 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **`current` on the loader context** — the entry's last fulfilled value, or
+  `undefined` on a first load, snapshotted when the read is created so every
+  retry of that read sees the same input. A loader's contract is to produce the
+  value for a key, and for an *accumulated* value — a list scrolled five pages
+  deep, a window with an extent, a revision worth sending as `If-None-Match` —
+  the recipe for reproducing it is a fact about the value, not about the key.
+  Without `current` that fact had to live in the key (every depth a different
+  cached list) or in component state (a second copy with a different lifetime,
+  which desyncs the first time a component remounts over a live cache). It
+  survives invalidation, which clears the cached promise and not the value, and
+  disappears with the entry — `remove`, collection, or an invalidation of an
+  entry no reader is holding — so a loader must always define what a first load
+  means. It is not a way to skip work: returning it unchanged strands the entry
+  on stale data. Typed by the read's new second type parameter, `useLane<T, C = T>`,
+  which is what keeps `T` in the return position: putting the loaded type in the
+  loader's *parameter* position would make TypeScript fix it before checking the
+  loader body, and `useLane(key, ({ signal }) => fetchTask(id, signal))` would
+  have silently inferred `LaneRead<unknown>`. Annotating the read (`useLane<Feed>(…)`)
+  types `current`; reading it without an annotation is a type error asking for
+  one, never a silent `any`.
+
+- **`useInfiniteLane(key, options, readOptions?)`** — a cursor-paginated list as
+  one key holding the whole accumulated list, with the page depth read back out
+  of the cached value. `{ initialCursor, fetchPage, nextCursor }` in, `{ promise,
+  loadMore, isTransitionPending, isBackgroundPending, invalidate }` out, and
+  `{ pages, params, hasNext }` under the key. `loadMore` appends one page through
+  `update`, so the key never changes and the list converges through a transition
+  with no `useTransition` of your own; any refresh re-walks the chain as deep as
+  the value already is, sequentially, because page N+1's cursor does not exist
+  until page N has come back. That last cost is inherent to cursor pagination and
+  is the same one React Query's `infiniteQueryBehavior` pays — what differs is
+  that the list is held on screen throughout and a failure part-way keeps it
+  there with `refreshError` instead of an error state. `hasNext` rides in the
+  resolved value rather than on the hook, for the same reason `refreshError`
+  does: the hook never resolves the promise, and a flag next to the pages it
+  describes cannot disagree with them mid-render. Adds no core machinery — it is
+  `useLane` plus an update, and could have been written in userland.
+
+- **`updateEntry(lane, keyId, updater)`** — internal, the update-side twin of
+  `invalidateEntry`, with the private entry-taking form renamed `updateLaneEntry`
+  to match the existing `invalidateEntry` / `invalidateLaneEntry` convention.
+  Addressing an entry by its serialized key is what lets `useInfiniteLane`'s
+  `loadMore` be a `useCallback` over its real dependencies instead of holding the
+  key array alive in a ref.
+
 - **`invalidate(key, { after })` / `invalidateAll(scope, { after })`** — invalidate
   now, fetch later. The invalidation is announced synchronously, so every reader
   goes pending immediately and keeps its current value on screen through the
@@ -53,6 +98,16 @@ All notable changes to `use-lane` are documented here. The format is based on
   `isBackgroundPending`.
 
 ### Changed
+
+- **`remove` / `removeAll` now drop the entry's last fulfilled value**, not just
+  its cached promise. Removal means the entry no longer belongs in client state —
+  sign out, team switch, a deleted entity — and it could not rely on deleting the
+  entry to enforce that, because an entry a reader still holds survives the
+  removal: the key slot stays. Anything left on it outlived the sign-out, and
+  that value backs both the stale-on-error fallback and the `current` handed to
+  the next loader, either of which would have served removed data back. Only
+  affects apps that `remove` a key a mounted reader still holds and then fail or
+  re-read it.
 
 - Raised the `createLane (core only)` size budget from 2 kB to 2.1 kB. It sat at
   1.98 kB beforehand, with no room left for a feature. Deliberately tight — the

@@ -29,19 +29,19 @@ import type {
   LaneUseOptions,
 } from "./types";
 
-export function useLane<T>(
+export function useLane<T, C = T>(
   key: LaneKey,
-  loader: LaneLoader<T>,
+  loader: LaneLoader<T, C>,
   options?: LaneUseOptions,
 ): LaneResult<T>;
-export function useLane<T>(
+export function useLane<T, C = T>(
   key: LaneKey,
-  loader: LaneLoader<T> | undefined,
+  loader: LaneLoader<T, C> | undefined,
   options?: LaneUseOptions,
 ): LaneGatedResult<T>;
-export function useLane<T>(
+export function useLane<T, C = T>(
   key: LaneKey,
-  loader: LaneLoader<T> | undefined,
+  loader: LaneLoader<T, C> | undefined,
   options: LaneUseOptions = {},
 ): LaneResult<T> | LaneGatedResult<T> {
   const lane = useLaneInstance();
@@ -252,19 +252,19 @@ export function useLane<T>(
   };
 }
 
-export function useLanePromise<T>(
+export function useLanePromise<T, C = T>(
   key: LaneKey,
-  loader: LaneLoader<T>,
+  loader: LaneLoader<T, C>,
   options?: LaneUseOptions,
 ): Promise<LaneRead<T>>;
-export function useLanePromise<T>(
+export function useLanePromise<T, C = T>(
   key: LaneKey,
-  loader: LaneLoader<T> | undefined,
+  loader: LaneLoader<T, C> | undefined,
   options?: LaneUseOptions,
 ): Promise<LaneRead<T>> | undefined;
-export function useLanePromise<T>(
+export function useLanePromise<T, C = T>(
   key: LaneKey,
-  loader: LaneLoader<T> | undefined,
+  loader: LaneLoader<T, C> | undefined,
   options?: LaneUseOptions,
 ): Promise<LaneRead<T>> | undefined {
   return useLane(key, loader, options ?? {}).promise;

@@ -77,6 +77,51 @@ The tradeoff is intentional:
 - distant consumers never observe speculative data
 - app-wide consistency comes from confirmed data, not optimistic patches
 
+## A loader's input includes what it already produced
+
+A loader's contract is to produce **the value for a key** — not to fetch a
+request. For most keys those are the same thing, which is why the loader was
+handed only the key and an abort signal for so long. They come apart as soon as a
+value is *accumulated*: a list the user has scrolled five pages into is still one
+value under one key, but reproducing it takes five requests, and which five is a
+fact about the value rather than about the key.
+
+That fact has to live somewhere. The three places it can go are the key, the
+component, or the value, and only the last one holds:
+
+- **In the key** — `["feed", filters, depth]` — every depth is a different cached
+  list, so growing the list evicts the one being read and scrolling becomes a
+  cache-miss generator. It also makes "the list" un-nameable for invalidation.
+- **In the component** — a ref or state incremented on each append — desyncs from
+  the cache it describes the moment the two have different lifetimes. Remounting
+  over a live cache is enough: the value comes back five pages deep and the
+  component believes it holds one. We measured exactly that (see [common
+  mistakes](./common-mistakes.md#holding-an-infinite-lists-depth-in-component-state)).
+- **In the value** — the loader is handed `current`, the entry's last fulfilled
+  value, and derives its work from it. Nothing to keep in sync, because there is
+  no second copy.
+
+So `current` is not a pagination feature. It is the general form of "re-read what
+this key already holds," which the loader could not previously ask about: a
+resume cursor, a revision for `If-None-Match`, a window that should keep its
+extent. `useInfiniteLane` is one caller of it, and could be written in userland
+because it uses nothing the core does not already expose.
+
+Two properties keep it honest. It is **snapshotted when the read is created**, so
+every retry of that read sees the same input and a value published mid-flight
+cannot change what the read was started from. And it is **not a way to skip
+work**: it is the previous read's value, so returning it unchanged strands the
+entry on stale data with no way to notice — a loader that reads it still has to
+produce the current value.
+
+The lifetime is the entry's, which is what makes the rule learnable: `current`
+survives invalidation (that clears the cached promise, not the value) and
+disappears with the entry — on `remove`, on collection, and on an invalidation of
+an entry no reader is holding. So a loader must always define what a first load
+means, and `remove` genuinely forgets: it drops the last fulfilled value along
+with the cache, so neither stale-on-error nor the next loader's `current` can
+serve removed data back after a sign-out.
+
 ## Refresh errors serve stale data
 
 A failed *refresh* must not destroy data the user is already looking at. When an

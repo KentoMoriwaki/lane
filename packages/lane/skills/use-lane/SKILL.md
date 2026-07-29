@@ -72,6 +72,13 @@ task touches that rule.
 - **Disable a read by passing `loader: undefined`** (gating). `promise` is then
   `undefined`; unwrap conditionally: `result.promise ? use(result.promise) : fallback`.
   → `references/api-reference.md#conditional-reads-gating`
+- **An accumulated value carries its own re-read recipe.** The loader gets
+  `current` — the entry's last fulfilled value — so "re-read as much as I already
+  have" needs nothing in the key or in component state. Never track an infinite
+  list's page depth in a ref: it desyncs from the cache the first time a component
+  remounts over it, and the next invalidation silently truncates the list. Use
+  `useInfiniteLane` for cursor-paginated lists; its `hasNext` is in the resolved
+  value, not on the hook. → `references/common-mistakes.md`, `references/api-reference.md`
 
 ## Migrating React Query / SWR? Five traps
 

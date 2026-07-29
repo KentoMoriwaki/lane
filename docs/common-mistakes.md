@@ -337,6 +337,50 @@ the entry refreshes:
 useLane(["user", id], ({ signal }) => fetchUser(id, signal));
 ```
 
+### Holding an infinite list's depth in component state
+
+An infinite list needs one more fact than its key describes: how many pages it
+currently holds. The obvious place to put it is a ref next to the reader,
+incremented after each append — and it is wrong in a way that is invisible until
+it isn't.
+
+**Don't** track the depth alongside the read:
+
+```tsx
+const pagesRef = useRef(1);
+const { promise } = useLane(["feed", filters], ({ signal }) =>
+  fetchPages(filters, pagesRef.current, signal), // "as deep as I think I am"
+);
+```
+
+The ref and the cache have different lifetimes, so they drift apart the moment
+anything ends one and not the other. Measured, with six pages loaded: unmounting
+the list and mounting it again restored all six from cache **with no request** —
+and reset the ref to `1`. The screen showed six pages; the reader believed it had
+one. The next invalidation refetched one page and the list silently collapsed
+from 120 rows to 20. No unmount is even required — switching a filter away and
+back does it too, because the previous key's value is still cached while the
+component's ref has moved on.
+
+**Do** derive the depth from the value itself, which is what
+[`current`](./api-reference.md#uselanekey-loader-options) is for — or reach for
+[`useInfiniteLane`](./api-reference.md#useinfinitelanekey-options-readoptions--a-cursor-paginated-list),
+which is that pattern packaged:
+
+```tsx
+const { promise, loadMore } = useInfiniteLane(["feed", filters], {
+  initialCursor: null as string | null,
+  fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+  nextCursor: (page) => page.nextCursor,
+});
+const { data } = use(promise); // data.pages, data.hasNext
+```
+
+There is now no second copy to desync: the loader reads the depth out of the same
+value the screen is rendering. This is the general rule at the top of this page —
+don't put fetched data (or anything derived from it) in component state — in the
+one shape where the cost is delayed long enough to look safe.
+
 ## Mutations & local state
 
 Writing data, and the local React state that lives around a read.

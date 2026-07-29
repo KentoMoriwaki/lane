@@ -2,12 +2,57 @@ export type LaneKey = readonly unknown[];
 
 export type LaneValue<T> = T | Promise<T>;
 
-export type LaneLoaderContext = {
+export type LaneLoaderContext<C = unknown> = {
   key: LaneKey;
   signal: AbortSignal;
+  /**
+   * The entry's last fulfilled value, or `undefined` on a first load.
+   *
+   * Snapshotted when the read is created, so every retry of that read sees the
+   * same value. It survives invalidation — invalidating clears the cached
+   * promise, not the last fulfilled value — which is what lets a loader re-read
+   * *as much as it already had* instead of only what its key describes: the
+   * accumulated pages of a list, a cursor to resume from, a revision to send as
+   * `If-None-Match`.
+   *
+   * It is `undefined` again once the entry itself is gone (removed, collected,
+   * or invalidated while nothing was subscribed to hold it), so a loader must
+   * always define what a first load means.
+   *
+   * It is deliberately *not* a way to skip work: the value is the previous
+   * read's, and returning it unchanged would strand the entry on stale data with
+   * no way to notice.
+   *
+   * **Its type is the read's second type parameter, defaulting to the loaded
+   * type.** It cannot simply *be* the loaded type: that would put the loader's
+   * own type parameter in the loader's *parameter* position, and TypeScript
+   * fixes a type parameter before it checks a context-sensitive argument's body,
+   * so `useLane(key, ({ signal }) => fetchTask(id, signal))` — the form the docs
+   * recommend everywhere — would infer `LaneRead<unknown>` instead of
+   * `LaneRead<Task>`. (`NoInfer` does not change that.) Keeping the loaded type
+   * to the return position and `current` on its own parameter preserves
+   * inference, and annotating the read types `current` with it:
+   *
+   * ```ts
+   * useLane<Feed>(["feed"], async ({ current, signal }) => …);
+   * //          ^ current is Feed | undefined
+   * ```
+   *
+   * A loader that reads `current` without the annotation gets `{}` — a type
+   * error asking for the annotation, not a silent `any`.
+   */
+  current: C | undefined;
 };
 
-export type LaneLoader<T> = (context: LaneLoaderContext) => Promise<T>;
+/**
+ * `T` is what the loader resolves to; `C` is what it sees in `current`, and
+ * defaults to `T` because re-reading an entry almost always means producing the
+ * same shape it already held. Give `C` explicitly only for a loader whose
+ * `current` is deliberately narrower or wider than its result.
+ */
+export type LaneLoader<T, C = T> = (
+  context: LaneLoaderContext<C>,
+) => Promise<T>;
 
 export type LaneRetryDelay = (attempt: number, error: unknown) => number;
 
@@ -77,9 +122,9 @@ export type LaneInvalidateOptions = {
 export type LanePrefetchOptions = Pick<LaneUseOptions, "retry" | "retryDelay">;
 
 export type Lane = {
-  prefetch<T>(
+  prefetch<T, C = T>(
     key: LaneKey,
-    loader: LaneLoader<T>,
+    loader: LaneLoader<T, C>,
     options?: LanePrefetchOptions,
   ): Promise<LaneRead<T>>;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;

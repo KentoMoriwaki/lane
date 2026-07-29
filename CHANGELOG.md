@@ -90,6 +90,18 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Fixed
 
+- **`whenStale: "refetch"` no longer loops on the second visit to a key.**
+  Returning to a key that had already been mounted once refetched, suspended,
+  and then refetched again on every retry of the render that had not committed
+  yet — never settling, so the requests never stopped. The guard that exists to
+  prevent exactly this was keyed on the *entry* ("has this key ever had a
+  subscriber"), which stays true forever once the key has been mounted at all,
+  so it stopped protecting after the first visit. Adoption is now tracked on the
+  cached promise itself: only a value some reader actually committed on is
+  discarded as stale, so a remount refetches once and the retries that follow it
+  reuse what that refetch produced. First mounts and prefetched or hydrated
+  values are unaffected.
+
 - A reader that subscribes just too late to receive a notification — it committed
   on the previous promise and only finds the change when its subscription effect
   runs — now converges through the same kind of transition that notification

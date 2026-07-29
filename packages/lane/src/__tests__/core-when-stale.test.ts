@@ -110,6 +110,31 @@ describe("whenStale", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
+  it("'refetch' does not loop on the retries that follow a remount refetch", async () => {
+    const lane = createLane();
+    const loader = vi.fn(async () => "loaded");
+
+    // Mount, commit, subscribe.
+    const unsubscribe = subscribe(lane, ["k"]);
+    await readOrCreate(lane, ["k"], loader, refetch(0));
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // Leave the key: idle, but the value is kept.
+    unsubscribe();
+
+    // Come back — a genuine idle remount, so the stale value is discarded.
+    await readOrCreate(lane, ["k"], loader, refetch(0));
+    expect(loader).toHaveBeenCalledTimes(2);
+
+    // React retries the render that has not committed yet. The value it now
+    // judges is the one *this* remount just produced, and nothing has committed
+    // on it, so re-reading must not discard it again — otherwise every retry
+    // refetches and the read never settles into a commit.
+    await readOrCreate(lane, ["k"], loader, refetch(0));
+    await readOrCreate(lane, ["k"], loader, refetch(0));
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
   it("'refetch' always retries a prior error, even within staleTime", async () => {
     vi.useFakeTimers();
 

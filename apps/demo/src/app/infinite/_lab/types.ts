@@ -38,6 +38,19 @@ export type LabSettings = FeedParams &
   TransportKnobs & {
     /** Load the next page when the end of the list scrolls into view. */
     autoLoad: boolean;
+    /**
+     * How many load-more calls each trigger fires, synchronously, in one tick —
+     * the button and the scroll sentinel both. `1` is the ordinary case.
+     *
+     * Above `1` it reproduces what a caller does by accident, which in practice
+     * is the sentinel rather than the button: an `IntersectionObserver` can
+     * report several entries, or fire again before its gate has re-rendered. The
+     * answer is a property of the library, not of the lab — the calls may
+     * serialize into consecutive pages, dedupe onto one, or cancel each other.
+     * It is a control because it cannot be reproduced by hand: a burst has to
+     * land before React re-renders the trigger into its guarded state.
+     */
+    loadMoreBurst: number;
     /** Unmount the list subtree without leaving the page. */
     listMounted: boolean;
   };
@@ -51,6 +64,7 @@ export const DEFAULT_SETTINGS: LabSettings = {
   latencyMs: 300,
   failAt: null,
   autoLoad: false,
+  loadMoreBurst: 1,
   listMounted: true,
 };
 

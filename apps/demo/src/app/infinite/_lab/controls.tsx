@@ -137,6 +137,17 @@ export function ServerKnobControls({
         </ControlRow>
 
         <ControlRow
+          label="Load-more burst"
+          note="How many load-more calls each trigger fires in one tick — the button and the scroll sentinel both. Above 1 asks what the library does when several land at once: consecutive pages, one deduped page, or one cancelling the others. It needs a control because it cannot be done by hand — the trigger is guarded before a second click lands."
+        >
+          <NumberSelect
+            value={settings.loadMoreBurst}
+            options={[1, 2, 3, 5]}
+            onChange={(loadMoreBurst) => onChange({ loadMoreBurst })}
+          />
+        </ControlRow>
+
+        <ControlRow
           label="Mount the list"
           note="Unmount, then remount: whatever comes back without a request came from cache, not from the component."
         >

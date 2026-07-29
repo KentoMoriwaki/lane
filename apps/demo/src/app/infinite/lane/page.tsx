@@ -123,6 +123,7 @@ function LaneInfiniteLab() {
               <FeedList
                 feed={feed}
                 autoLoad={settings.autoLoad}
+                loadMoreBurst={settings.loadMoreBurst}
                 refetchOnMount={refetchOnMount}
                 mutations={mutations}
               />

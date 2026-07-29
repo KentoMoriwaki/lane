@@ -35,11 +35,13 @@ export function FeedList({
   feed,
   staleTime,
   autoLoad,
+  loadMoreBurst,
   mutations,
 }: {
   feed: FeedParams;
   staleTime: number;
   autoLoad: boolean;
+  loadMoreBurst: number;
   mutations: ReturnType<typeof useDatasetMutations>;
 }) {
   const query = useInfiniteQuery(feedInfiniteOptions(feed, staleTime));
@@ -69,7 +71,9 @@ export function FeedList({
     const observer = new IntersectionObserver(
       (records) => {
         if (records.some((record) => record.isIntersecting)) {
-          void fetchNextPage();
+          for (let i = 0; i < loadMoreBurst; i += 1) {
+            void fetchNextPage();
+          }
         }
       },
       { root, rootMargin: "120px" },
@@ -77,7 +81,7 @@ export function FeedList({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [autoLoad, hasNextPage, isFetching, fetchNextPage]);
+  }, [autoLoad, hasNextPage, isFetching, fetchNextPage, loadMoreBurst]);
 
   const handleRename = (item: FeedItem) => void mutations.rename(item);
   const handleDelete = (item: FeedItem) => void mutations.remove(item);
@@ -171,7 +175,14 @@ export function FeedList({
                   size="sm"
                   variant="outline"
                   className="w-full"
-                  onClick={() => void query.fetchNextPage()}
+                  onClick={() => {
+                    // Fired synchronously, so a burst lands before React can
+                    // re-render this button into its disabled state — which is
+                    // the only way to observe what two overlapping calls do.
+                    for (let i = 0; i < loadMoreBurst; i += 1) {
+                      void query.fetchNextPage();
+                    }
+                  }}
                   disabled={query.isFetchingNextPage}
                 >
                   {query.isFetchingNextPage

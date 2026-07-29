@@ -74,6 +74,7 @@ function ReactQueryInfiniteLab() {
             feed={feed}
             staleTime={staleTime}
             autoLoad={settings.autoLoad}
+            loadMoreBurst={settings.loadMoreBurst}
             mutations={mutations}
           />
         ) : (

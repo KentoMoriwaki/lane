@@ -42,11 +42,13 @@ import { feedKey, itemsOf, type FeedCursor } from "./feed-lane";
 export function FeedList({
   feed,
   autoLoad,
+  loadMoreBurst,
   refetchOnMount,
   mutations,
 }: {
   feed: FeedParams;
   autoLoad: boolean;
+  loadMoreBurst: number;
   refetchOnMount: boolean | "always";
   mutations: ReturnType<typeof useDatasetMutations>;
 }) {
@@ -109,7 +111,9 @@ export function FeedList({
     const observer = new IntersectionObserver(
       (records) => {
         if (records.some((record) => record.isIntersecting)) {
-          loadMore();
+          for (let i = 0; i < loadMoreBurst; i += 1) {
+            loadMore();
+          }
         }
       },
       { root, rootMargin: "120px" },
@@ -117,7 +121,7 @@ export function FeedList({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [autoLoad, hasNext, isConverging, loadMore, refreshError]);
+  }, [autoLoad, hasNext, isConverging, loadMore, loadMoreBurst, refreshError]);
 
   const handleRename = (item: FeedItem) => void mutations.rename(item);
   const handleDelete = (item: FeedItem) => void mutations.remove(item);
@@ -201,7 +205,14 @@ export function FeedList({
               size="sm"
               variant="outline"
               className="w-full"
-              onClick={loadMore}
+              onClick={() => {
+                // Fired synchronously, so a burst lands before React can
+                // re-render this button into its disabled state — which is the
+                // only way to observe what two overlapping calls do.
+                for (let i = 0; i < loadMoreBurst; i += 1) {
+                  loadMore();
+                }
+              }}
               disabled={isConverging}
             >
               {isConverging

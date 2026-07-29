@@ -622,18 +622,14 @@ function entryInfo(entry: LaneEntry): LaneEntryInfo {
 function noop(): void {}
 
 /**
- * The rejection a cancelled read settles with when its loader ignored the signal
- * and resolved anyway. A plain `Error` rather than a `DOMException` so it works
- * wherever Lane runs (Hermes has no `DOMException`), with the conventional name
- * so a caller filtering on `error.name === "AbortError"` sees one error shape
- * whether or not the loader forwarded its signal.
+ * What a cancelled read rejects with when its loader ignored the signal and
+ * resolved anyway — the case where there is no abort error to propagate.
+ *
+ * A shared instance: it carries no per-read information, and a cancellation is
+ * not a failure worth a stack trace. A plain `Error` rather than a
+ * `DOMException` so it works wherever Lane runs (Hermes has no `DOMException`).
  */
-function cancellationError(): Error {
-  const error = new Error("Lane read cancelled");
-  error.name = "AbortError";
-
-  return error;
-}
+const CANCELLED = new Error("Lane read cancelled");
 
 function matchingEntries(
   entries: Map<string, LaneEntry>,
@@ -752,6 +748,36 @@ function setEntryCache<T>(
     startedAt,
   };
 
+  /**
+   * Where a read that produced no usable value lands — a rejection, or a
+   * cancelled read whose loader resolved anyway. Both want the same thing, which
+   * is why the fulfilled path routes through here rather than repeating it:
+   *
+   * - **Stale-on-error** when there is a last fulfilled value: keep serving it so
+   *   mounted readers do not lose good data, and carry the failure alongside it
+   *   in the same resolved value (`refreshError`) instead of a separate channel.
+   *   Freshness keeps the original fulfillment time, so staleness policies still
+   *   treat the data as old. A cancel is not a refresh failure, though — the
+   *   caller asked for the stop, so it comes back with nothing beside it, or
+   *   every consumer that renders `refreshError` would have to filter for an
+   *   abort it requested itself.
+   * - **Rejected** when there is not. Nothing else a reader could show.
+   */
+  const settleWithoutValue = (error: unknown): LaneRead<T> => {
+    const fallback = entry.lastFulfilled;
+
+    if (!fallback) {
+      cache.settlement = { at: Date.now(), kind: "rejected" };
+      throw error;
+    }
+
+    cache.settlement = { at: fallback.at, kind: "fulfilled" };
+
+    return cache.cancelled
+      ? { data: fallback.value as T }
+      : { data: fallback.value as T, refreshError: error };
+  };
+
   const guarded: Promise<LaneRead<T>> = valueOrPromise.then(
     (value) => {
       if (entry.cache !== cache) {
@@ -762,17 +788,7 @@ function setEntryCache<T>(
       // resolves, and adopting that value would silently undo the cancel, so the
       // read settles where it would have settled had the abort landed.
       if (cache.cancelled) {
-        const fallback = entry.lastFulfilled;
-
-        if (fallback) {
-          cache.settlement = { at: fallback.at, kind: "fulfilled" };
-
-          return { data: fallback.value as T };
-        }
-
-        cache.settlement = { at: Date.now(), kind: "rejected" };
-
-        throw cancellationError();
+        return settleWithoutValue(CANCELLED);
       }
 
       const at = Date.now();
@@ -788,29 +804,7 @@ function setEntryCache<T>(
         throw error;
       }
 
-      const fallback = entry.lastFulfilled;
-
-      if (!fallback) {
-        cache.settlement = { at: Date.now(), kind: "rejected" };
-        throw error;
-      }
-
-      // Stale-on-error: keep serving the last fulfilled value so mounted readers
-      // do not lose good data, and carry the failure alongside it in the same
-      // resolved value (`refreshError`) instead of a separate channel. Freshness
-      // keeps the original fulfillment time, so staleness policies still treat
-      // the data as old.
-      cache.settlement = { at: fallback.at, kind: "fulfilled" };
-
-      // A cancel is not a refresh failure: the caller asked for the stop, so the
-      // previous value comes back with nothing alongside it. Reporting it as
-      // `refreshError` would make every consumer that renders one filter for an
-      // abort it requested itself.
-      if (cache.cancelled) {
-        return { data: fallback.value as T };
-      }
-
-      return { data: fallback.value as T, refreshError: error };
+      return settleWithoutValue(error);
     },
   );
 

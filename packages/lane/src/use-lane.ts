@@ -58,6 +58,14 @@ export function useLane<T, C = T>(
   const [promise, setPromise] = useState<Promise<LaneRead<T>> | undefined>(() =>
     loader !== undefined ? readOrCreate(lane, key, loader, readOptions) : undefined,
   );
+  // Deliberately state and not a ref, because the switch branch below only fires
+  // while this has *not* committed. A transition that suspends throws its render
+  // away, so the next attempt sees the old source again and re-reads whatever the
+  // store holds by then — which is how a reader switching keys converges on a
+  // write it was never notified of (it is still subscribed to the old key). A ref
+  // would survive the discarded render and leave the branch already satisfied, so
+  // the retry would commit the *previous* key's promise and wait for the
+  // post-subscribe catch-up to repair it.
   const [prevSource, setPrevSource] = useState(() => ({ enabled, keyId, lane }));
 
   let effectivePromise = promise;
@@ -113,11 +121,18 @@ export function useLane<T, C = T>(
     setPromise(nextPromise);
   });
 
-  // Invalidations and removals that happen between render and subscription
-  // reach no subscriber. This is common while the initial read keeps the
-  // component suspended, because effects only run after it unsuspends.
-  // Catching up right after subscribing keeps the hook converged with the
-  // store instead of rendering an abandoned promise forever.
+  // Invalidations and removals that land between render and subscription reach no
+  // subscriber. A reader whose render is still being retried converges without
+  // this: the switch branch re-reads while `prevSource` is uncommitted, and the
+  // initial `useState` re-runs on a suspense retry, so both see the store's
+  // current cache on every attempt.
+  //
+  // What is left is the reader that *committed* while still unsubscribed — a
+  // hidden `<Activity>` that prerendered with its effects torn down, or a mount
+  // that read an already-tagged promise and committed before its effect ran. It
+  // has no retried render left to correct it and no notification coming, so
+  // subscribing is the first moment convergence is possible. Without this it
+  // renders an abandoned promise forever.
   const syncAfterSubscribe = useEffectEvent((
     targetLane: Lane,
     targetKey: LaneKey,

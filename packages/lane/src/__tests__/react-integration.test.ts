@@ -845,6 +845,55 @@ describe("React integration", () => {
     await waitForText(remounted.container, "loaded|background:0|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps a reader subscribed while its boundary shows a fallback", async () => {
+    const lane = createLane();
+    let reads = 0;
+    const loader = vi.fn(async () => {
+      reads += 1;
+
+      return `v${reads}`;
+    });
+    const blocked = deferred<string>();
+
+    const app = await render(
+      fallbackSiblingApp(lane, loader, "a", async () => "a1"),
+    );
+    await waitForText(
+      app.container,
+      "v1|background:0|transition:0|refresh:none|sibling:a1",
+    );
+
+    // An urgent switch onto an unresolved sibling read. The boundary already
+    // showed content, so it re-suspends: the fallback appears and both readers
+    // are hidden (kept in the DOM, `display: none`).
+    await act(async () => {
+      app.root.render(fallbackSiblingApp(lane, loader, "b", () => blocked.promise));
+      await settlePromiseHandlers();
+    });
+    await flushReact();
+
+    expect(app.container.textContent).toContain("loading");
+
+    // Hiding for a fallback tears down layout effects only — passive effects stay
+    // mounted, and Lane subscribes in a passive effect. So the hidden reader is
+    // still a subscriber and re-reads on this notification directly, with no
+    // catch-up involved. (Contrast `<Activity>`, which cleans up both: see
+    // activity.test.ts.)
+    await act(async () => {
+      lane.invalidate(["tasks"]);
+      await settlePromiseHandlers();
+    });
+
+    expect(loader).toHaveBeenCalledTimes(2);
+
+    await resolveReload(blocked, "b1");
+
+    await waitForText(
+      app.container,
+      "v2|background:0|transition:0|refresh:none|sibling:b1",
+    );
+  });
 });
 
 class CatchBoundary extends React.Component<
@@ -1090,6 +1139,41 @@ function gatedDeferOnMountApp(
       React.Suspense,
       { fallback: "loading" },
       React.createElement(GatedDeferOnMountProbe, { loader, flip }),
+    ),
+  });
+}
+
+// A sibling under the same boundary as `Probe`, whose own key is what re-suspends
+// it. Switching the id urgently is how a test hides an already-committed subtree
+// behind a fallback without touching the key `Probe` reads.
+function FallbackSibling({
+  id,
+  loader,
+}: {
+  id: string;
+  loader: LaneLoader<string>;
+}) {
+  const { promise } = useLane({ key: ["sibling", id], loader });
+
+  return React.createElement("span", null, `|sibling:${React.use(promise).data}`);
+}
+
+function fallbackSiblingApp(
+  lane: Lane,
+  loader: LaneLoader<string>,
+  siblingId: string,
+  siblingLoader: LaneLoader<string>,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: "loading" },
+      React.createElement(Probe, { loader }),
+      React.createElement(FallbackSibling, {
+        id: siblingId,
+        loader: siblingLoader,
+      }),
     ),
   });
 }

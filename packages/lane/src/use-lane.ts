@@ -87,6 +87,33 @@ export function useLane<T, C = T>(
 
     setPrevSource({ enabled, keyId, lane });
     setPromise(nextPromise);
+  } else if (
+    loader !== undefined &&
+    promise !== undefined &&
+    isRemovedRead(promise)
+  ) {
+    // The source is unchanged, but what this reader holds was *removed* while it
+    // had no subscription to be told through — a hidden `<Activity>`, or a mount
+    // whose effect has not run yet. A removal is not a refresh: the value no
+    // longer belongs in client state, so it is dropped rather than held on screen
+    // while a re-read runs.
+    //
+    // Dropped *here*, during render, because by the time an effect could do it the
+    // reader has already been on screen for a frame holding it. Passive effects
+    // run after the commit, so a reveal that converged from one would paint the
+    // removed data and then take it back. Revealing an `<Activity>` re-renders the
+    // subtree it reveals — measured on 19.2, including a `memo` whose props did
+    // not move — so this branch runs in the reveal's own render, and the commit
+    // that unhides the subtree is already the fallback.
+    //
+    // Terminating: the re-render this schedules holds the promise `readOrCreate`
+    // just installed, which is not a removed one. A render that suspends and is
+    // retried sees the removed promise again and re-reads, landing on that same
+    // cached promise — the first attempt installed it.
+    const nextPromise = readOrCreate(lane, key, loader, readOptions);
+    effectivePromise = nextPromise;
+
+    setPromise(nextPromise);
   }
 
   const onInvalidate = useEffectEvent((
@@ -151,18 +178,6 @@ export function useLane<T, C = T>(
     const apply = () => {
       setPromise(nextPromise);
     };
-
-    // What it holds was *removed* while it was not subscribed to hear about it.
-    // A removal is urgent by definition — the value no longer belongs in client
-    // state — so this converges the way `onRemove` does, outside any transition.
-    // Through one, React would keep the last committed render on screen for as
-    // long as the re-read takes, which is the removed data still being shown: a
-    // hidden `<Activity>` would reveal displaying it, and a signed-out user would
-    // watch their own list until the next request came back.
-    if (promise !== undefined && isRemovedRead(promise)) {
-      apply();
-      return;
-    }
 
     // Converge through the same kind of transition as the notification this
     // reader was not subscribed in time to receive, so siblings of one key agree

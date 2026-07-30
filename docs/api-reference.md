@@ -1289,8 +1289,8 @@ deleted selected entity. Removal is **urgent**: subscribed readers stop
 rendering the removed promise immediately (no transition). A reader that was
 *not* subscribed when the removal landed — a hidden
 [`<Activity>`](#hidden-subtrees), or a mount whose effect has not run yet — makes
-the same call when it subscribes, so nothing can reveal still showing the removed
-value while its re-read runs.
+the same call for itself, on its next render, so nothing comes back on screen
+still showing the removed value while its re-read runs.
 
 ```ts
 lane.remove(["task", id]);
@@ -1490,15 +1490,16 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
   keeps a subtree's state and tears its effects down, so a hidden reader is
   unsubscribed while still holding the value it last committed — and it stops
   anchoring its entry against garbage collection. Whatever lands in that window
-  reaches no subscriber, and the reveal's re-subscribe is where the reader catches
-  up: an [invalidation](#invalidate--invalidateall) converges through the
-  background transition, so the held value stays on screen while the re-read runs,
-  and a [removal](#remove--removeall) converges urgently, so the subtree reveals
-  suspended rather than showing data the lane no longer has. `refetchOnMount`
-  fires on a reveal, because a reveal re-runs effects. What a reveal does *not* do
-  is re-read: `<Activity>` preserves state precisely so nothing re-runs, so
-  `whenStale: "refetch"` has no read to discard a stale value on. Ask for a
-  refresh-on-return with `refetchOnMount` (plus a `staleTime` to rate-limit it).
+  reaches no subscriber, and the reveal is where the reader converges on it. An
+  [invalidation](#invalidate--invalidateall) converges through the background
+  transition, so the held value stays on screen while the re-read runs. A
+  [removal](#remove--removeall) is dropped in the reveal's own render, so the
+  subtree comes back suspended rather than showing data the lane no longer has —
+  not even for the frame an effect would cost. `refetchOnMount` fires on a reveal,
+  because a reveal re-runs effects. What a reveal does *not* do is re-*read*: the
+  reader still holds the promise it committed on, so `whenStale: "refetch"` has no
+  read to discard a stale value on. Ask for a refresh-on-return with
+  `refetchOnMount` (plus a `staleTime` to rate-limit it).
 - **Abort.** Loaders receive an `AbortSignal` that fires when the read is
   discarded by invalidation, removal, an authoritative `set` over a pending read,
   or GC.

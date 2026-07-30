@@ -317,33 +317,45 @@ All notable changes to `use-lane` are documented here. The format is based on
   transition, which is exactly what keeps the last committed render on screen
   while the re-read runs. So the subtree revealed displaying the removed value:
   the list a user had just signed out of, or the entity that was deleted, for as
-  long as the request took. It is the one convergence that must not be gentle —
-  [`remove`](docs/api-reference.md#remove--removeall) is documented as urgent for
-  subscribed readers, and a reader that was not subscribed in time to be told now
-  makes the same call when it subscribes, so the reveal suspends instead.
-  `useLanesAll` had the same split (`onRemove` urgent, its catch-up not) and gets
-  the same fix. An invalidation is unchanged: it still converges through the
-  background transition, which is what keeps a reveal from flashing a fallback for
-  a value that is merely stale. What tells the two apart is a `WeakSet` of the
-  promises that were a key's value at the moment it was removed — the only trace
-  of a removal left once the entry is gone, and one that costs nothing to keep,
-  since it is exactly as large as the removed promises a reader can still be
-  showing.
+  long as the request took. [`remove`](docs/api-reference.md#remove--removeall) is
+  documented as urgent for subscribed readers, and a reader that was not
+  subscribed in time to be told now makes the same call for itself.
+
+  It makes it **during render**, not from the subscription effect, and that is the
+  whole of the fix. An effect is a frame too late by construction: passive effects
+  run after the commit is already on screen, so a reveal that converged there
+  would paint the removed value and then take it back. What makes the strict
+  version possible is that revealing an `<Activity>` *re-renders* the subtree it
+  reveals — measured on 19.2, including a `memo` whose props did not move — so the
+  reader drops the value in the reveal's own render and the commit that unhides it
+  is already the fallback. `useLanesAll` rebuilds its aggregate in the same place,
+  for the same reason. The one other window where a removal reaches no subscriber
+  — a reader that committed before its subscription effect ran — lands on the same
+  check: the catch-up's transition suspends, React throws that render away, and
+  the attempt after it finds the removed value still in state.
+
+  An invalidation is unchanged, and still converges through the background
+  transition — which is what keeps a reveal from flashing a fallback for a value
+  that is merely stale. What tells the two apart is a `WeakSet` of the promises
+  that were a key's value at the moment it was removed: the only trace of a
+  removal left once the entry is gone, and one that costs nothing to keep, since
+  it is exactly as large as the removed promises a reader can still be showing.
 
   **This raises the `everything (ceiling)` budget from 4.85 kB to 4.9 kB.** The
-  tag costs 24 B on the store-only design guard (2073 → 2097 B) and 28 B on the
-  typical `LaneProvider` + `useLane` path (3388 → 3416 B), both against unchanged
-  limits, and 75 B on the full barrel (4761 → 4836 B) — which left the old ceiling
-  14 B, less than the Brotli jitter it is meant to absorb. The new limit keeps
-  64 B of headroom, still narrower than the marginal cost of any feature Lane
+  tag costs 24 B on the store-only design guard (2073 → 2097 B) and 43 B on the
+  typical `LaneProvider` + `useLane` path (3388 → 3431 B), both against unchanged
+  limits, and 85 B on the full barrel (4761 → 4846 B) — which left the old ceiling
+  4 B, far less than the Brotli jitter it is meant to absorb. The new limit keeps
+  54 B of headroom, still narrower than the marginal cost of any feature Lane
   ships, so the next one trips it too.
 
-  Two related behaviors on a reveal are unchanged, and are now pinned by tests and
-  written down under [hidden subtrees](docs/api-reference.md#hidden-subtrees):
-  `refetchOnMount` fires, because a reveal re-runs effects, and `whenStale` does
-  not, because a reveal is not a read — `<Activity>` preserves the subtree's state
-  precisely so nothing re-runs, so there is no read for `"refetch"` to discard a
-  stale value on. `refetchOnMount` (with a `staleTime` to rate-limit it) is how to
+  Two neighbouring behaviors on a reveal are unchanged, and are now pinned by
+  tests and written down under
+  [hidden subtrees](docs/api-reference.md#hidden-subtrees): `refetchOnMount`
+  fires, because a reveal re-runs effects, and `whenStale` does not, because
+  nothing re-*reads* — the reveal re-renders the reader, but it still holds the
+  promise it committed on, and `whenStale` decides what a new read does with a
+  stale value. `refetchOnMount` (with a `staleTime` to rate-limit it) is how to
   ask for a refresh when a subtree comes back.
 
 - **An explicit `undefined` on a `useLanesAll` member no longer shadows the

@@ -15,17 +15,24 @@
  * for (see `use-lane.ts`), just wider. These tests pin that the reveal converges
  * through that catch-up path, with no Activity-specific code.
  *
- * Wider in one way that matters to what the catch-up does rather than whether it
- * runs: a hidden reader holds a committed value for as long as it stays hidden,
- * so an invalidation and a removal have to part ways there exactly as they do for
- * a subscribed one. The first keeps that value on screen while the re-read runs;
+ * Wider in a way that decides *where* the convergence has to happen. A hidden
+ * reader holds a committed value for as long as it stays hidden, so an
+ * invalidation and a removal part ways on the way back exactly as they do for a
+ * subscribed one: the first keeps that value on screen while the re-read runs,
  * the second must not, because a removal says the value no longer belongs in
- * client state at all.
+ * client state at all. And "must not" is stricter than any effect can deliver —
+ * passive effects run after the commit is already on screen, so a removal
+ * converged there is a frame of removed data. What makes the strict version
+ * possible is that a reveal *renders*: React re-renders the subtree it reveals
+ * (19.2, including a `memo` whose props did not move), so the reader can drop the
+ * value during that render and the reveal's own commit is already the fallback.
+ * The last test here is the one that can tell those two apart.
  */
 
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readOrCreate } from "../core";
 import { createLane, LaneProvider, useLane, useLanesAll } from "../index";
@@ -47,6 +54,11 @@ type RenderedApp = {
   container: HTMLDivElement;
   root: Root;
   rerender: (mode: Mode) => Promise<void>;
+  // The reveal on its own: rendered, committed and read back before the
+  // scheduler runs anything else, so what it returns is the frame the browser
+  // would paint. `act` cannot express that — it runs the commit and the passive
+  // effects that follow it as one step.
+  revealSynchronously: () => void;
 };
 
 const EMPTY_OPTIONS: LaneUseOptions = {};
@@ -54,9 +66,7 @@ const EMPTY_OPTIONS: LaneUseOptions = {};
 const roots: Root[] = [];
 
 beforeAll(() => {
-  (
-    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-  ).IS_REACT_ACT_ENVIRONMENT = true;
+  setActEnvironment(true);
 });
 
 afterEach(() => {
@@ -81,14 +91,14 @@ describe("Activity", () => {
     const app = await renderActivityApp({ lane, loader, mode: "hidden" });
 
     expect(loader).toHaveBeenCalledTimes(1);
-    expect(valueElement(app).style.display).toBe("none");
+    expect(valueElement(app.container).style.display).toBe("none");
     expect(app.container.textContent).toBe("loaded|background:0|transition:0");
 
     await app.rerender("visible");
 
     // The reveal adopts the entry the prerender warmed: no second request.
     expect(loader).toHaveBeenCalledTimes(1);
-    expect(valueElement(app).style.display).toBe("");
+    expect(valueElement(app.container).style.display).toBe("");
   });
 
   it("catches up on the reveal with an invalidation missed while hidden", async () => {
@@ -141,11 +151,10 @@ describe("Activity", () => {
     await flushReact();
     await app.rerender("hidden");
 
-    // Same missed notification as the invalidation above, and deliberately not
-    // the same catch-up: a removal says the value no longer belongs in client
-    // state, so converging through a transition — which keeps the last committed
-    // render on screen while the re-read runs — would reveal the subtree still
-    // showing the removed data. This is the sign-out case: the list is gone from
+    // Missed the same way the invalidation above was, and deliberately not
+    // converged the same way: a removal says the value no longer belongs in
+    // client state, so it is dropped on the way back rather than held on screen
+    // while the re-read runs. This is the sign-out case — the list is gone from
     // the lane, and the user must not go on watching their own for as long as the
     // next request takes.
     await act(async () => {
@@ -157,7 +166,7 @@ describe("Activity", () => {
 
     expect(loads.calls).toBe(2);
     expect(app.container.textContent).toContain("loading");
-    expect(valueElement(app).style.display).toBe("none");
+    expect(valueElement(app.container).style.display).toBe("none");
 
     loads.resolveLast("v2");
     await flushReact();
@@ -188,12 +197,40 @@ describe("Activity", () => {
 
     expect(loads.calls).toBe(2);
     expect(app.container.textContent).toContain("loading");
-    expect(valueElement(app).style.display).toBe("none");
+    expect(valueElement(app.container).style.display).toBe("none");
 
     loads.resolveLast("v2");
     await flushReact();
 
     expect(app.container.textContent).toBe("v2|background:0|transition:0");
+  });
+
+  it("does not paint the removed value in the commit that reveals", async () => {
+    const lane = createLane();
+    const loads = controllableLoader();
+
+    const app = await renderActivityApp({
+      lane,
+      loader: loads.loader,
+      mode: "visible",
+    });
+    loads.resolveLast("v1");
+    await flushReact();
+    await app.rerender("hidden");
+    await act(async () => {
+      lane.remove(["tasks"]);
+      await settlePromiseHandlers();
+    });
+
+    // The test above reveals through `act`, which runs the commit and the passive
+    // effects that follow it as one step — so it cannot tell a reader that never
+    // showed the removed value from one that showed it and then took it back a
+    // frame later. This reveal is committed on its own, and read before the
+    // scheduler runs anything else: the frame the browser would paint.
+    app.revealSynchronously();
+
+    expect(app.container.textContent).toContain("loading");
+    expect(valueElement(app.container).style.display).toBe("none");
   });
 
   it("re-reads on a reveal only where a trigger asks for it", async () => {
@@ -275,6 +312,12 @@ describe("Activity", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 });
+
+function setActEnvironment(value: boolean): void {
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = value;
+}
 
 // A loader whose every call is resolved by hand, so a read can be observed while
 // it is still in flight.
@@ -376,16 +419,24 @@ async function renderActivityApp({
     });
   };
 
+  const revealSynchronously = () => {
+    setActEnvironment(false);
+    flushSync(() => {
+      root.render(activityApp(lane, "visible", probe, props));
+    });
+    setActEnvironment(true);
+  };
+
   await act(async () => {
     root.render(activityApp(lane, mode, probe, props));
     await settlePromiseHandlers();
   });
 
-  return { container, rerender, root };
+  return { container, rerender, revealSynchronously, root };
 }
 
-function valueElement(app: RenderedApp): HTMLElement {
-  const element = app.container.querySelector('[data-testid="value"]');
+function valueElement(container: HTMLElement): HTMLElement {
+  const element = container.querySelector('[data-testid="value"]');
 
   if (!(element instanceof HTMLElement)) {
     throw new Error("Missing the probe's value element");

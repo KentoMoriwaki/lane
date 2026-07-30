@@ -109,6 +109,14 @@ export function useLanesAll<T, C = T>(
     promise = computeAggregate(lane, descriptors, options, loaderMeta);
     setAggregate(promise);
     setBuiltFrom(descriptors);
+  } else if (holdsRemovedRead(aggregate)) {
+    // A member was *removed* while this batch had no subscription to be told
+    // through — a hidden `<Activity>`, or a mount whose effect has not run yet.
+    // Rebuilt here, during render, for the reason spelled out in `use-lane.ts`:
+    // an effect converges after the commit is on screen, so a reveal would paint
+    // data the lane no longer has.
+    promise = computeAggregate(lane, descriptors, options, loaderMeta);
+    setAggregate(promise);
   }
 
   // Recompute the whole aggregate from the current members. `readOrCreate` returns
@@ -125,15 +133,6 @@ export function useLanesAll<T, C = T>(
       return;
     }
     startTransition(apply);
-  });
-
-  // Catch up on what landed while a newly-added key was unsubscribed. A removal
-  // among them is urgent, exactly as `onRemove` is below: the batch is holding a
-  // value the lane no longer has, and a transition would keep it on screen until
-  // the re-read lands. An effect event so it can read the aggregate the last
-  // render committed, which is where that value is.
-  const catchUpAfterSubscribe = useEffectEvent(() => {
-    refresh(holdsRemovedRead(promise));
   });
 
   // Mount / focus / reconnect derive their conditional invalidation from the
@@ -209,11 +208,11 @@ export function useLanesAll<T, C = T>(
       }
     }
 
-    // Catch up on what landed before a newly-added key subscribed (common while
-    // an initial read keeps the batch suspended, and on every reveal of a hidden
-    // `<Activity>`, which drops the subscriptions with its effects).
+    // Catch up on invalidations that landed before a newly-added key subscribed
+    // (common while an initial read keeps the batch suspended). A *removal* is
+    // not caught up here — the render path above has already dropped it.
     if (added.size > 0) {
-      catchUpAfterSubscribe();
+      refresh(false);
     }
   }, [descriptors, lane]);
 

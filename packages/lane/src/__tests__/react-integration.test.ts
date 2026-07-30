@@ -3,6 +3,7 @@
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createLane,
@@ -30,12 +31,16 @@ type RenderedApp = {
 const roots: Root[] = [];
 
 beforeAll(() => {
+  setActEnvironment(true);
+});
+
+function setActEnvironment(value: boolean): void {
   (
     globalThis as typeof globalThis & {
       IS_REACT_ACT_ENVIRONMENT?: boolean;
     }
-  ).IS_REACT_ACT_ENVIRONMENT = true;
-});
+  ).IS_REACT_ACT_ENVIRONMENT = value;
+}
 
 afterEach(() => {
   for (const root of roots.splice(0)) {
@@ -569,6 +574,68 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
+  it("drops a removal that lands between a reader's render and its subscription", async () => {
+    const lane = createLane();
+    // The re-read the removal triggers is left in flight, which is what makes the
+    // two ways of converging tell each other apart: through a transition the
+    // removed value stays on screen until it lands, outside one the reader
+    // suspends immediately.
+    const reread = deferred<string>();
+    const loader = vi.fn(() =>
+      loader.mock.calls.length > 1 ? reread.promise : Promise.resolve("loaded"),
+    );
+
+    // Mount once so the key holds a settled promise React has already unwrapped —
+    // that is what lets the remount below commit without suspending.
+    const first = await renderLaneApp({ lane, loader });
+    await waitForText(first.container, "loaded|background:0|transition:0|refresh:none");
+    unmountApp(first);
+
+    // The window this is about: the reader has committed and is not subscribed
+    // yet. It is one commit wide, so the removal has to happen inside that commit
+    // — a sibling's *layout* effect, which runs after the DOM is updated and
+    // before any passive effect. Under `act` the whole thing would collapse into
+    // one step, so this drives React directly.
+    setActEnvironment(false);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    document.body.append(container);
+    roots.push(root);
+    flushSync(() => {
+      root.render(
+        React.createElement(LaneProvider, {
+          lane,
+          children: React.createElement(
+            React.Suspense,
+            { fallback: "loading" },
+            React.createElement(RemoveOnLayout, {
+              cacheKey: ["tasks"],
+              key: "remove",
+              lane,
+            }),
+            React.createElement(Probe, { key: "probe", loader }),
+          ),
+        }),
+      );
+    });
+    setActEnvironment(true);
+    await flushReact();
+
+    // Subscribing is the first moment this reader can find out. The catch-up it
+    // runs there converges through a transition, which suspends and throws its
+    // render away — and the attempt after it sees the removed promise still in
+    // state and drops it, the same render-path check a reveal goes through. The
+    // removed value stays in the DOM, because React keeps a re-suspended
+    // boundary's content and hides it, so what is asserted is that it is no
+    // longer what the reader shows.
+    expect(container.textContent).toContain("loading");
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="invalidate"]')?.style
+        .display,
+    ).toBe("none");
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
   it("whenStale 'refetch' discards a stale value and refetches on remount", async () => {
     vi.useFakeTimers();
 
@@ -947,6 +1014,17 @@ function Probe({
       result.isTransitionPending,
     )}|refresh:${refresh}`,
   );
+}
+
+// Removes a key from a *layout* effect: inside the commit that mounted it, after
+// the DOM is updated and before any passive effect — so a reader mounting in the
+// same commit has rendered and committed, but not yet subscribed.
+function RemoveOnLayout({ cacheKey, lane }: { cacheKey: LaneKey; lane: Lane }) {
+  React.useLayoutEffect(() => {
+    lane.remove(cacheKey);
+  }, [cacheKey, lane]);
+
+  return null;
 }
 
 function TwoReadProbe({

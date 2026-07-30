@@ -1267,16 +1267,20 @@ A given snapshots instance is applied to a given lane **at most once**, so
 repeated provider renders and Strict Mode do not re-seed. Identity is what that
 promise is keyed on, which has a corollary worth stating plainly:
 
-> **`snapshots` must be a value that survives a re-render.** Building it *during*
-> a client render — `<LaneHydration snapshots={buildSnapshots(seeds)}>` — hands a
-> new object to every render, so every render suspends on a fresh hydration
-> promise and the boundary never commits: the subtree stays on its Suspense
-> fallback indefinitely. (Same failure as an inline
+> **`snapshots` must be produced outside render** — one object per data payload,
+> delivered to the component. A Server Component's props satisfy this, and so does
+> a router loader's data ([React Router / TanStack](./integrations.md#data-mode--loaders-seed-lane));
+> both hand back the same object across re-renders and a new one when the data
+> reloads, which is exactly when re-seeding is wanted. Nothing about it is
+> server-only.
+>
+> What breaks is building it *inside* a render —
+> `<LaneHydration snapshots={buildSnapshots(seeds)}>` in a component body. Every
+> render then hands over a new object, so every render suspends on a fresh
+> hydration promise and the boundary never commits: the subtree stays on its
+> Suspense fallback indefinitely. (Same failure as an inline
 > [`Promise.all`](#uselanesallreads-options--a-batch-read), for the same reason.)
-> Passing snapshots built by a Server Component satisfies this for free — one
-> object per server render, stable across client re-renders, and a new one when
-> the server renders again, which is exactly when re-seeding is wanted. If you
-> must assemble them on the client, `useMemo` on the source data.
+> If the assembly has to happen in a component, `useMemo` it on the source data.
 
 Build the snapshots on the server from the same keys your hooks use:
 

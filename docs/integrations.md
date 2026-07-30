@@ -184,6 +184,12 @@ createBrowserRouter([
   *before* the route renders, so nothing suspends during navigation — including on
   back/forward — and `useNavigation()` surfaces a pending state for every
   navigation, popstate included.
+- **The loader is what keeps hydration idempotent.** `useLoaderData()` hands back
+  the same snapshots object across re-renders of a match and a new one when the
+  loader re-runs, which is exactly what
+  [`LaneHydration`](./api-reference.md#lanehydration) keys on. Don't move the
+  `{ entries: … }` assembly into the component — built during render it is a new
+  object every time, and the boundary never commits.
 - React Router **re-runs loaders on back/forward** by default (unlike Next, which
   restores from cache). To make back instant, return `false` from `shouldRevalidate`
   for POP, or have the loader read through Lane's cache.

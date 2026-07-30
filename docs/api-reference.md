@@ -1366,6 +1366,14 @@ client render reads fulfilled promises instead of fetching. Re-applying a new
 snapshots instance on navigation **overwrites** the matching entries and notifies
 mounted readers, so they converge to fresh server data.
 
+Notification only reaches readers that are subscribed, so what it publishes is
+also handed down to the readers under it. That is what reaches a reader inside a
+[hidden `<Activity>`](#hidden-subtrees) — a framework's route cache, say — which
+has no effects and so cannot be notified: it takes the new server data on its
+next render, while still hidden, instead of coming back on screen with the value
+it last committed. Boundaries nest, and a reader is under all of them at once, so
+an inner one hands down the outer one's seeding along with its own.
+
 ```tsx
 <LaneProvider>
   <LaneHydration snapshots={snapshots}>{children}</LaneHydration>
@@ -1495,7 +1503,10 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
   transition, so the held value stays on screen while the re-read runs. A
   [removal](#remove--removeall) is dropped in the reveal's own render, so the
   subtree comes back suspended rather than showing data the lane no longer has —
-  not even for the frame an effect would cost. `refetchOnMount` fires on a reveal,
+  not even for the frame an effect would cost. A
+  [re-hydration](#lanehydration) does not wait for the reveal at all: it is handed
+  down through the context, so a hidden reader takes the new server data while it
+  is still hidden. `refetchOnMount` fires on a reveal,
   because a reveal re-runs effects. What a reveal does *not* do is re-*read*: the
   reader still holds the promise it committed on, so `whenStale: "refetch"` has no
   read to discard a stale value on. Ask for a refresh-on-return with

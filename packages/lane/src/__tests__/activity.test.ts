@@ -35,8 +35,19 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readOrCreate } from "../core";
-import { createLane, LaneProvider, useLane, useLanesAll } from "../index";
-import type { Lane, LaneLoader, LaneUseOptions } from "../types";
+import {
+  createLane,
+  LaneHydration,
+  LaneProvider,
+  useLane,
+  useLanesAll,
+} from "../index";
+import type {
+  Lane,
+  LaneHydrationSnapshots,
+  LaneLoader,
+  LaneUseOptions,
+} from "../types";
 import {
   deferred,
   resetVitest,
@@ -287,6 +298,64 @@ describe("Activity", () => {
     expect(remount.container.textContent).toBe("mounted|background:1|transition:0");
   });
 
+  it("takes a re-hydration that landed while it was hidden", async () => {
+    const lane = createLane();
+    const loader = vi.fn(async () => "client");
+    const hydrated = await renderHydrationApp({ lane, loader, mode: "visible" });
+
+    await waitForText(hydrated.container, "server-v1|background:0|transition:0");
+
+    await hydrated.rerender(FIRST_SNAPSHOTS, "hidden");
+
+    // New server data for a subtree that is hidden, so unsubscribed: the
+    // notification `hydrateMany` fans out reaches nobody here. The reader takes
+    // it anyway — `LaneHydration` hands what it published to the readers under it
+    // through the lane context, and a context value is a render-time input, so it
+    // arrives while the subtree is still hidden rather than one commit after it
+    // comes back.
+    await hydrated.rerender(SECOND_SNAPSHOTS, "hidden");
+
+    const value = valueElement(hydrated.container);
+    expect(value.style.display).toBe("none");
+    expect(value.textContent).toBe("server-v2|background:0|transition:0");
+
+    await hydrated.rerender(SECOND_SNAPSHOTS, "visible");
+
+    expect(hydrated.container.textContent).toBe(
+      "server-v2|background:0|transition:0",
+    );
+    expect(loader).not.toHaveBeenCalled();
+  });
+
+  it("takes one an outer boundary published when hydration nests", async () => {
+    const lane = createLane();
+    const loader = vi.fn(async () => "client");
+    // The reader's key is seeded by the *outer* boundary; the inner one seeds
+    // something else entirely. Boundaries nest — a layout seeds some keys and a
+    // page seeds others — and a reader is under all of them at once, so what the
+    // inner one hands down has to carry the outer one's seeding with it.
+    const hydrated = await renderHydrationApp({
+      inner: { entries: [{ data: "unrelated", key: ["other"] }] },
+      lane,
+      loader,
+      mode: "visible",
+    });
+
+    await waitForText(hydrated.container, "server-v1|background:0|transition:0");
+
+    await hydrated.rerender(FIRST_SNAPSHOTS, "hidden", {
+      entries: [{ data: "unrelated", key: ["other"] }],
+    });
+    await hydrated.rerender(SECOND_SNAPSHOTS, "hidden", {
+      entries: [{ data: "unrelated-2", key: ["other"] }],
+    });
+
+    expect(valueElement(hydrated.container).textContent).toBe(
+      "server-v2|background:0|transition:0",
+    );
+    expect(loader).not.toHaveBeenCalled();
+  });
+
   it("releases the store subscription while hidden", async () => {
     vi.useFakeTimers();
 
@@ -317,6 +386,109 @@ function setActEnvironment(value: boolean): void {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = value;
+}
+
+const FIRST_SNAPSHOTS: LaneHydrationSnapshots = {
+  entries: [{ data: "server-v1", key: ["tasks"] }],
+};
+
+const SECOND_SNAPSHOTS: LaneHydrationSnapshots = {
+  entries: [{ data: "server-v2", key: ["tasks"] }],
+};
+
+// The same `<Activity>` shape seeded from server snapshots, optionally through a
+// second `LaneHydration` nested inside the first.
+function hydrationApp(
+  lane: Lane,
+  loader: LaneLoader<string>,
+  mode: Mode,
+  snapshots: LaneHydrationSnapshots,
+  inner: LaneHydrationSnapshots | undefined,
+): React.ReactElement {
+  const probe = React.createElement(React.Activity, {
+    children: React.createElement(
+      React.Suspense,
+      { fallback: React.createElement("span", null, "loading") },
+      React.createElement(Probe, { loader, options: EMPTY_OPTIONS }),
+    ),
+    mode,
+  });
+
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(
+      React.Suspense,
+      { fallback: React.createElement("span", null, "hydrating") },
+      React.createElement(LaneHydration, {
+        children: inner
+          ? React.createElement(LaneHydration, {
+              children: probe,
+              snapshots: inner,
+            })
+          : probe,
+        snapshots,
+      }),
+    ),
+  });
+}
+
+async function renderHydrationApp({
+  inner,
+  lane,
+  loader,
+  mode,
+}: {
+  inner?: LaneHydrationSnapshots;
+  lane: Lane;
+  loader: LaneLoader<string>;
+  mode: Mode;
+}): Promise<{
+  container: HTMLDivElement;
+  rerender: (
+    snapshots: LaneHydrationSnapshots,
+    nextMode: Mode,
+    nextInner?: LaneHydrationSnapshots,
+  ) => Promise<void>;
+}> {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+
+  document.body.append(container);
+  roots.push(root);
+
+  // Hydration publishes from a macrotask, and a nested boundary only starts its
+  // own once the one above it has resolved — so waiting for a fixed number of
+  // them races. The boundary's fallback is the signal that one is still in
+  // flight.
+  const settleHydration = async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      if (!container.textContent?.includes("hydrating")) {
+        return;
+      }
+    }
+
+    throw new Error("Hydration never settled");
+  };
+
+  const rerender = async (
+    snapshots: LaneHydrationSnapshots,
+    nextMode: Mode,
+    nextInner?: LaneHydrationSnapshots,
+  ) => {
+    await act(async () => {
+      root.render(hydrationApp(lane, loader, nextMode, snapshots, nextInner));
+      await settlePromiseHandlers();
+    });
+    await settleHydration();
+  };
+
+  await rerender(FIRST_SNAPSHOTS, mode, inner);
+
+  return { container, rerender };
 }
 
 // A loader whose every call is resolved by hand, so a read can be observed while

@@ -221,16 +221,19 @@ export function createLane(options: LaneOptions = {}): Lane {
 export function hydrateMany(
   lane: Lane,
   snapshots: LaneHydrationSnapshots,
-): void {
+): Map<string, Promise<unknown>> {
   const state = getLaneState(lane);
+  const published = new Map<string, Promise<unknown>>();
 
   for (const snapshot of snapshots.entries) {
     const keyId = serializeKey(snapshot.key);
     const entry = getOrCreateEntry(state, snapshot.key, keyId);
 
-    publishEntryValue(state, entry, snapshot.data);
+    published.set(keyId, publishEntryValue(state, entry, snapshot.data));
     notifyInvalidate(entry, "transition");
   }
+
+  return published;
 }
 
 export function readOrCreate<T, C = T>(

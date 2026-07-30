@@ -81,7 +81,7 @@ export function useLanesAll<T, C = T>(
 ): Promise<LaneRead<T>[]> {
   // One context read; `loaderMeta` comes from the lane, not from a member — see
   // `useLane`.
-  const { lane, revalidation, loaderMeta } = useLaneContext("useLanesAll");
+  const { lane, revalidation, loaderMeta, published } = useLaneContext("useLanesAll");
 
   // Serialized once per (stable) `reads`, not every render.
   const descriptors = useMemo(
@@ -104,6 +104,8 @@ export function useLanesAll<T, C = T>(
   // Rebuild the aggregate during render when the keys change. `builtFrom` is the
   // descriptors the current aggregate reflects — a plain referential guard.
   const [builtFrom, setBuiltFrom] = useState(descriptors);
+  // The hydration this batch has already taken account of — see `use-lane.ts`.
+  const [prevPublished, setPrevPublished] = useState(published);
   let promise = aggregate;
   if (builtFrom !== descriptors) {
     promise = computeAggregate(lane, descriptors, options, loaderMeta);
@@ -117,6 +119,18 @@ export function useLanesAll<T, C = T>(
     // data the lane no longer has.
     promise = computeAggregate(lane, descriptors, options, loaderMeta);
     setAggregate(promise);
+  } else if (published !== prevPublished) {
+    // A hydration landed while this batch may not have been subscribed to hear
+    // about it — see `use-lane.ts`. Recomputing takes each member's published
+    // value, and costs nothing when none of them was carried: every member reuses
+    // its promise, so `aggregateOf` hands back the identical aggregate and the
+    // state update bails out.
+    promise = computeAggregate(lane, descriptors, options, loaderMeta);
+    setAggregate(promise);
+  }
+
+  if (published !== prevPublished) {
+    setPrevPublished(published);
   }
 
   // Recompute the whole aggregate from the current members. `readOrCreate` returns

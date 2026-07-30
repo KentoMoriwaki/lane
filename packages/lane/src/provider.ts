@@ -29,9 +29,15 @@ type LaneContextValue = {
   lane: Lane;
   revalidation: LaneRevalidation;
   loaderMeta: LaneLoaderMeta;
+  /**
+   * What the nearest `LaneHydration` above published, keyed by key id. Carried on
+   * this context rather than one of its own so a read pays no second lookup and
+   * an app that never hydrates never loads the module that sets it.
+   */
+  published?: Map<string, Promise<unknown>>;
 };
 
-const LaneContext = React.createContext<LaneContextValue | null>(null);
+export const LaneContext = React.createContext<LaneContextValue | null>(null);
 
 const DEFAULT_FOCUS_THROTTLE_INTERVAL = 5_000;
 

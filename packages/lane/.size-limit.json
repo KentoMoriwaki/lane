@@ -11,13 +11,13 @@
     "path": "dist/index.js",
     "import": "{ LaneProvider, useLane }",
     "ignore": ["react", "react-dom"],
-    "limit": "3.5 kB"
+    "limit": "3.6 kB"
   },
   {
     "name": "everything (ceiling)",
     "path": "dist/index.js",
     "import": "*",
     "ignore": ["react", "react-dom"],
-    "limit": "4.9 kB"
+    "limit": "5 kB"
   }
 ]

@@ -47,7 +47,7 @@ export function useLane<T, C = T>(
   // read's arguments stay exactly what decides its key. Read here so the
   // render-path read below carries it, and closed over by the `useEffectEvent`
   // callbacks so a re-read carries the latest.
-  const { lane, revalidation, loaderMeta } = useLaneContext("useLane");
+  const { lane, revalidation, loaderMeta, published } = useLaneContext("useLane");
   // A read is "enabled" exactly when a loader is supplied. Lane only loads
   // external data, so an absent loader has no other meaning and is the single,
   // unambiguous disable signal: no fetch, no subscription, no stored entry.
@@ -68,6 +68,11 @@ export function useLane<T, C = T>(
   // the retry would commit the *previous* key's promise and wait for the
   // post-subscribe catch-up to repair it.
   const [prevSource, setPrevSource] = useState(() => ({ enabled, keyId, lane }));
+  // The hydration this reader has already taken account of. State rather than a
+  // ref for the same reason as `prevSource`: a render that suspends is thrown
+  // away, and the attempt after it has to see the handoff again.
+  const [prevPublished, setPrevPublished] = useState(published);
+  const hydrated = published !== prevPublished ? published?.get(keyId) : undefined;
 
   let effectivePromise = promise;
 
@@ -114,6 +119,29 @@ export function useLane<T, C = T>(
     effectivePromise = nextPromise;
 
     setPromise(nextPromise);
+  } else if (hydrated !== undefined && hydrated !== promise) {
+    // A hydration published this key while this reader was not subscribed to be
+    // told — a hidden `<Activity>` has no effects, so `hydrateMany`'s
+    // notification reached nobody here and the reader is still holding what it
+    // last committed. Server data is authoritative, so it takes the published
+    // value rather than waiting to be revealed and then converging.
+    //
+    // The handoff is a *context value*, which is what makes this safe to do
+    // during render: every reader under the same `LaneHydration` sees the same
+    // one in the same pass, so none can adopt ahead of another. Reading the store
+    // here instead would be per-reader and could let a revealed reader outrun a
+    // subscribed one on the same key.
+    effectivePromise = hydrated as Promise<LaneRead<T>>;
+
+    setPromise(hydrated as Promise<LaneRead<T>>);
+  }
+
+  // Taken account of whichever branch above ran — including none of them, for a
+  // reader whose key this hydration did not carry. Left out of the chain because
+  // a source switch or a removal must not leave the handoff looking unseen: the
+  // next render would adopt a value that is by then two changes old.
+  if (published !== prevPublished) {
+    setPrevPublished(published);
   }
 
   const onInvalidate = useEffectEvent((

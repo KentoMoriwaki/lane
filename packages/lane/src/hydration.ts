@@ -2,13 +2,15 @@
 
 import * as React from "react";
 import { hydrateMany } from "./core";
-import { useLaneInstance } from "./provider";
+import { LaneContext, useLaneContext } from "./provider";
 import type { Lane, LaneHydrationSnapshots } from "./types";
 
 const hydrationResources = new WeakMap<
   LaneHydrationSnapshots,
-  WeakMap<Lane, Promise<void>>
+  WeakMap<Lane, Promise<LanePublished>>
 >();
+
+export type LanePublished = Map<string, Promise<unknown>>;
 
 /**
  * Seeds the lane from server snapshots, and **suspends until it has**.
@@ -40,17 +42,36 @@ export function LaneHydration({
   snapshots: LaneHydrationSnapshots;
   children: React.ReactNode;
 }) {
-  const lane = useLaneInstance();
+  const context = useLaneContext("LaneHydration");
+  const published = React.use(getHydrationPromise(context.lane, snapshots));
+  // Re-provides the value it was given, with what this hydration published added
+  // to it. Same lane, same revalidation registry, same meta, all by identity, so
+  // nothing below re-subscribes or re-reads over it.
+  //
+  // Added *to* rather than replacing, because boundaries nest — a layout seeds
+  // some keys and a page seeds others — and a reader is under all of them at
+  // once. Replacing would hide the outer seeding from every reader below the
+  // inner one, which is exactly the reader that cannot see it any other way. On a
+  // key both carry, the inner wins: it is the one that published last, since it
+  // suspends inside the outer's children.
+  const value = React.useMemo(() => {
+    const inherited = context.published;
 
-  React.use(getHydrationPromise(lane, snapshots));
+    return {
+      ...context,
+      published: inherited
+        ? new Map([...inherited, ...published])
+        : published,
+    };
+  }, [context, published]);
 
-  return children;
+  return React.createElement(LaneContext, { value }, children);
 }
 
 function getHydrationPromise(
   lane: Lane,
   snapshots: LaneHydrationSnapshots,
-): Promise<void> {
+): Promise<LanePublished> {
   let resourcesByLane = hydrationResources.get(snapshots);
 
   if (!resourcesByLane) {
@@ -72,12 +93,11 @@ function getHydrationPromise(
 function createHydrationPromise(
   lane: Lane,
   snapshots: LaneHydrationSnapshots,
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
+): Promise<LanePublished> {
+  return new Promise<LanePublished>((resolve, reject) => {
     setTimeout(() => {
       try {
-        hydrateMany(lane, snapshots);
-        resolve();
+        resolve(hydrateMany(lane, snapshots));
       } catch (error) {
         reject(error);
       }

@@ -358,6 +358,47 @@ All notable changes to `use-lane` are documented here. The format is based on
   stale value. `refetchOnMount` (with a `staleTime` to rate-limit it) is how to
   ask for a refresh when a subtree comes back.
 
+- **A re-hydration now reaches readers inside a hidden `<Activity>`.**
+  `LaneHydration` publishes server snapshots and notifies, and notification is
+  Lane's only channel to a mounted reader — but a hidden subtree has no effects,
+  so it has no subscription for the notification to arrive through. Fresh server
+  data therefore landed in the lane while the readers holding the old data never
+  heard about it: the subtree came back on screen still showing what it had
+  committed before it was hidden, and only converged a commit later, after its
+  effects re-ran. On a framework that keeps routes alive in `<Activity>` — Next.js
+  App Router does — that is every navigation back to a cached route that the
+  server answered with new data.
+
+  What it publishes is now also **handed down** to the readers under it, on the
+  lane context: a reader takes the published value on its next render, which
+  happens while it is still hidden. No reveal is involved and nothing has to know
+  whether it is hidden — there is no API for a child to ask, and effects, the only
+  signal there is, run after the commit that would already have shown the stale
+  value.
+
+  The handoff is a **context value**, and that is the whole reason it is safe to
+  act on during render. Every reader under the same hydration sees the same one in
+  the same render pass, so no reader can adopt ahead of another. The alternatives
+  measured worse and are not here: reading the store during render lets a revealed
+  reader outrun a subscribed one on the same key (three `tearing.test.ts`
+  characterizations fail), and marking settled promises so `use()` can unwrap them
+  synchronously breaks tearing outright (four fail) — Lane's cross-reader
+  consistency *depends* on `use()` suspending the first time it touches a thenable.
+
+  Hydration boundaries nest — a layout seeds some keys, a page seeds others — and
+  a reader is under all of them at once, so an inner boundary hands down the outer
+  one's seeding along with its own; on a key both carry, the inner one wins,
+  because it published last. `LaneHydration` re-provides the lane context to carry
+  this, with the lane, the revalidation registry and the loader meta all passed on
+  by identity, so no reader below re-subscribes or re-reads over it.
+
+  **This raises two size budgets**: `typical: LaneProvider + useLane` from 3.5 kB
+  to 3.6 kB (3431 → 3472 B) and `everything (ceiling)` from 4.9 kB to 5 kB
+  (4846 → 4914 B). The read path pays for the handoff whether or not an app
+  hydrates, which is the honest cost of the branch living in `useLane`; carrying
+  it on the existing lane context rather than one of its own is what keeps it to a
+  property read instead of a second `useContext` for every reader.
+
 - **An explicit `undefined` on a `useLanesAll` member no longer shadows the
   batch's option.** A member's options are resolved against the batch's option by
   option with `??` instead of by spreading the member over the batch. The two agree

@@ -362,6 +362,54 @@ describe("React integration", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
+  it("does not look like a remount to the readers under it", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "reloaded");
+    const first: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-1" }],
+    };
+    const second: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-2" }],
+    };
+
+    // `LaneHydration` re-provides the lane context, to hand what it published to
+    // the readers below. The value is new every time it publishes; the lane and
+    // the revalidation registry inside it are the same objects, which is what
+    // keeps a reader's effects from re-running over it. `refetchOnMount:
+    // "always"` is the probe — it fires whenever the subscription effect does.
+    const app = await render(
+      hydrationApp(lane, first, loader, { refetchOnMount: "always" }),
+    );
+
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    // The mount's own trigger fires once and refreshes the seeded value — that
+    // is `"always"` doing its job, and the baseline for what follows.
+    await waitForText(app.container, "reloaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    loader.mockClear();
+
+    await act(async () => {
+      app.root.render(
+        hydrationApp(lane, second, loader, { refetchOnMount: "always" }),
+      );
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "server-2|background:0|transition:0|refresh:none");
+    expect(loader).not.toHaveBeenCalled();
+  });
+
   it("applies one snapshots instance at most once, however often it re-renders", async () => {
     vi.useFakeTimers();
 

@@ -388,11 +388,20 @@ export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
 
 export type LaneWhenStale = "revalidate" | "refetch";
 
-export type LaneRefetchOnMount = boolean | "always";
+/**
+ * A revalidation trigger. `true` refreshes a value once it is stale — which is
+ * `staleTime`'s job to define, so the two go together.
+ *
+ * There is no "refresh regardless of freshness" form. `staleTime: 0` says it
+ * without hiding that it also refetches the value a mount just loaded, and
+ * `lane.invalidate(key, { onlyIf: "settled" })` covers a refresh an app schedules
+ * on its own terms.
+ */
+export type LaneRefetchOnMount = boolean;
 
-export type LaneRefetchOnFocus = boolean | "always";
+export type LaneRefetchOnFocus = boolean;
 
-export type LaneRefetchOnReconnect = boolean | "always";
+export type LaneRefetchOnReconnect = boolean;
 
 export type LaneUseOptions = {
   /**

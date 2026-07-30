@@ -32,8 +32,8 @@ export function LaneCacheControls({
   mutations,
 }: {
   feed: FeedParams;
-  refetchOnMount: boolean | "always";
-  onRefetchOnMountChange: (value: boolean | "always") => void;
+  refetchOnMount: boolean;
+  onRefetchOnMountChange: (value: boolean) => void;
   mutations: ReturnType<typeof useDatasetMutations>;
 }) {
   const lane = useLaneInstance();
@@ -47,20 +47,14 @@ export function LaneCacheControls({
       <ControlRow
         label="refetchOnMount"
         note={
-          "Whether mounting a reader over a cached value triggers a background re-read. “when stale” is gated on the read's staleTime (5s here); “always” ignores it."
+          "Whether mounting a reader over a cached value triggers a background re-read. Gated on the read's staleTime (5s here) — a value younger than that is not re-read, however often you remount."
         }
       >
         <NumberSelect
-          value={refetchOnMount === "always" ? 2 : refetchOnMount ? 1 : 0}
-          options={[0, 1, 2]}
-          format={(value) =>
-            value === 0 ? "off" : value === 1 ? "when stale" : "always"
-          }
-          onChange={(value) =>
-            onRefetchOnMountChange(
-              value === 0 ? false : value === 1 ? true : "always",
-            )
-          }
+          value={refetchOnMount ? 1 : 0}
+          options={[0, 1]}
+          format={(value) => (value === 0 ? "off" : "on")}
+          onChange={(value) => onRefetchOnMountChange(value === 1)}
         />
       </ControlRow>
 

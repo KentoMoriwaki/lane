@@ -31,7 +31,8 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `setQueryData(key, v)` | `set(key, v)` — for confirmed data you already have |
 | `onMutate` optimistic patch | `useOptimistic` — local to the action, no cache write |
 | `refetchInterval` | a **userland poll** — a self-scheduled `invalidate` |
-| `refetchOnWindowFocus` | `refetchOnFocus` (`LaneProvider` wires focus / reconnect) — pair `true` with a `staleTime`, or it never fires |
+| `refetchOnWindowFocus` | `refetchOnFocus` (`LaneProvider` wires focus / reconnect) — pair it with a `staleTime`, or it never fires |
+| `refetchOnMount: "always"` | no equivalent — `refetchOnMount: true, staleTime: 0`, or `invalidate(key, { onlyIf: "settled" })` |
 | `staleTime` / `gcTime` | `staleTime` (read option, defaults to `Infinity` — react-query defaults to `0`) / `gcTime` (`createLane`) |
 | `QueryClientProvider` | `LaneProvider` |
 

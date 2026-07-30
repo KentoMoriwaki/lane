@@ -235,7 +235,7 @@ describe("useLanesAll", () => {
           { key: ["a"], loader: loaderA },
           { key: ["b"], loader: loaderB },
         ],
-        { refetchOnMount: "always" },
+        { refetchOnMount: true, staleTime: 0 },
       ),
     );
 

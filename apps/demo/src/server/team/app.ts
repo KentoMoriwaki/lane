@@ -15,11 +15,27 @@ import { teamRoutes } from "./routes";
  * The Playwright suite sets the delays to 0.
  */
 
-// Lightweight selectors (labels / members) stay snappy; everything else gets a
-// small read or write delay.
+/**
+ * Read latency is per endpoint, scaled to the work the endpoint actually does.
+ *
+ * The point is not realism for its own sake: several of these reads are on screen
+ * at the same time, and a workspace refresh re-reads all of them at once. If they
+ * all answer in the same 100ms the screen looks the same however a library applies
+ * the results, and the pending states the demo exists to show collapse into a
+ * single flicker. Spread them the way a real backend would and the difference
+ * becomes visible — a filtered list with joins is slower than a label lookup, and
+ * an aggregate over the whole board is slower again.
+ *
+ * All four are env-configurable, and the Playwright suite sets them to 0.
+ */
 const readDelayMs = readMs(process.env.TEAM_API_READ_DELAY_MS, 100);
 const writeDelayMs = readMs(process.env.TEAM_API_WRITE_DELAY_MS, 100);
+// Selectors behind type-ahead pickers stay snappy.
 const pickerDelayMs = readMs(process.env.TEAM_API_PICKER_DELAY_MS, 100);
+// The filtered task list: a join and a sort.
+const listDelayMs = readMs(process.env.TEAM_API_LIST_DELAY_MS, 260);
+// Insights: a scan of every task in the team.
+const aggregateDelayMs = readMs(process.env.TEAM_API_AGGREGATE_DELAY_MS, 560);
 
 const randomFailRate = readRatio(process.env.API_RANDOM_FAIL_RATE);
 const randomFailStatus = readStatus(process.env.API_RANDOM_FAIL_STATUS);
@@ -61,12 +77,26 @@ async function delay(milliseconds: number) {
 }
 
 function readRequestDelay(method: string, path: string) {
+  if (method !== "GET") {
+    return writeDelayMs;
+  }
+
   // Selectors that back type-ahead pickers stay snappy.
-  if ((path === "/api/labels" || path === "/api/members") && method === "GET") {
+  if (path === "/api/labels" || path === "/api/members") {
     return pickerDelayMs;
   }
 
-  return method === "GET" ? readDelayMs : writeDelayMs;
+  if (path === "/api/insights") {
+    return aggregateDelayMs;
+  }
+
+  // Any task-list query — the filtered board and the dependency panels' by-id
+  // lookup both land here. A single task (`/api/tasks/:id`) does not.
+  if (path === "/api/tasks") {
+    return listDelayMs;
+  }
+
+  return readDelayMs;
 }
 
 function shouldRandomlyFail(

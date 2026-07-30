@@ -29,6 +29,51 @@ All notable changes to `use-lane` are documented here. The format is based on
   40 reads: 4540 → 5505), which is the price of the whole read being one inferred
   object.
 
+- **Reworked the size budgets so each check has a distinct job, and added the
+  ceiling.** `.size-limit.json` had two checks, and neither could see the
+  regression that costs every consumer: adding a module to the barrel moved
+  neither budget, so CI could not observe "everyone now pays for this." The two
+  also overlapped almost entirely — the typical check contained every module the
+  core check measured, plus more.
+
+  There are now three, each answering a different question:
+
+  | check | import | limit | measures |
+  | --- | --- | --- | --- |
+  | `store without React (design guard)` | `{ createLane }` | 2.2 kB | 2024 B |
+  | `typical: LaneProvider + useLane` | `{ LaneProvider, useLane }` | 3.5 kB | 3327 B |
+  | `everything (ceiling)` | `*` | 4.7 kB | 4569 B |
+
+  `createLane (core only)` is renamed to `store without React (design guard)`
+  because that is what it always was. Nobody imports `createLane` alone — it
+  exists to hand an instance to `LaneProvider`, so a real consumer importing it
+  also pays for the provider, and the number read as "what the core costs you"
+  when it is really a design tripwire on the store. The limit is unchanged and
+  stays deliberately tight for the reason it always was: the budget is what kept
+  `{ after }` down to a gate on the notification instead of state on the entry.
+  Only the name changed, so the pressure is now legible from the check itself.
+
+  The ceiling is new, and it is the one that sees a new module: adding a
+  throwaway export and rebuilding left the other two checks byte-identical at
+  2.02 kB and 3.33 kB while only the ceiling moved. Its 4.7 kB leaves 131 B over
+  the current 4569 B — narrower than the marginal cost of any feature Lane ships,
+  the cheapest being `LaneHydration` at 158 B — so a real feature trips it and has
+  to be argued for, while the headroom still absorbs Brotli jitter across
+  toolchain bumps. Raising it is a deliberate act with a line here rather than
+  silent drift.
+
+  The typical check keeps its 3.5 kB rather than being tightened to hug 3327 B:
+  that headroom is the room a feature on the typical path may use before someone
+  decides it is worth it, and guarding growth is now the ceiling's job.
+
+  Nothing about the build or the package changed — this is CI configuration and
+  documentation only. Per-feature marginal costs (`laneRead` + `laneKey` at
+  **+7 B**, `LaneHydration` +158 B, the infinite hook +332 B, `useLanesAll`
+  +540 B) are now documented in [Design notes](docs/design-notes.md) instead of
+  pinned as their own checks, and CONTRIBUTING explains what each budget is for.
+  The README's "about 3.1 kB" for the typical import was stale against a measured
+  3327 B and now reads 3.3 kB, alongside the 4.6 kB ceiling.
+
 ### Added
 
 - **`LaneRegister` — declare what loaders are handed besides the key.** A loader
@@ -71,6 +116,22 @@ All notable changes to `use-lane` are documented here. The format is based on
   of any key** — two reads of one key under different meta name the same entry, and
   nothing invalidates when it changes. Scope what it owns into the key, or drop
   those keys on a switch (`lane.removeAll(["tasks"])`).
+
+  **This raised the `everything (ceiling)` size budget from 4.7 kB to 4.85 kB**,
+  which is that check doing its job rather than being worked around: it was set
+  with 131 B of headroom precisely so a real feature would trip it and have to be
+  argued for. `loaderMeta` costs **136 B** and `laneSnapshot` **21 B**, taking the
+  full barrel from 4569 B to **4726 B**. Of that, only **31 B** lands on the
+  typical `LaneProvider` + `useLane` path (3327 → 3358 B, still against an
+  unchanged 3.5 kB), because the delivery is on the provider and the read path;
+  the declaration itself is types only and free. The store-only design guard is
+  byte-identical. The new limit keeps the same 124 B of headroom, so the next
+  feature trips it too.
+
+  Consolidating the three read hooks onto **one context read** paid for part of
+  it (−20 B, and one `useContext` per read instead of three). It also improves the
+  error a missing provider produces: `useLane must be used within a LaneProvider`
+  rather than whichever narrow hook happened to run first.
 
 - **`laneSnapshot(readOrKey, data)`** — one hydration entry, type-checked. An
   object literal lets any `data` through, because `LaneSnapshot.key` is a plain
@@ -230,6 +291,23 @@ All notable changes to `use-lane` are documented here. The format is based on
   carried by every reader and called by almost none.
 
 ### Fixed
+
+- **An explicit `undefined` on a `useLanesAll` member no longer shadows the
+  batch's option.** A member's options are resolved against the batch's option by
+  option with `??` instead of by spreading the member over the batch. The two agree
+  on every input but one, and it is one a caller writes by accident:
+  `staleTime: props.staleTime` where the prop is optional type-checks under
+  `strict`, and the spread let that `undefined` shadow the batch's value and drop
+  the member to the built-in `staleTime: 0` — so a batch-wide minute became "always
+  stale", and `refetchOnMount` refetched every member it should have skipped.
+  `undefined` now means *unspecified* here as it does everywhere else in Lane (the
+  read path resolves `options?.staleTime ?? 0`, an absent loader gates a read off,
+  an absent trigger is off); a member that names a *value* still wins, unchanged.
+  This was the only place in the library with two tiers to disagree about, so it
+  was the only place the distinction was observable. Naming the seven options also
+  drops `key` / `loader`, which the spread carried along inert. Costs 76 B on the
+  `useLanesAll` path (951 → 1027 B minified + gzipped); neither tracked budget
+  covers that module, and both are unchanged.
 
 - **`whenStale: "refetch"` no longer loops on the second visit to a key.**
   Returning to a key that had already been mounted once refetched, suspended,

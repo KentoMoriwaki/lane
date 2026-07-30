@@ -249,6 +249,63 @@ describe("useLanesAll", () => {
     await waitForText(app.container, "A2,B2");
   });
 
+  it("treats a member's explicit `undefined` as unspecified, not as an override", async () => {
+    const lane = createLane();
+    const loaderA = vi.fn(async () => "A2");
+    const loaderB = vi.fn(async () => "B2");
+    lane.set(["a"], "A");
+    lane.set(["b"], "B");
+
+    // `staleTime: maybeUndefined` is what an optional prop or config field passed
+    // straight through looks like, and `strict` alone does not flag it. It has to
+    // mean "unspecified" — otherwise the member silently drops to the built-in
+    // `staleTime: 0`, the batch's minute is lost, and both just-seeded values are
+    // judged stale and refetched on mount.
+    const app = await render(
+      batchApp(
+        lane,
+        [
+          { key: ["a"], loader: loaderA, staleTime: undefined },
+          { key: ["b"], loader: loaderB },
+        ],
+        { refetchOnMount: true, staleTime: 60_000 },
+      ),
+    );
+
+    await waitForText(app.container, "A,B");
+    expect(loaderA).not.toHaveBeenCalled();
+    expect(loaderB).not.toHaveBeenCalled();
+  });
+
+  it("still lets a member's own value override the batch", async () => {
+    const lane = createLane();
+    const reloadA = deferred<string>();
+    const loaderA = vi.fn(() => reloadA.promise);
+    const loaderB = vi.fn(async () => "B2");
+    lane.set(["a"], "A");
+    lane.set(["b"], "B");
+
+    // The contrast to the test above: a member that names a *value* still wins, so
+    // only `a` — fresh for a millisecond, against the batch's minute — refetches.
+    const app = await render(
+      batchApp(
+        lane,
+        [
+          { key: ["a"], loader: loaderA, staleTime: 0 },
+          { key: ["b"], loader: loaderB },
+        ],
+        { refetchOnMount: true, staleTime: 60_000 },
+      ),
+    );
+
+    await waitForText(app.container, "A,B");
+    expect(loaderA).toHaveBeenCalledTimes(1);
+    expect(loaderB).not.toHaveBeenCalled();
+
+    await resolveReload(reloadA, "A2");
+    await waitForText(app.container, "A2,B");
+  });
+
   it("re-subscribes on a mid-flight shared option change", async () => {
     const lane = createLane();
     const reload = deferred<string>();

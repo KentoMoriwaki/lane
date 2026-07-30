@@ -16,11 +16,7 @@ import {
 } from "./core";
 import type { LaneInvalidationSource } from "./core";
 import { serializeKey } from "./keys";
-import {
-  useLaneInstance,
-  useLaneLoaderMeta,
-  useLaneRevalidation,
-} from "./provider";
+import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
   Lane,
@@ -45,13 +41,12 @@ export function useLane<T, C = T>(
   // copy — so every option is read fresh on each render and at each fire time.
   const { key, loader } = read;
 
-  const lane = useLaneInstance();
-  const revalidation = useLaneRevalidation();
-  // The dependency the loader is handed, from the lane rather than from the
-  // read — which is what lets the read's arguments stay exactly what decides its
-  // key. Read here so the render-path read below carries it, and closed over by
-  // the `useEffectEvent` callbacks so a re-read carries the latest.
-  const loaderMeta = useLaneLoaderMeta();
+  // One context read for all three. `loaderMeta` is the dependency the loader is
+  // handed, from the lane rather than from the read — which is what lets the
+  // read's arguments stay exactly what decides its key. Read here so the
+  // render-path read below carries it, and closed over by the `useEffectEvent`
+  // callbacks so a re-read carries the latest.
+  const { lane, revalidation, loaderMeta } = useLaneContext("useLane");
   // A read is "enabled" exactly when a loader is supplied. Lane only loads
   // external data, so an absent loader has no other meaning and is the single,
   // unambiguous disable signal: no fetch, no subscription, no stored entry.

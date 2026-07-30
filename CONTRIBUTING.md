@@ -79,8 +79,65 @@ touched. On first run, install the browser:
 pnpm --filter @lane/e2e exec playwright install chromium
 ```
 
-CI runs unit tests, typechecks, and the E2E suite on every push and pull request
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+CI runs unit tests, typechecks, the size budgets, and the E2E suite on every push
+and pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+## Size budgets
+
+```sh
+pnpm --filter use-lane build   # the budgets measure dist/, so build first
+pnpm --filter use-lane size
+```
+
+[`.size-limit.json`](packages/lane/.size-limit.json) holds three checks, and they
+are not three samples of the same thing — each has its own job, and knowing which
+one you tripped tells you what to do about it.
+
+| check | import | limit | what it is for |
+| --- | --- | --- | --- |
+| `store without React (design guard)` | `{ createLane }` | 2.2 kB | keeping the store small |
+| `typical: LaneProvider + useLane` | `{ LaneProvider, useLane }` | 3.5 kB | the number consumers are quoted |
+| `everything (ceiling)` | `*` | 4.85 kB | what the package costs at most |
+
+**The design guard is a tripwire, not a consumer number.** Nobody imports
+`createLane` alone — it exists to hand an instance to `LaneProvider`, so a real
+consumer importing it also pays for the provider. Read as a size budget it is
+misleading; its actual job is to make the store expensive to grow. That pressure
+has shaped the design before: it is what kept `{ after }` down to a gate on the
+notification instead of state on the entry. If a change trips this one, the
+question is whether the new state belongs in core at all.
+
+**The typical check guards the advertised number.** It sits at 3327 B against
+3.5 kB, and that headroom is the room a feature on the typical path may use
+before someone has to decide it is worth it. It is deliberately not tightened to
+hug the current measurement, because growth is the ceiling's job now.
+
+**The ceiling is what sees a new module.** Adding an export to the barrel moves
+neither of the other two — a consumer who does not import it does not pay — so
+before this check existed, CI could not see "everyone now pays for this."
+Verified by adding a throwaway module and rebuilding: the design guard stayed at
+2.02 kB and the typical check at 3.33 kB, both byte-identical, while only the
+ceiling moved.
+
+It sits at 4726 B against 4.85 kB. That 124 B is narrower than the marginal cost
+of any feature Lane currently ships — the cheapest, `LaneHydration`, is 143 B —
+so a real feature added to the barrel trips it and has to be argued for. A
+genuinely trivial helper can still land inside the headroom (the throwaway module
+above cost 81 B and fit), which is the intended trade: the limit is loose enough
+to absorb Brotli jitter across toolchain bumps and tight enough that no feature
+slips in unnoticed. Raising it is a deliberate act with a CHANGELOG line, not
+silent drift.
+
+It has been raised once, which is the mechanism working as designed rather than
+against it: `LaneRegister` + `laneSnapshot` cost 157 B and tripped the original
+4.7 kB, so the limit moved to 4.85 kB with the argument recorded in the
+CHANGELOG. The new headroom is deliberately set to the same width, so the next
+feature trips it too.
+
+Per-feature marginal costs are documented in
+[Design notes](docs/design-notes.md#what-each-feature-costs) rather than pinned as
+extra checks — the ceiling already covers their growth, and what those numbers
+answer is "is this feature worth its bytes," which is a docs question.
 
 ## Building & publishing `use-lane`
 

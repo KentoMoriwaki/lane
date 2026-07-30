@@ -14,7 +14,12 @@ import {
   useLanesAll,
 } from "../index";
 import type { LaneProviderProps } from "../provider";
-import type { Lane, LaneGatedReadSpec, LaneReadSpec } from "../types";
+import type {
+  Lane,
+  LaneGatedReadSpec,
+  LaneReadSpec,
+  LaneUseOptions,
+} from "../types";
 import type { InfiniteLaneReadSpec } from "../use-infinite-lane";
 import { resetVitest, settlePromiseHandlers } from "./test-utils";
 
@@ -260,6 +265,33 @@ describe("loaderMeta", () => {
     ]);
   });
 
+  // `optionsFor` short-circuits when the batch passes no options, so the merge
+  // path — where each option is named one by one — is only exercised with shared
+  // options present. An option missing from that list is silently dropped, which
+  // is exactly what this catches.
+  it("keeps a member's override when the batch also passes options", async () => {
+    const lane = createLane();
+    const seen: unknown[] = [];
+    const loader = (name: string) => async ({ meta }: { meta: unknown }) => {
+      seen.push([name, meta]);
+      return name;
+    };
+    const reads = [
+      laneRead({ key: ["a"], loader: loader("A") }),
+      withMeta(laneRead({ key: ["b"], loader: loader("B") }), OTHER_CTX),
+    ];
+
+    const app = await render(
+      batchApp(lane, reads, CTX, { staleTime: 60_000 }),
+    );
+
+    await waitForText(app.container, "A,B");
+    expect(seen).toEqual([
+      ["A", CTX],
+      ["B", OTHER_CTX],
+    ]);
+  });
+
   it("lets an infinite read override on both paths", async () => {
     const lane = createLane();
     const seen: unknown[] = [];
@@ -351,10 +383,12 @@ function Probe({ spec }: { spec: LaneGatedReadSpec<string> }): React.ReactNode {
 
 function BatchProbe({
   reads,
+  shared,
 }: {
   reads: readonly LaneReadSpec<string>[];
+  shared?: LaneUseOptions;
 }): React.ReactNode {
-  const values = React.use(useLanesAll(reads));
+  const values = React.use(useLanesAll(reads, shared));
   return values.map((read) => read.data).join(",");
 }
 
@@ -403,13 +437,14 @@ function batchApp(
   lane: Lane,
   reads: readonly LaneReadSpec<string>[],
   loaderMeta: Ctx | undefined,
+  shared?: LaneUseOptions,
 ): React.ReactElement {
   return React.createElement(
     LaneProvider,
     providerProps(
       lane,
       loaderMeta,
-      suspended(React.createElement(BatchProbe, { reads })),
+      suspended(React.createElement(BatchProbe, { reads, shared })),
     ),
   );
 }

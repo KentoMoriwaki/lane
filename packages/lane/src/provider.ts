@@ -134,8 +134,16 @@ export function LaneProvider({
   return React.createElement(LaneContext, { value }, children);
 }
 
-// Both hooks require the provider; the caller name keeps the error specific.
-function useLaneContext(hook: string): LaneContextValue {
+/**
+ * Everything the provider supplies, in one context read. The read hooks need all
+ * of it, so they call this once rather than composing the narrow hooks below —
+ * three `useContext` calls and three copies of the "must be used within" message
+ * for one lookup, and the message would name whichever narrow hook happened to
+ * run first instead of the hook the caller wrote.
+ *
+ * Internal: the narrow hooks are the public surface.
+ */
+export function useLaneContext(hook: string): LaneContextValue {
   const value = React.useContext(LaneContext);
 
   if (!value) {
@@ -151,14 +159,4 @@ export function useLaneInstance(): Lane {
 
 export function useLaneRevalidation(): LaneRevalidation {
   return useLaneContext("useLaneRevalidation").revalidation;
-}
-
-/**
- * The lane's `loaderMeta`, for the hooks that issue reads. Read at render so a
- * read created during render carries the current value, and closed over fresh by
- * the notify-path callbacks (`useEffectEvent`) so a re-read after an
- * invalidation carries it too.
- */
-export function useLaneLoaderMeta(): LaneLoaderMeta {
-  return useLaneContext("useLaneLoaderMeta").loaderMeta;
 }

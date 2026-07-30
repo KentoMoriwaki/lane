@@ -15,6 +15,18 @@ import {
 } from "./endpoints";
 
 /**
+ * The board's own reads — the task list and the two views derived from it —
+ * revalidate when the tab comes back to the foreground. The same policy the
+ * RSC-seeded variant uses; see `lane/api/lane-reads.ts` for why these three and
+ * not the catalogue reads around them.
+ */
+const BOARD_REVALIDATION = {
+  refetchOnFocus: true,
+  refetchOnMount: true,
+  staleTime: 1_000,
+} as const;
+
+/**
  * Every read this workspace performs, defined once — key, loader, and freshness
  * in one place, which is all `laneRead` has ever been for.
  *
@@ -53,9 +65,7 @@ export const workspaceReads = {
     laneRead({
       key: ["tasks", filters],
       loader: ({ meta }) => fetchTasks(meta, filters),
-      refetchOnFocus: true,
-      refetchOnMount: true,
-      staleTime: 1_000,
+      ...BOARD_REVALIDATION,
     }),
   task: (taskId: string) =>
     laneRead({
@@ -63,13 +73,22 @@ export const workspaceReads = {
       loader: ({ meta }) => fetchTask(meta, taskId),
     }),
   projects: () =>
-    laneRead({ key: ["projects"], loader: ({ meta }) => fetchProjects(meta) }),
+    laneRead({
+      key: ["projects"],
+      loader: ({ meta }) => fetchProjects(meta),
+      // Carries per-project task counts, so it moves whenever the board does.
+      ...BOARD_REVALIDATION,
+    }),
   labels: () =>
     laneRead({ key: ["labels"], loader: ({ meta }) => fetchLabels(meta) }),
   members: () =>
     laneRead({ key: ["members"], loader: ({ meta }) => fetchMembers(meta) }),
   insights: () =>
-    laneRead({ key: ["insights"], loader: ({ meta }) => fetchInsights(meta) }),
+    laneRead({
+      key: ["insights"],
+      loader: ({ meta }) => fetchInsights(meta),
+      ...BOARD_REVALIDATION,
+    }),
 
   /**
    * The detail panel's two dependency reads. Gating lives *in the definition*: a

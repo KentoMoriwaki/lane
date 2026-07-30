@@ -3,7 +3,7 @@
 import { useCallback } from "react";
 import { updateEntry } from "./core";
 import { serializeKey } from "./keys";
-import { useLaneInstance, useLaneLoaderMeta } from "./provider";
+import { useLaneContext } from "./provider";
 import type {
   LaneInvalidateOptions,
   LaneKey,
@@ -130,12 +130,11 @@ export function useInfiniteLane<P, C>(
 ): InfiniteLaneResult<P, C> {
   const { key, initialCursor, fetchPage, nextCursor } = read;
 
-  const lane = useLaneInstance();
-  const keyId = serializeKey(key);
   // `loadMore` appends through `lane.update`, which is not a read and so never
   // reaches `runLoader` — the meta the refresh path gets from the read options
   // has to be handed to that page fetch directly, resolved the same way.
-  const laneMeta = useLaneLoaderMeta();
+  const { lane, loaderMeta: laneMeta } = useLaneContext("useInfiniteLane");
+  const keyId = serializeKey(key);
   const loaderMeta = read.loaderMeta ?? laneMeta;
 
   const { invalidate, isBackgroundPending, isTransitionPending, promise } =

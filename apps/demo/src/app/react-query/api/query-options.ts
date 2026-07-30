@@ -57,10 +57,31 @@ export function teamsQueryOptions(ctx: WorkspaceCtx) {
   });
 }
 
+/**
+ * The board's own reads — the task list and the two views derived from it —
+ * revalidate when the tab comes back to the foreground.
+ *
+ * They are the reads a teammate's edit invalidates, so coming back to a stale
+ * board is the case worth handling; the catalogue reads around them keep the
+ * client default of refetching only on demand. `staleTime` is short enough that a
+ * refocus after a moment away actually fetches, and long enough that flicking
+ * between two windows does not.
+ *
+ * The use-lane variant sets exactly this policy with `refetchOnFocus` /
+ * `staleTime` in `lane/api/lane-reads.ts`, on the same three reads. Both spell it
+ * the same way, and keeping them matched is what makes the two variants
+ * comparable when you switch away and come back.
+ */
+const BOARD_REVALIDATION = {
+  refetchOnWindowFocus: true,
+  staleTime: 1_000,
+} as const;
+
 export function tasksQueryOptions(ctx: WorkspaceCtx, filters: TaskFilters) {
   return queryOptions({
     queryKey: queryKeys.tasks(filters),
     queryFn: () => fetchTasks(ctx, filters),
+    ...BOARD_REVALIDATION,
   });
 }
 
@@ -75,6 +96,8 @@ export function projectsQueryOptions(ctx: WorkspaceCtx) {
   return queryOptions({
     queryKey: queryKeys.projects,
     queryFn: () => fetchProjects(ctx),
+    // Carries per-project task counts, so it moves whenever the board does.
+    ...BOARD_REVALIDATION,
   });
 }
 
@@ -96,5 +119,6 @@ export function insightsQueryOptions(ctx: WorkspaceCtx) {
   return queryOptions({
     queryKey: queryKeys.insights,
     queryFn: () => fetchInsights(ctx),
+    ...BOARD_REVALIDATION,
   });
 }

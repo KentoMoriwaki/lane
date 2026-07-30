@@ -549,6 +549,58 @@ describe("React integration", () => {
     await waitForText(app.container, "caught:boom");
   });
 
+  // Why a load that never once succeeded is out of reach of every revalidation
+  // trigger — not by policy, but because there is nobody left to fire one. The
+  // reader threw during render, so it never committed and none of its effects ran:
+  // no store subscription, no focus / reconnect handlers, no mount trigger. Getting
+  // back from here is an error boundary reset (or `whenStale: "refetch"`, which
+  // always retries a prior error), and that is the whole reason dropping the
+  // triggers' unconditional form cost nothing: it was the only form that could act
+  // on a rejected entry, over a reader that cannot exist.
+  it("leaves no reader for a trigger to fire from after a first load fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const lane = createLane();
+    const loader = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const effects: string[] = [];
+
+    const app = await render(
+      React.createElement(LaneProvider, {
+        lane,
+        children: React.createElement(
+          CatchBoundary,
+          null,
+          React.createElement(
+            React.Suspense,
+            { fallback: "loading" },
+            React.createElement(EffectProbe, {
+              effects,
+              loader,
+              options: { refetchOnFocus: true, refetchOnMount: true, staleTime: 0 },
+            }),
+          ),
+        ),
+      }),
+    );
+
+    await waitForText(app.container, "caught:boom");
+    expect(effects).toEqual([]);
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // The two lane-level events the provider fans out, and the mount that already
+    // happened. Nothing is subscribed, so nothing arrives.
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("online"));
+      await settlePromiseHandlers();
+    });
+
+    expect(effects).toEqual([]);
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
   it("collects the cache after unmount once gcTime elapses", async () => {
     vi.useFakeTimers();
 
@@ -913,6 +965,31 @@ class CatchBoundary extends React.Component<
 
     return this.props.children;
   }
+}
+
+// Records its own mount in the same position `useLane`'s effects occupy: if this
+// stays empty, the reader never committed and neither did its subscription.
+function EffectProbe({
+  effects,
+  loader,
+  options,
+}: {
+  effects: string[];
+  loader: LaneLoader<string>;
+  options?: LaneUseOptions;
+}) {
+  React.useEffect(() => {
+    effects.push("mounted");
+
+    return () => {
+      effects.push("unmounted");
+    };
+  });
+
+  const result = useLane({ key: ["tasks"], loader, ...options });
+  const read = React.use(result.promise);
+
+  return React.createElement("div", null, read.data);
 }
 
 function Probe({

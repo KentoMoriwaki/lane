@@ -42,6 +42,8 @@ export default defineConfig({
       TEAM_API_READ_DELAY_MS: "0",
       TEAM_API_WRITE_DELAY_MS: "0",
       TEAM_API_PICKER_DELAY_MS: "0",
+      TEAM_API_LIST_DELAY_MS: "0",
+      TEAM_API_AGGREGATE_DELAY_MS: "0",
     },
     reuseExistingServer: false,
     timeout: 120_000,

@@ -26,9 +26,14 @@ export type LaneValue<T> = T | Promise<T>;
  * The dependency travels with the *lane*, not the read: `<LaneProvider
  * loaderMeta={ctx}>` supplies it, and {@link LaneLoaderContext.meta} delivers it.
  * That placement is the whole point — it is what a read does not have to know
- * about. It also means the value is **not part of any key**: two reads of one key
- * under different `loaderMeta` name the same entry, and whichever loaded first
- * wins. Scope what the dependency owns into the key, or drop those keys when it
+ * about. A single read that genuinely belongs to another context can still
+ * override it ({@link LaneUseOptions.loaderMeta}); because the lane's value is
+ * mandatory, that override is a narrowing rather than the only source, which is
+ * what keeps `meta` non-optional in the loader.
+ *
+ * It also means the value is **not part of any key**: two reads of one key under
+ * different `loaderMeta` name the same entry, and whichever loaded first wins.
+ * Scope what the dependency owns into the key, or drop those keys when it
  * changes (`lane.removeAll(["tasks"])` on a team switch).
  *
  * The mechanism is react-query's `Register`, and so is the asymmetry in naming:
@@ -390,6 +395,28 @@ export type LaneRefetchOnFocus = boolean | "always";
 export type LaneRefetchOnReconnect = boolean | "always";
 
 export type LaneUseOptions = {
+  /**
+   * Read this entry with a different `meta` than the lane carries — the per-read
+   * override of {@link LaneRegister}'s `loaderMeta`.
+   *
+   * Optional, and safely so: the lane always has one (the provider cannot omit
+   * it), so this narrows a guaranteed value rather than standing in for a missing
+   * one. That is the difference from react-query's `meta`, which is the *only*
+   * place the value can come from and is therefore always possibly-`undefined`.
+   * Here the fallback is mandatory and the override is not, so `meta` stays
+   * non-optional inside the loader either way.
+   *
+   * The type is `LaneRegister`'s, so this costs no type parameter and nothing to
+   * annotate. It is **not part of the key** — same as the lane-level value — so
+   * two reads of one key with different meta name the same entry and whichever
+   * loads first wins. Reach for it when a single read genuinely belongs to
+   * another context (an admin impersonating a tenant, a cross-team lookup) and
+   * scope that into the key yourself.
+   *
+   * In a batch (`useLanesAll`) a member's own override wins over the batch's, the
+   * way every other read option does.
+   */
+  loaderMeta?: LaneLoaderMeta;
   staleTime?: number;
   /**
    * What a read does when the cached value is stale (older than `staleTime`):

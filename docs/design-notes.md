@@ -336,6 +336,68 @@ Two boundaries keep it from becoming a second way to describe everything:
   the core is byte-for-byte the store it was before, apart from `prefetch`
   learning to accept a read.
 
+## The dependency a loader needs is not part of the read
+
+The note above ends on a near miss. Addressing an entry takes the key and not the
+loader, so a mutation path never has to import fetchers "and whatever request
+context those fetchers close over". But the read side still has to get that
+context from somewhere, and the obvious place turns the argument around.
+
+Binding it into the factory is the natural first move:
+
+```ts
+export const taskLanes = (ctx: Ctx) => ({
+  detail: (id: string) =>
+    laneRead({ key: ["task", id], loader: () => fetchTask(ctx, id) }),
+});
+```
+
+Every read now type-checks and the loaders have what they need. What broke is
+`.key`: naming an entry requires producing a request context, and the places that
+name entries are exactly the places that do not have one — a mutation module, a
+Server Component seeding the cache, a component above the provider, an
+error-boundary retry. The reliable workaround is a second map of bare keys, and
+that is the actual cost: **every read now exists twice**, the loaded type is
+restated by hand on the key side, and nothing checks that the two agree. A key
+map is what colocation was supposed to remove.
+
+So the dependency goes on the **lane**, declared once by module augmentation and
+delivered to loaders as `meta`:
+
+```ts
+declare module "use-lane" {
+  interface LaneRegister { loaderMeta: Ctx }
+}
+```
+
+A read stays a plain object whose arguments are exactly what decides its key, so
+`.key` costs nothing to reach and there is one definition per read. The
+alternatives were weighed and are worse: a third type parameter on `LaneReadSpec`
+(paid for by every consumer — `useLane` overloads, per-member annotations in
+`useLanesAll`) buys the same thing, and a per-read field alone cannot be
+*required*, so forgetting it degrades silently to `undefined`.
+
+This is react-query's `Register`, with the value moved. react-query puts `meta`
+on the query and lets the client hold a default; Lane makes the lane's value
+mandatory and the per-read one an override. That inversion is the whole gain: the
+guaranteed value is what lets `meta` be non-optional in a loader, where
+react-query's is always possibly-`undefined`.
+
+Two consequences are load-bearing, and neither is hidden:
+
+- **One type per app.** Module augmentation is program-wide, so an app has exactly
+  one `loaderMeta` type. Independent lanes in one program (a demo hosting six
+  examples, a monorepo compiled as one unit) all answer to it.
+- **It is not part of any key, and Lane cannot make it be.** Two reads of one key
+  under different meta name the same entry, and whichever loaded first wins.
+  Nothing invalidates when the value changes, because the store has no way to know
+  what the value owns. Scope what it owns into the key, or drop those keys
+  yourself on a switch. This is the same obligation as sending a tenant in a
+  request header instead of the URL, and it is why the value is deliberately
+  *outside* the key rather than quietly folded into it: a hidden key component
+  would make every entry unaddressable from a module that cannot produce the
+  context — the exact problem this solves.
+
 ## A deliberately small core
 
 Lane core owns only the lifecycle facts that must stay consistent for a key slot:

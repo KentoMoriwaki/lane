@@ -135,7 +135,9 @@ export function createLane(options: LaneOptions = {}): Lane {
       // A read's `staleTime` / `whenStale` are deliberately ignored here: those
       // are read-time decisions and this is not the read.
       return readOrCreate<T, C>(lane, read.key, read.loader, {
-        loaderMeta: args[0]?.loaderMeta,
+        // Same precedence as a hook read: the read's own override wins over the
+        // value supplied alongside it.
+        loaderMeta: read.loaderMeta ?? args[0]?.loaderMeta,
         retry: read.retry,
         retryDelay: read.retryDelay,
         whenStale: "revalidate",

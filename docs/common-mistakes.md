@@ -351,6 +351,54 @@ and `["task-summary", id]` are different data and belong in different entries.
 makes that visible: one definition per entry, so a second loader for the same key
 has nowhere to hide.
 
+### Binding a request context into the read factory
+
+The loaders need a session, a tenant, an API client. The tempting move is to take
+it at the top of the factory.
+
+**Don't** — it makes the key unreachable:
+
+```ts
+export const taskLanes = (ctx: Ctx) => ({
+  detail: (id: string) =>
+    laneRead({ key: ["task", id], loader: () => fetchTask(ctx, id) }),
+});
+
+// Reading is fine.
+useLane(taskLanes(ctx).detail(id));
+
+// Naming the entry now needs a request context — in a mutation module, a Server
+// Component, an error-boundary retry, a component above the provider.
+lane.set(taskLanes(???).detail(task.id).key, task);
+```
+
+What happens next is the actual bug: a second map of bare keys appears so the
+write side has something to import, every read exists twice, the loaded type is
+restated by hand on the key side, and nothing checks that the two agree.
+
+**Do** put the dependency on the lane and keep the read's arguments to what
+decides its key:
+
+```ts
+declare module "use-lane" {
+  interface LaneRegister { loaderMeta: Ctx }
+}
+
+// <LaneProvider loaderMeta={ctx}> — once, where the session lives.
+
+export const taskLanes = {
+  detail: (id: string) =>
+    laneRead({ key: ["task", id], loader: ({ meta }) => fetchTask(meta, id) }),
+};
+
+lane.set(taskLanes.detail(task.id).key, task); // no context needed
+```
+
+The obligation that comes with it: the meta is **not part of the key**, so nothing
+invalidates when it changes. Scope what it owns into the key, or drop those keys
+on a switch — `lane.removeAll(["tasks"])`. See
+[`LaneRegister`](./api-reference.md#laneregister--what-loaders-are-handed-besides-the-key).
+
 ### Read a key once, then pass the value down
 
 Lane dedupes by key, so reading `["task", id]` in a parent *and* again in its

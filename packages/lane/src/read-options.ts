@@ -6,17 +6,22 @@ import type {
 } from "./types";
 
 /**
- * The fetch-shaping subset a read passes to `readOrCreate`, plus the lane's
- * `loaderMeta`. The meta is a second argument rather than a field of `options`
- * because it does not come from the read: the read carries what it was defined
- * with, the lane carries what its loaders are handed.
+ * The fetch-shaping subset a read passes to `readOrCreate`, with the meta
+ * resolved: the read's own `loaderMeta` where it sets one, the lane's otherwise.
+ *
+ * The lane's value is a second argument rather than a field of `options` because
+ * it does not come from the read — the read carries what it was defined with, the
+ * lane carries what its loaders are handed. The read wins because it is the more
+ * specific of the two, and it can only ever narrow: the lane's value is
+ * guaranteed to exist, so an absent override is "use the lane's", never "there
+ * isn't one".
  */
 export function toReadOptions(
   options: LaneUseOptions,
   loaderMeta: LaneLoaderMeta,
 ): LaneReadOptions {
   return {
-    loaderMeta,
+    loaderMeta: options.loaderMeta ?? loaderMeta,
     retry: options.retry,
     retryDelay: options.retryDelay,
     staleTime: options.staleTime,

@@ -171,17 +171,24 @@ function RenameButton({ userId }: { userId: string }) {
   a read the way react-query's `queryOptions()` does. The loaded type rides on the
   **key** it hands back (like react-query's `DataTag`), so `set` / `update` are
   type-checked from the key alone and a mutation path never imports a fetcher.
+- **The session lives on the lane, not in the read.** Declare it once
+  (`LaneRegister`), supply it at the provider, and every loader is handed it as
+  `meta`. A read's arguments stay exactly what decides its key, so `.key` is
+  reachable from a mutation module or a Server Component — no parallel map of bare
+  keys.
 
 ## API at a glance
 
 | Export | Purpose |
 | --- | --- |
 | `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation via a pluggable `eventSource` (browser default; React Native / CLI / custom). |
-| `useLane(key, loader, options?)` | Read a key. Returns `{ promise, isTransitionPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
-| `useLanePromise(key, loader, options?)` | Thin wrapper returning just `promise`. |
+| `useLane(read)` | Read a key. Returns `{ promise, isTransitionPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
+| `useLanePromise(read)` | Thin wrapper returning just `promise`. |
 | `laneRead({ key, loader, …options })` | Colocate a read's key, loader, and options in one value — react-query's `queryOptions()` for Lane. Reads take the whole thing (`useLane`, `useLanesAll`, `prefetch`); entry operations take its `key`. |
 | `laneKey<T>(key)` | A key that carries what its entry holds, so `set` / `update` through it are type-checked — no loader needed. |
-| `useInfiniteLane(key, options, readOptions?)` | A cursor-paginated list under one key. Returns `{ promise, loadMore, … }`; `use(promise)` yields `{ pages, params, hasNext }`. Colocate it with `infiniteLaneRead`. |
+| `LaneRegister` | Declare what loaders are handed besides the key (a session, a tenant, an API client). Supplied as `<LaneProvider loaderMeta={…}>`, received as `loader({ meta })`. react-query's `Register`, with the value on the lane so it is mandatory. |
+| `laneSnapshot(read, data)` | One hydration entry, type-checked: `T` comes from the read's key, so a seed can't pair a key with the wrong data. |
+| `useInfiniteLane(read)` | A cursor-paginated list under one key. Returns `{ promise, loadMore, … }`; `use(promise)` yields `{ pages, params, hasNext }`. Colocate it with `infiniteLaneRead`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
 | `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime }`. |
 | `LaneHydration` | Apply RSC-loaded snapshots as authoritative seed values. |

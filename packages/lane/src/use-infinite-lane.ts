@@ -134,8 +134,9 @@ export function useInfiniteLane<P, C>(
   const keyId = serializeKey(key);
   // `loadMore` appends through `lane.update`, which is not a read and so never
   // reaches `runLoader` — the meta the refresh path gets from the read options
-  // has to be handed to that page fetch directly.
-  const loaderMeta = useLaneLoaderMeta();
+  // has to be handed to that page fetch directly, resolved the same way.
+  const laneMeta = useLaneLoaderMeta();
+  const loaderMeta = read.loaderMeta ?? laneMeta;
 
   const { invalidate, isBackgroundPending, isTransitionPending, promise } =
     // The read options pass straight through; the pagination fields ride along

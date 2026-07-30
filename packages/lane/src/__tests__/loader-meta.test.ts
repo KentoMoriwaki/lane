@@ -219,6 +219,93 @@ describe("loaderMeta", () => {
     expect(seen).toEqual([CTX, CTX]);
   });
 
+  it("lets a read override the lane's meta", async () => {
+    const lane = createLane();
+    const seen: unknown[] = [];
+    const read = withMeta(
+      laneRead({
+        key: ["task", "t1"],
+        loader: async ({ meta }) => {
+          seen.push(meta);
+          return "loaded";
+        },
+      }),
+      OTHER_CTX,
+    );
+
+    const app = await render(probeApp(lane, read, CTX));
+
+    await waitForText(app.container, "loaded");
+    expect(seen).toEqual([OTHER_CTX]);
+  });
+
+  it("lets a batch member override the batch's meta", async () => {
+    const lane = createLane();
+    const seen: unknown[] = [];
+    const loader = (name: string) => async ({ meta }: { meta: unknown }) => {
+      seen.push([name, meta]);
+      return name;
+    };
+    const reads = [
+      laneRead({ key: ["a"], loader: loader("A") }),
+      withMeta(laneRead({ key: ["b"], loader: loader("B") }), OTHER_CTX),
+    ];
+
+    const app = await render(batchApp(lane, reads, CTX));
+
+    await waitForText(app.container, "A,B");
+    expect(seen).toEqual([
+      ["A", CTX],
+      ["B", OTHER_CTX],
+    ]);
+  });
+
+  it("lets an infinite read override on both paths", async () => {
+    const lane = createLane();
+    const seen: unknown[] = [];
+    const spec = withMeta(
+      infiniteLaneRead({
+        key: ["feed"],
+        initialCursor: 0,
+        fetchPage: async (cursor: number, { meta }) => {
+          seen.push(meta);
+          return {
+            items: [`item-${cursor}`],
+            next: cursor < 2 ? cursor + 1 : null,
+          };
+        },
+        nextCursor: (page) => page.next,
+      }),
+      OTHER_CTX,
+    );
+
+    const app = await render(infiniteApp(lane, spec, CTX));
+    await waitForStatus(app.container, "item-0");
+
+    await click(app.container, "more");
+    await waitForStatus(app.container, "item-0,item-1");
+    expect(seen).toEqual([OTHER_CTX, OTHER_CTX]);
+  });
+
+  it("lets a read override the meta given to prefetch", async () => {
+    const lane = createLane();
+    const seen: unknown[] = [];
+    const read = withMeta(
+      laneRead({
+        key: ["task", "t1"],
+        loader: async ({ meta }) => {
+          seen.push(meta);
+          return "warmed";
+        },
+      }),
+      OTHER_CTX,
+    );
+
+    await lane.prefetch(read, { loaderMeta: CTX } as never);
+
+    expect(seen).toEqual([OTHER_CTX]);
+  });
+
   it("takes the prefetch argument for a read outside React", async () => {
     const lane = createLane();
     const seen: unknown[] = [];
@@ -235,6 +322,14 @@ describe("loaderMeta", () => {
     expect(seen).toEqual([CTX]);
   });
 });
+
+/**
+ * A read with a `loaderMeta` override. Same reason for the cast as
+ * `providerProps` below: undeclared here, the field is `loaderMeta?: undefined`.
+ */
+function withMeta<R>(read: R, loaderMeta: Ctx): R {
+  return { ...read, loaderMeta } as R;
+}
 
 /**
  * `LaneProvider`'s props with a `loaderMeta` this program cannot type: nothing is

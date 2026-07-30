@@ -31,6 +31,56 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **`LaneRegister` — declare what loaders are handed besides the key.** A loader
+  usually needs something the key does not carry: a session, a tenant, an API
+  client. Declaring it once makes it available to every loader as `meta`, with no
+  read taking it as an argument:
+
+  ```ts
+  declare module "use-lane" {
+    interface LaneRegister { loaderMeta: WorkspaceCtx }
+  }
+
+  <LaneProvider loaderMeta={ctx}>          // required once declared
+  laneRead({ key: ["task", id], loader: ({ meta }) => fetchTask(meta, id) })
+  ```
+
+  The problem this solves is the *key*, not the plumbing. Binding the context into
+  the factory instead — `taskLanes(ctx).detail(id)` — reads fine and makes `.key`
+  unreachable from every module that has no context: a mutation, a Server Component
+  seed, an error-boundary retry. The workaround is a second map of bare keys, so
+  every read exists twice with the loaded type restated by hand and nothing
+  checking that the two agree. Keeping the dependency on the lane keeps a read's
+  arguments to exactly what decides its key, so `.key` costs nothing to reach.
+
+  The mechanism is react-query's `Register`, and so is the naming asymmetry —
+  `loaderMeta` is declared and supplied, `meta` is received, exactly as react-query
+  declares `queryMeta` and delivers `context.meta`. The value's *placement* is
+  inverted: react-query puts it on the query, Lane puts it on the lane and makes it
+  mandatory, which is what lets `meta` be non-optional inside a loader instead of
+  always possibly-`undefined`. A single read can still override it
+  (`{ ...taskLanes.detail(id), loaderMeta: other }`), and in a batch a member's own
+  value wins.
+
+  Nothing about a read's type changes: `LaneReadSpec` gains no type parameter and
+  `useLane` gains no overload. **An app that declares nothing is unaffected** —
+  `meta` is `undefined`, and the provider prop and `prefetch` argument stay absent.
+
+  Two consequences are deliberate and documented: the type is program-wide (one
+  `loaderMeta` per app, since module augmentation is), and the value is **not part
+  of any key** — two reads of one key under different meta name the same entry, and
+  nothing invalidates when it changes. Scope what it owns into the key, or drop
+  those keys on a switch (`lane.removeAll(["tasks"])`).
+
+- **`laneSnapshot(readOrKey, data)`** — one hydration entry, type-checked. An
+  object literal lets any `data` through, because `LaneSnapshot.key` is a plain
+  `LaneKey`, and a mismatched pair on the seed path does not fail a fetch: it
+  hydrates every reader of that key with the wrong shape and surfaces somewhere
+  else. `laneSnapshot` infers `T` from the key and checks `data` against it. It
+  takes a **read**, not just a key — `laneSnapshot(taskLanes.list(filters), tasks)`
+  — so the seed is written against the same definition the browser reads with. No
+  loader is called, so it stays a plain Server Component import.
+
 - **`laneRead({ key, loader, ...options })`** — a read's key, its loader, and the
   options it is read with, colocated in one value; react-query's `queryOptions()`
   for Lane. A key factory shares only half of a read: the loader and the options

@@ -66,6 +66,20 @@ task touches that rule.
   checked; `laneKey<T>(key)` declares one for a write-only module. Scoped `*All`
   operations still take a prefix or predicate scope.
   → `references/api-reference.md#lanereadspec--key--loader-colocation`
+- **Never bind a request context into the read factory.** `taskLanes(ctx).detail(id)`
+  reads fine and makes `.key` unreachable from every module that has no `ctx` — a
+  mutation, a Server Component seed, an error-boundary retry — which is what forces
+  a second, hand-typed map of bare keys. Declare the dependency once instead
+  (`declare module "use-lane" { interface LaneRegister { loaderMeta: Ctx } }`),
+  supply it at `<LaneProvider loaderMeta={ctx}>`, and read it as `loader({ meta })`.
+  A read's arguments then stay exactly what decides its key. The obligation: the
+  meta is **not part of the key**, so nothing invalidates when it changes — scope
+  what it owns into the key, or `lane.removeAll(prefix)` on a switch.
+  → `references/api-reference.md#laneregister--what-loaders-are-handed-besides-the-key`
+- **Seed hydration with `laneSnapshot(read, data)`,** not an object literal. A
+  literal's `key` is an untyped `LaneKey`, so a mismatched pair compiles and seeds
+  every reader of that key with the wrong shape; `laneSnapshot` infers the type
+  from the read's key and checks `data` against it.
 - **One owner per key per subtree.** Dedupe makes re-reading a key in a child
   free in requests, but each reader is another subscription, pending flag, and
   suspend point — read where the data enters the screen and pass the value down.

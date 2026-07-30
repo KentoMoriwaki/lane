@@ -1,16 +1,6 @@
 "use client";
 
-import { laneKey, laneRead } from "use-lane";
-import type { WorkspaceCtx } from "./client";
-import type {
-  CurrentUser,
-  Insights,
-  Project,
-  Task,
-  TeamLabel,
-  TeamMember,
-  TeamSummary,
-} from "@/server/api";
+import { laneRead } from "use-lane";
 import {
   fetchCurrentUser,
   fetchInsights,
@@ -23,45 +13,6 @@ import {
   fetchTeams,
   type TaskFilters,
 } from "./endpoints";
-/**
- * Every key this workspace addresses, carrying what its entry holds.
- *
- * `laneKey<T>` is what makes a write checked — `lane.set` here cannot put a
- * `Project` under a task key — and this layer deliberately holds **no loaders**,
- * because addressing an entry never needs one. That is what lets `publishTask`
- * (in `hooks.ts`) take no request context at all.
- *
- * Team-owned keys omit `teamId`: the active team travels in request headers, and
- * the workspace provider removes these keys when it changes (see
- * `TEAM_SCOPED_KEYS`). Session-level keys are kept separate.
- */
-export const laneKeys = {
-  currentUser: () => laneKey<CurrentUser>(["current-user"]),
-  teams: () => laneKey<TeamSummary[]>(["teams"]),
-  tasks: (filters: TaskFilters) => laneKey<Task[]>(["tasks", filters]),
-  task: (taskId: string) => laneKey<Task>(["task", taskId]),
-  taskBlockedBy: (taskId: string) =>
-    laneKey<Task[]>(["task-blocked-by", taskId]),
-  taskBlocking: (taskId: string) => laneKey<Task[]>(["task-blocking", taskId]),
-  projects: () => laneKey<Project[]>(["projects"]),
-  labels: () => laneKey<TeamLabel[]>(["labels"]),
-  members: () => laneKey<TeamMember[]>(["members"]),
-  insights: () => laneKey<Insights>(["insights"]),
-};
-
-/**
- * The key families that belong to the active team and are removed when it
- * changes. Prefix *scopes*, not keys — they name a family of entries rather than
- * one, so they carry no type.
- */
-export const TEAM_SCOPED_KEYS = [
-  ["tasks"],
-  ["task"],
-  ["projects"],
-  ["labels"],
-  ["members"],
-  ["insights"],
-] as const;
 
 /**
  * The board's own reads — the task list and the two views derived from it —
@@ -76,85 +27,110 @@ const BOARD_REVALIDATION = {
 } as const;
 
 /**
- * Every read the workspace performs, defined once — `laneRead` colocates a
- * read's key, its loader, and the options it is read with, the way
- * react-query's `queryOptions()` does.
+ * Every read this workspace performs, defined once — key, loader, and freshness
+ * in one place, which is all `laneRead` has ever been for.
  *
- * Sharing only the *key* shares half a read: the
- * loader and the freshness options would still be written at each call site,
- * where nothing checks that they belong to that key. Here `useTasks` cannot
- * accidentally read `["tasks", filters]` with a one-second `staleTime` while
- * some other component reads it with none.
+ * What is worth noticing is what is **not** here: a second map of keys. Each
+ * factory takes exactly what decides its key, and the session the loaders need
+ * arrives from the lane as `meta` (declared in `@/lib/lane-meta`, supplied by
+ * `ClientWorkspaceProvider`). So a read is a plain object that costs nothing to
+ * build, and `.key` is reachable from anywhere — a mutation, an error-boundary
+ * retry, a component above the provider:
  *
- * The workspace context is bound **once, here**, rather than passed to every
- * factory. What a loader needs to run and what makes a read distinct are
- * different things: `ctx` travels in request headers and is deliberately not in
- * any key, so a `tasks(ctx, filters)` signature would list two arguments of
- * which only one decides which entry is read. Binding the dependency up front
- * leaves each factory taking exactly its identity — `tasks(filters)`,
- * `task(taskId)` — which is also what the keys in `laneKeys` take.
+ * ```ts
+ * lane.set(workspaceReads.task(task.id).key, task);
+ * lane.invalidate(workspaceReads.insights().key);
+ * ```
  *
- * The reads are built on those keys, so one array literal per entry serves both
- * the read and the writes to it.
+ * Binding the session into the factories instead — `workspaceReads(ctx).task(id)`
+ * — is what used to force a parallel `laneKeys` map: the write side would have
+ * had to produce a request context just to *name* an entry. Those keys are now
+ * the reads' own, so the loaded type is inferred from the fetcher rather than
+ * restated by hand, and there is one definition to keep correct instead of two.
+ *
+ * Team-owned keys omit `teamId`: the active team travels in request headers, and
+ * the workspace removes these keys when it changes (see `TEAM_SCOPED_KEYS`).
+ * That is the standing obligation of a session that lives on the lane rather
+ * than in the key — nothing invalidates on its own when the meta changes.
  */
-export function workspaceReads(ctx: WorkspaceCtx) {
-  return {
-    currentUser: () =>
-      laneRead({
-        key: laneKeys.currentUser(),
-        loader: () => fetchCurrentUser(ctx),
-      }),
-    teams: () =>
-      laneRead({ key: laneKeys.teams(), loader: () => fetchTeams(ctx) }),
-    tasks: (filters: TaskFilters) =>
-      laneRead({
-        key: laneKeys.tasks(filters),
-        loader: () => fetchTasks(ctx, filters),
-        ...BOARD_REVALIDATION,
-      }),
-    task: (taskId: string) =>
-      laneRead({
-        key: laneKeys.task(taskId),
-        loader: () => fetchTask(ctx, taskId),
-      }),
-    projects: () =>
-      laneRead({
-        key: laneKeys.projects(),
-        loader: () => fetchProjects(ctx),
-        // Carries per-project task counts, so it moves whenever the board does.
-        ...BOARD_REVALIDATION,
-      }),
-    labels: () =>
-      laneRead({ key: laneKeys.labels(), loader: () => fetchLabels(ctx) }),
-    members: () =>
-      laneRead({ key: laneKeys.members(), loader: () => fetchMembers(ctx) }),
-    insights: () =>
-      laneRead({
-        key: laneKeys.insights(),
-        loader: () => fetchInsights(ctx),
-        ...BOARD_REVALIDATION,
-      }),
+export const workspaceReads = {
+  currentUser: () =>
+    laneRead({
+      key: ["current-user"],
+      loader: ({ meta }) => fetchCurrentUser(meta),
+    }),
+  teams: () =>
+    laneRead({ key: ["teams"], loader: ({ meta }) => fetchTeams(meta) }),
+  tasks: (filters: TaskFilters) =>
+    laneRead({
+      key: ["tasks", filters],
+      loader: ({ meta }) => fetchTasks(meta, filters),
+      ...BOARD_REVALIDATION,
+    }),
+  task: (taskId: string) =>
+    laneRead({
+      key: ["task", taskId],
+      loader: ({ meta }) => fetchTask(meta, taskId),
+    }),
+  projects: () =>
+    laneRead({
+      key: ["projects"],
+      loader: ({ meta }) => fetchProjects(meta),
+      // Carries per-project task counts, so it moves whenever the board does.
+      ...BOARD_REVALIDATION,
+    }),
+  labels: () =>
+    laneRead({ key: ["labels"], loader: ({ meta }) => fetchLabels(meta) }),
+  members: () =>
+    laneRead({ key: ["members"], loader: ({ meta }) => fetchMembers(meta) }),
+  insights: () =>
+    laneRead({
+      key: ["insights"],
+      loader: ({ meta }) => fetchInsights(meta),
+      ...BOARD_REVALIDATION,
+    }),
 
-    /**
-     * The detail panel's two dependency reads. Gating lives *in the definition*:
-     * a task with no blockers (or that blocks nothing) has no loader, so nothing
-     * is fetched, subscribed, or stored, and the reader unwraps `promise`
-     * conditionally. The loaded type is unaffected — the off-state is on the
-     * `promise: undefined` axis.
-     */
-    blockedBy: (taskId: string, ids: string[]) =>
-      laneRead({
-        key: laneKeys.taskBlockedBy(taskId),
-        loader: ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
-        refetchOnMount: true,
-        staleTime: 5_000,
-      }),
-    blocking: (taskId: string, ids: string[]) =>
-      laneRead({
-        key: laneKeys.taskBlocking(taskId),
-        loader: ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
-        refetchOnMount: true,
-        staleTime: 5_000,
-      }),
-  };
-}
+  /**
+   * The detail panel's two dependency reads. Gating lives *in the definition*: a
+   * task with no blockers (or that blocks nothing) has no loader, so nothing is
+   * fetched, subscribed, or stored, and the reader unwraps `promise`
+   * conditionally. The loaded type is unaffected — the off-state is on the
+   * `promise: undefined` axis — and `.key` is tagged either way, so an
+   * error-boundary retry can invalidate a read that is currently gated off.
+   *
+   * `ids` is the one parameter here that does not reach the key: the entry is
+   * "this task's blockers", and which ids that means is the task's own business.
+   * A caller that only wants the key passes them anyway, which is honest about
+   * the loader it is naming — and every such caller has the task in hand.
+   */
+  blockedBy: (taskId: string, ids: string[]) =>
+    laneRead({
+      key: ["task-blocked-by", taskId],
+      loader:
+        ids.length > 0 ? ({ meta }) => fetchTasksByIds(meta, ids) : undefined,
+      refetchOnMount: true,
+      staleTime: 5_000,
+    }),
+  blocking: (taskId: string, ids: string[]) =>
+    laneRead({
+      key: ["task-blocking", taskId],
+      loader:
+        ids.length > 0 ? ({ meta }) => fetchTasksByIds(meta, ids) : undefined,
+      refetchOnMount: true,
+      staleTime: 5_000,
+    }),
+};
+
+/**
+ * The key families that belong to the active team and are removed when it
+ * changes. Prefix *scopes*, not keys — they name a family of entries rather than
+ * one, so they carry no type and belong to no single read.
+ */
+export const TEAM_SCOPED_KEYS = [
+  ["tasks"],
+  ["task"],
+  ["projects"],
+  ["labels"],
+  ["members"],
+  ["insights"],
+] as const;

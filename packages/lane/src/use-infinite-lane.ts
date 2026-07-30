@@ -3,11 +3,12 @@
 import { useCallback } from "react";
 import { updateEntry } from "./core";
 import { serializeKey } from "./keys";
-import { useLaneInstance } from "./provider";
+import { useLaneContext } from "./provider";
 import type {
   LaneInvalidateOptions,
   LaneKey,
   LaneKeyOf,
+  LaneLoaderMeta,
   LaneRead,
   LaneUseOptions,
 } from "./types";
@@ -44,7 +45,10 @@ export type InfiniteLaneOptions<P, C> = {
    * cannot be aborted. It is optional rather than faked so the difference is
    * visible at the call site.
    */
-  fetchPage: (cursor: C, context: { signal?: AbortSignal }) => Promise<P>;
+  fetchPage: (
+    cursor: C,
+    context: { signal?: AbortSignal; meta: LaneLoaderMeta },
+  ) => Promise<P>;
   /** The cursor for the page after this one, or `null` at the end of the list. */
   nextCursor: (page: P, cursor: C) => C | null;
 };
@@ -126,15 +130,19 @@ export function useInfiniteLane<P, C>(
 ): InfiniteLaneResult<P, C> {
   const { key, initialCursor, fetchPage, nextCursor } = read;
 
-  const lane = useLaneInstance();
+  // `loadMore` appends through `lane.update`, which is not a read and so never
+  // reaches `runLoader` — the meta the refresh path gets from the read options
+  // has to be handed to that page fetch directly, resolved the same way.
+  const { lane, loaderMeta: laneMeta } = useLaneContext("useInfiniteLane");
   const keyId = serializeKey(key);
+  const loaderMeta = read.loaderMeta ?? laneMeta;
 
   const { invalidate, isBackgroundPending, isTransitionPending, promise } =
     // The read options pass straight through; the pagination fields ride along
     // inert (a read only ever looks at the four it knows).
     useLane<InfiniteLaneValue<P, C>>({
       ...read,
-      loader: async ({ current, signal }) => {
+      loader: async ({ current, meta, signal }) => {
         // `current` is typed by the explicit type argument above, so this reads
         // the accumulated value directly — no narrowing, no cast.
         // How deep this key already is. A first load is one page.
@@ -148,7 +156,7 @@ export function useInfiniteLane<P, C>(
         let next: C | null = null;
 
         for (let index = 0; index < depth; index += 1) {
-          const page = await fetchPage(cursor, { signal });
+          const page = await fetchPage(cursor, { meta, signal });
           pages.push(page);
           params.push(cursor);
 
@@ -209,7 +217,7 @@ export function useInfiniteLane<P, C>(
       // No `signal`: an updater is handed the current value, not an abort
       // controller, so this request runs to completion even if the reader
       // moves on.
-      const page = await fetchPage(cursor, {});
+      const page = await fetchPage(cursor, { meta: loaderMeta });
 
       return {
         hasNext: nextCursor(page, cursor) !== null,
@@ -217,7 +225,7 @@ export function useInfiniteLane<P, C>(
         params: [...value.params, cursor],
       };
     });
-  }, [fetchPage, keyId, lane, nextCursor]);
+  }, [fetchPage, keyId, lane, loaderMeta, nextCursor]);
 
   return {
     invalidate,

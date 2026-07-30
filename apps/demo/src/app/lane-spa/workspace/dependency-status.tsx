@@ -8,7 +8,7 @@ import {
   useBlockedByTasks,
   useBlockingTasks,
 } from "@/app/lane-spa/api/hooks";
-import { laneKeys } from "@/app/lane-spa/api/lane-reads";
+import { workspaceReads } from "@/app/lane-spa/api/lane-reads";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { LaneErrorBoundary } from "./lane-error-boundary";
@@ -84,8 +84,8 @@ export function DependencyStatus({
           <button
             type="button"
             onClick={() => {
-              lane.invalidate(laneKeys.taskBlockedBy(task.id));
-              lane.invalidate(laneKeys.taskBlocking(task.id));
+              lane.invalidate(workspaceReads.blockedBy(task.id, task.blockedBy).key);
+              lane.invalidate(workspaceReads.blocking(task.id, task.blocks).key);
               retry();
             }}
             className="text-xs text-rose hover:underline"

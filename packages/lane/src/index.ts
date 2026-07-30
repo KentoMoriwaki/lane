@@ -19,7 +19,9 @@ export type {
 export { LaneHydration } from "./hydration";
 export { laneKey } from "./keys";
 export { LaneProvider, useLaneInstance } from "./provider";
+export type { LaneProviderProps } from "./provider";
 export { laneRead } from "./read-spec";
+export { laneSnapshot } from "./snapshot";
 export { infiniteLaneRead, useInfiniteLane } from "./use-infinite-lane";
 export type {
   InfiniteLaneOptions,
@@ -40,9 +42,13 @@ export type {
   LaneKeyOf,
   LaneLoader,
   LaneLoaderContext,
+  LaneLoaderMeta,
+  LaneLoaderMetaArgs,
+  LaneLoaderMetaProp,
   LaneOptions,
   LanePlainKey,
   LaneRead,
+  LaneRegister,
   LaneReadSpec,
   LaneRefetchOnFocus,
   LaneRefetchOnMount,

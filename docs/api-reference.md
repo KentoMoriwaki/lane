@@ -41,6 +41,7 @@ from a pluggable event source.
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
 | `lane` | `Lane` | a fresh `createLane()` | The Lane instance to provide. Omit to let the provider create and own one. |
+| `loaderMeta` | `LaneRegister["loaderMeta"]` | — | **Required only if you declare it** (see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key)). What every loader on this lane is handed as `meta`. Absent from the props entirely when nothing is declared. |
 | `focusThrottleInterval` | `number` | `5000` | Focus and `visibilitychange` both fire on a tab switch; focus revalidations within this window are coalesced into one. Reconnect is not throttled. |
 | `eventSource` | `LaneEventSource` | `domEventSource` | Where focus / reconnect signals originate. Defaults to browser DOM events. Pass `noopEventSource` (CLI), `createReactNativeEventSource(...)` (React Native), or your own — see [Event sources](#event-sources) and [Environments](./environments.md). Use a stable reference. |
 
@@ -125,11 +126,14 @@ type LaneReadSpec<T, C = T> = LaneUseOptions & {
 ```
 
 - **`key`** — a structural array (`["task", id]`). See [Keys](#keys).
-- **`loader`** — `({ key, signal, current }) => Promise<T>`, or `undefined` to
-  gate the read off (see [Conditional reads](#conditional-reads-gating)). Called
-  when the key has no cached promise. The `signal` aborts when the in-flight read
-  is discarded (invalidation, removal, an authoritative `set` over a pending
-  read, or GC).
+- **`loader`** — `({ key, signal, current, meta }) => Promise<T>`, or `undefined`
+  to gate the read off (see [Conditional reads](#conditional-reads-gating)).
+  Called when the key has no cached promise. The `signal` aborts when the
+  in-flight read is discarded (invalidation, removal, an authoritative `set` over
+  a pending read, or GC). `meta` is whatever the lane carries — the session or
+  request context a loader needs that is not part of its key; it is `undefined`
+  unless you declare it (see
+  [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key)).
 - **the rest** — see [`LaneUseOptions`](#laneuseoptions). They ride flat on the
   same object.
 
@@ -186,7 +190,7 @@ render, it switches to the new key's promise immediately (no extra render of the
 old data). When the entry is invalidated, set, updated, or removed elsewhere, the
 subscribed hook re-reads through the appropriate transition.
 
-### `useLanePromise(key, loader, options?)`
+### `useLanePromise(read)`
 
 Thin wrapper that returns only the promise. Equivalent to
 `useLane(...).promise`. Use it at call sites that do not need pending state or
@@ -351,6 +355,98 @@ reason it always did.)
 
 > `laneRead` *describes* a read; [`LaneRead<T>`](#lanereadt) is what one
 > *resolves to*.
+
+### `LaneRegister` — what loaders are handed besides the key
+
+Most loaders need something the key does not carry: a session, a tenant, an API
+client, a request context. Declaring it once makes it available to every loader
+as `meta`, without any read taking it as an argument.
+
+```ts
+// Once per app.
+declare module "use-lane" {
+  interface LaneRegister {
+    loaderMeta: WorkspaceCtx;
+  }
+}
+```
+
+```tsx
+<LaneProvider loaderMeta={ctx}>{children}</LaneProvider>
+```
+
+```ts
+export const taskLanes = {
+  detail: (id: string) =>
+    laneRead({
+      key: ["task", id],
+      loader: ({ meta, signal }) => fetchTask(meta, id, signal),
+    }),
+};
+```
+
+**The problem it solves is the key, not the plumbing.** The obvious way to give
+loaders a context is to bind it into the factory — `taskLanes(ctx).detail(id)`.
+That works for reading and breaks everywhere else, because naming an entry now
+requires a context: a mutation, a Server Component, a component above the
+provider, an error-boundary retry. Codebases resolve this by keeping a second,
+parallel map of bare keys — and then every read exists twice, with the loaded
+type restated by hand on the key side and no compiler check that the two agree.
+Putting the dependency on the lane keeps the read a plain object whose arguments
+are exactly what decides its key, so `.key` costs nothing to reach:
+
+```ts
+lane.set(taskLanes.detail(id).key, task);      // no context needed
+laneSnapshot(taskLanes.list(filters), tasks);  // in an RSC
+```
+
+The mechanism is react-query's `Register`, and so is the asymmetry in naming:
+`loaderMeta` is what you **declare and supply**, `meta` is what the loader
+**receives** — exactly as react-query declares `queryMeta` and delivers
+`context.meta`.
+
+| | Declared | Not declared |
+| --- | --- | --- |
+| `LaneProvider` | `loaderMeta` is **required** | prop absent |
+| `lane.prefetch` | `prefetch(read, { loaderMeta })` | `prefetch(read)` |
+| `meta` in a loader | typed, **non-optional** | `undefined` |
+
+Nothing about a read's type changes: `LaneReadSpec` gains no type parameter,
+`useLane` gains no overload, and an app that declares nothing is unaffected.
+
+#### Per-read override
+
+A single read that belongs to another context can say so:
+
+```ts
+useLane({ ...taskLanes.detail(id), loaderMeta: otherTenant });
+```
+
+It is optional and safely so — the lane always has a value, so this narrows a
+guarantee rather than standing in for a missing one, and `meta` stays
+non-optional inside the loader. (This is the one place Lane is stricter than
+react-query, where `meta` is per-query only and therefore always
+possibly-`undefined`.) In a batch, a member's own value wins over the batch's.
+
+#### The one obligation: it is not part of the key
+
+Two reads of one key under different `loaderMeta` **name the same entry**, and
+whichever loaded first wins. Lane will not invalidate anything when the value
+changes, because it cannot know what the value owns. So either scope what it
+owns into the key, or drop those keys when it changes:
+
+```ts
+// On a team switch — the keys omit teamId, so they must be dropped explicitly.
+for (const scope of [["tasks"], ["projects"], ["insights"]]) {
+  lane.removeAll(scope);
+}
+```
+
+**One declaration per app, one value per provider.** The type is program-wide
+(module augmentation), so an app has exactly one `loaderMeta` type. The *value*
+is per provider, and providers nest — a client-only app can read its bootstrap
+under a session-less meta and re-provide the same lane with the real session once
+the user is known, keeping everything already cached.
 
 ### `LaneKeyOf<T>` — a key that knows what it holds
 
@@ -825,15 +921,18 @@ start the fetch early *inside* a rendering component; `prefetch` starts it
 *before* the component exists.
 
 ```ts
-prefetch<T>(
-  key: LaneKey,
-  loader: LaneLoader<T>,
-  options?: LanePrefetchOptions,
-): Promise<LaneRead<T>>;
-prefetch<T, C = T>(spec: LaneReadSpec<T, C>): Promise<LaneRead<T>>;
+prefetch<T, C = T>(read: LaneReadSpec<T, C>): Promise<LaneRead<T>>;
 
-type LanePrefetchOptions = Pick<LaneUseOptions, "retry" | "retryDelay">;
+// When LaneRegister declares a loaderMeta, it is required here — this is the
+// one read that happens outside React, so it cannot take it from the provider.
+prefetch<T, C = T>(
+  read: LaneReadSpec<T, C>,
+  options: { loaderMeta: LaneRegister["loaderMeta"] },
+): Promise<LaneRead<T>>;
 ```
+
+Only the fetch-shaping options on the read apply (`retry` / `retryDelay`);
+`staleTime` / `whenStale` stay the eventual reader's call.
 
 `prefetch` is a method on the
 [`Lane` instance](#mutation-convergence--the-lane-instance)
@@ -876,6 +975,7 @@ prefetch that nobody consumes does not surface as an unhandled rejection.
 
 ```ts
 type LaneUseOptions = {
+  loaderMeta?: LaneRegister["loaderMeta"];
   staleTime?: number;
   whenStale?: "revalidate" | "refetch";
   retry?: number;
@@ -891,6 +991,7 @@ type LaneUseOptions = {
 
 | Option | Default | Description |
 | --- | --- | --- |
+| `loaderMeta` | the lane's | Read this entry with a different `meta` than the lane carries — see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key). Not part of the key. In a batch, a member's own value wins over the batch's. |
 | `staleTime` | `0` | How long (ms) a fulfilled value is considered fresh. Once stale, a read's behavior is decided by `whenStale`, and the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. |
 | `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value (or a prior error) and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. |
 | `retry` | `0` | Number of automatic retries for a failed load. Aborts stop the retry loop. |
@@ -1319,6 +1420,39 @@ export const taskKeys = {
 const snapshots = { entries: [{ key: taskKeys.list(filters), data: tasks }] };
 ```
 
+#### `laneSnapshot(readOrKey, data)`
+
+An object literal lets any `data` through, because `LaneSnapshot.key` is a plain
+`LaneKey`. That matters more here than almost anywhere else: a mismatched pair
+does not fail a fetch, it seeds every reader of that key with the wrong shape and
+surfaces somewhere else entirely. `laneSnapshot` infers `T` from the key and
+checks `data` against it.
+
+```ts
+function laneSnapshot<T>(
+  target: LaneKeyOf<T> | { key: LaneKeyOf<T> },
+  data: T,
+): LaneSnapshot<T>;
+function laneSnapshot<T>(target: LanePlainKey, data: T): LaneSnapshot<T>;
+```
+
+It takes a **read**, not just a key — anything with a `key`, including an
+[infinite read](#useinfinitelaneread--a-cursor-paginated-list) — so the seed is
+written against the same definition the browser reads with:
+
+```ts
+// page.tsx — a Server Component. No loader is called; a read is a plain object.
+const snapshots = {
+  entries: [
+    laneSnapshot(taskLanes.list(filters), tasks),
+    laneSnapshot(taskLanes.detail(id), task),
+  ],
+};
+```
+
+A plain key carries no type, so — exactly as with [`set`](#set) — the value
+decides it, and `laneSnapshot(["tasks", filters], tasks)` keeps working.
+
 Hydration is for initial seeding and navigation, not post-mutation patching.
 Once the client owns the read, converge with `invalidate` / `set` / `update`.
 
@@ -1368,14 +1502,14 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 
 `InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
 `Lane`, `LaneEntryInfo`, `LaneEventSource`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
-`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`,
-`LaneKeyOf`, `LanePlainKey`, `LanePrefetchOptions`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
+`LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneLoaderMeta`, `LaneLoaderMetaArgs`, `LaneLoaderMetaProp`, `LaneOptions`,
+`LaneKeyOf`, `LanePlainKey`, `LanePrefetchOptions`, `LaneProviderProps`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneRegister`,
 `LaneResult`, `LaneRetryDelay`, `LaneRevalidateHandlers`,
 `LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`,
 `ReactNativeAppState`, `ReactNativeEventSourceOptions`, `ReactNativeNetInfo`.
 
 Runtime exports beyond the hooks and `createLane`: `laneRead`,
-`infiniteLaneRead`, `laneKey` (see
+`infiniteLaneRead`, `laneKey`, `laneSnapshot` (see
 [`laneRead`](#lanereadspec--key--loader-colocation) and
 [`LaneKeyOf`](#lanekeyoft--a-key-that-knows-what-it-holds)),
 `domEventSource`, `noopEventSource`, `createReactNativeEventSource` (see

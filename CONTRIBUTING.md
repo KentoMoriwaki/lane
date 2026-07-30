@@ -97,7 +97,7 @@ one you tripped tells you what to do about it.
 | --- | --- | --- | --- |
 | `store without React (design guard)` | `{ createLane }` | 2.2 kB | keeping the store small |
 | `typical: LaneProvider + useLane` | `{ LaneProvider, useLane }` | 3.5 kB | the number consumers are quoted |
-| `everything (ceiling)` | `*` | 4.7 kB | what the package costs at most |
+| `everything (ceiling)` | `*` | 4.85 kB | what the package costs at most |
 
 **The design guard is a tripwire, not a consumer number.** Nobody imports
 `createLane` alone — it exists to hand an instance to `LaneProvider`, so a real
@@ -119,14 +119,20 @@ Verified by adding a throwaway module and rebuilding: the design guard stayed at
 2.02 kB and the typical check at 3.33 kB, both byte-identical, while only the
 ceiling moved.
 
-It sits at 4569 B against 4.7 kB. That 131 B is narrower than the marginal cost
-of any feature Lane currently ships — the cheapest, `LaneHydration`, is 158 B —
+It sits at 4726 B against 4.85 kB. That 124 B is narrower than the marginal cost
+of any feature Lane currently ships — the cheapest, `LaneHydration`, is 143 B —
 so a real feature added to the barrel trips it and has to be argued for. A
 genuinely trivial helper can still land inside the headroom (the throwaway module
 above cost 81 B and fit), which is the intended trade: the limit is loose enough
 to absorb Brotli jitter across toolchain bumps and tight enough that no feature
 slips in unnoticed. Raising it is a deliberate act with a CHANGELOG line, not
 silent drift.
+
+It has been raised once, which is the mechanism working as designed rather than
+against it: `LaneRegister` + `laneSnapshot` cost 157 B and tripped the original
+4.7 kB, so the limit moved to 4.85 kB with the argument recorded in the
+CHANGELOG. The new headroom is deliberately set to the same width, so the next
+feature trips it too.
 
 Per-feature marginal costs are documented in
 [Design notes](docs/design-notes.md#what-each-feature-costs) rather than pinned as

@@ -16,6 +16,7 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | --- | --- |
 | `queryKey` | the read **key** (`["user", id]`) — a structural array |
 | `queryFn` / fetcher | the **loader** — forward `({ signal })` to `fetch` |
+| `Register["queryMeta"]` / `meta` | `LaneRegister["loaderMeta"]` → `loader({ meta })`, supplied at the provider ([step 0](#step-0--keep-your-options-factories)) |
 | `queryOptions({ … })` | `laneRead({ key, loader, …options })` ([step 0](#step-0--keep-your-options-factories)) |
 | `infiniteQueryOptions({ … })` | `infiniteLaneRead({ key, initialCursor, fetchPage, nextCursor })` |
 | `DataTag` on `queryKey` | `LaneKeyOf<T>` — `spec.key`, or `laneKey<T>(…)` |
@@ -81,7 +82,7 @@ makes `getQueryData` / `setQueryData` typed from the key alone; Lane's
 that idea, so anything addressing an entry takes `spec.key` and the loader stays
 out of it.
 
-Two differences worth knowing:
+Three differences worth knowing:
 
 - **`invalidateQueries` takes filters; `invalidate` takes one key.** For a family,
   use a prefix or predicate scope: `lane.invalidateAll(["tasks"])`.
@@ -89,10 +90,29 @@ Two differences worth knowing:
   only from `queryOptions` (which requires a `queryFn`), Lane also has
   `laneKey<T>(["task", id])` — a typed key with no loader, so a mutation module
   imports keys and nothing else.
+- **`meta` moves from the query to the lane.** If your `queryFn`s read
+  `({ meta })` for a session or an API client, declare it once and supply it at
+  the provider instead of on each read:
 
-Colocating is not required — `useLane(key, loader, options)` is the same read
-written out — but it is the shape that keeps a key from drifting away from the
-loader and options it belongs to. See
+  ```ts
+  // Before                                    // After
+  declare module "@tanstack/react-query" {     declare module "use-lane" {
+    interface Register { queryMeta: Ctx }        interface LaneRegister { loaderMeta: Ctx }
+  }                                            }
+
+  queryOptions({ queryKey, queryFn, meta })    <LaneProvider loaderMeta={ctx}>
+  ```
+
+  The loader still receives it as `meta`, and a single read can still override it
+  (`{ ...taskLanes.detail(id), loaderMeta: other }`). The difference is that the
+  lane's value is mandatory, so `meta` is non-optional inside the loader rather
+  than always possibly-`undefined`. See
+  [`LaneRegister`](./api-reference.md#laneregister--what-loaders-are-handed-besides-the-key).
+
+Colocating is what keeps a key from drifting away from the loader and options it
+belongs to — and with `meta` on the lane, a read's arguments are exactly what
+decides its key, so `.key` stays reachable from a mutation module or a Server
+Component. See
 [`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation).
 
 ## Step 1 — read with `use()`, delete the status object

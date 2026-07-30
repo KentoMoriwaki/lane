@@ -8,6 +8,7 @@ import {
   useTransition,
 } from "react";
 import { LaneProvider, useLaneInstance } from "use-lane";
+import { NO_SESSION } from "@/lib/lane-meta";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -44,7 +45,7 @@ import { searchKey } from "./search-lane";
  */
 export default function CancelLabPage() {
   return (
-    <LaneProvider>
+    <LaneProvider loaderMeta={NO_SESSION}>
       <CancelLab />
     </LaneProvider>
   );

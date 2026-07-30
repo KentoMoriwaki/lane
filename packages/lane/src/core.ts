@@ -7,6 +7,8 @@ import type {
   LaneInvalidateOptions,
   LaneKey,
   LaneLoader,
+  LaneLoaderMeta,
+  LaneLoaderMetaArgs,
   LaneOptions,
   LaneRead,
   LaneReadSpec,
@@ -24,6 +26,14 @@ export type LaneReadOptions = {
   retryDelay?: LaneRetryDelay;
   staleTime?: number;
   whenStale?: LaneWhenStale;
+  /**
+   * The lane's `loaderMeta`, handed to the loader as `context.meta`. It rides in
+   * the read options rather than in the read because it belongs to the lane, not
+   * to the definition — which is what keeps a read's arguments to exactly what
+   * decides its key. Nothing here reads it: it is threaded to `runLoader` and
+   * never participates in cache reuse.
+   */
+  loaderMeta?: LaneLoaderMeta;
 };
 
 type LaneSubscription = (
@@ -114,7 +124,7 @@ export function createLane(options: LaneOptions = {}): Lane {
   };
 
   const lane: Lane = {
-    prefetch<T, C = T>(read: LaneReadSpec<T, C>) {
+    prefetch<T, C = T>(read: LaneReadSpec<T, C>, ...args: LaneLoaderMetaArgs) {
       // Warm the cache without subscribing or suspending: start the load and
       // hand back the promise for a later reader to adopt. Pin "revalidate" so a
       // re-fired prefetch (e.g. repeated link hover) dedupes onto the in-flight
@@ -125,6 +135,9 @@ export function createLane(options: LaneOptions = {}): Lane {
       // A read's `staleTime` / `whenStale` are deliberately ignored here: those
       // are read-time decisions and this is not the read.
       return readOrCreate<T, C>(lane, read.key, read.loader, {
+        // Same precedence as a hook read: the read's own override wins over the
+        // value supplied alongside it.
+        loaderMeta: read.loaderMeta ?? args[0]?.loaderMeta,
         retry: read.retry,
         retryDelay: read.retryDelay,
         whenStale: "revalidate",
@@ -653,11 +666,14 @@ function runLoader<T, C>(
 ): Promise<T> {
   const retry = options?.retry ?? 0;
   const retryDelay = options?.retryDelay ?? DEFAULT_RETRY_DELAY;
+  // Snapshotted with the read, like `current`: every retry below sees the value
+  // the read started with, not whatever the provider holds when the retry fires.
+  const meta = options?.loaderMeta as LaneLoaderMeta;
   let attempt = 0;
 
   const attemptLoad = (): Promise<T> =>
     Promise.resolve()
-      .then(() => loader({ current, key, signal }))
+      .then(() => loader({ current, key, meta, signal }))
       .catch((error: unknown) => {
         if (signal.aborted || attempt >= retry) {
           throw error;

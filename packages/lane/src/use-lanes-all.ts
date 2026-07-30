@@ -10,12 +10,13 @@ import {
 } from "react";
 import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
 import { serializeKey } from "./keys";
-import { useLaneInstance, useLaneRevalidation } from "./provider";
+import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
   Lane,
   LaneKey,
   LaneLoader,
+  LaneLoaderMeta,
   LaneRead,
   LaneReadSpec,
   LaneUseOptions,
@@ -73,8 +74,9 @@ export function useLanesAll<T, C = T>(
   reads: readonly LaneReadSpec<T, C>[],
   options: LaneUseOptions = EMPTY_OPTIONS,
 ): Promise<LaneRead<T>[]> {
-  const lane = useLaneInstance();
-  const revalidation = useLaneRevalidation();
+  // One context read; `loaderMeta` comes from the lane, not from a member — see
+  // `useLane`.
+  const { lane, revalidation, loaderMeta } = useLaneContext("useLanesAll");
 
   // Serialized once per (stable) `reads`, not every render.
   const descriptors = useMemo(
@@ -92,14 +94,14 @@ export function useLanesAll<T, C = T>(
   // commits, so this initializer re-runs on every retry, but `aggregateOf` returns
   // the *same* promise, so `use()` throws the settled rejection once.
   const [aggregate, setAggregate] = useState(() =>
-    computeAggregate(lane, descriptors, options),
+    computeAggregate(lane, descriptors, options, loaderMeta),
   );
   // Rebuild the aggregate during render when the keys change. `builtFrom` is the
   // descriptors the current aggregate reflects — a plain referential guard.
   const [builtFrom, setBuiltFrom] = useState(descriptors);
   let promise = aggregate;
   if (builtFrom !== descriptors) {
-    promise = computeAggregate(lane, descriptors, options);
+    promise = computeAggregate(lane, descriptors, options, loaderMeta);
     setAggregate(promise);
     setBuiltFrom(descriptors);
   }
@@ -112,7 +114,7 @@ export function useLanesAll<T, C = T>(
     // its promise — so handing it to the whole recompute is the same as handing
     // it to the member that was just invalidated.
     const apply = () =>
-      setAggregate(computeAggregate(lane, descriptors, options, gate));
+      setAggregate(computeAggregate(lane, descriptors, options, loaderMeta, gate));
     if (urgent) {
       apply();
       return;
@@ -250,12 +252,17 @@ function toDescriptor<T, C>(read: LaneReadSpec<T, C>): Descriptor<T, C> {
  * Lane (the read path resolves `options?.staleTime ?? 0`, an absent loader gates a
  * read off, an absent trigger is off). This is the only place in the library with
  * two tiers to disagree about, so it is the only place the distinction was ever
- * observable — and the reason to spend seven `??` here is that it keeps the rule
+ * observable — and the reason to spend eight `??` here is that it keeps the rule
  * sayable once for all of Lane.
  *
- * Naming the seven also drops `key` / `loader` from the result, which a spread of
- * the member's read carried along inert. Nothing reads them off these options:
+ * Naming them also drops `key` / `loader` from the result, which a spread of the
+ * member's read carried along inert. Nothing reads them off these options:
  * `computeAggregate` takes both from the descriptor.
+ *
+ * The cost of naming them is that a new option must be added here too, or a
+ * member's value is silently dropped whenever the batch passes any options at
+ * all. `loaderMeta` is the first one added since, and the test for a member
+ * overriding the batch's meta is what would catch the omission.
  */
 function optionsFor<T, C>(
   shared: LaneUseOptions,
@@ -268,6 +275,7 @@ function optionsFor<T, C>(
   }
 
   return {
+    loaderMeta: own.loaderMeta ?? shared.loaderMeta,
     refetchOnFocus: own.refetchOnFocus ?? shared.refetchOnFocus,
     refetchOnMount: own.refetchOnMount ?? shared.refetchOnMount,
     refetchOnReconnect: own.refetchOnReconnect ?? shared.refetchOnReconnect,
@@ -282,6 +290,7 @@ function computeAggregate<T, C>(
   lane: Lane,
   descriptors: Descriptor<T, C>[],
   options: LaneUseOptions,
+  loaderMeta: LaneLoaderMeta,
   gate?: Promise<void>,
 ): Promise<LaneRead<T>[]> {
   return aggregateOf(
@@ -290,7 +299,7 @@ function computeAggregate<T, C>(
         lane,
         d.key,
         d.loader,
-        toReadOptions(optionsFor(options, d)),
+        toReadOptions(optionsFor(options, d), loaderMeta),
         gate,
       ),
     ),

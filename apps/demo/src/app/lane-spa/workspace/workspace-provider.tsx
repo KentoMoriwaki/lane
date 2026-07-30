@@ -1,6 +1,6 @@
 "use client";
 
-import { useLaneInstance } from "use-lane";
+import { createLane, LaneProvider, useLaneInstance, type Lane } from "use-lane";
 import type { CurrentUser } from "@/server/api";
 import { useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -28,7 +28,10 @@ export function WorkspaceProvider({
   initialTeamId: string;
   children: React.ReactNode;
 }) {
-  const lane = useLaneInstance();
+  // See `ClientWorkspaceProvider` below: this component owns the session, so it
+  // owns the lane that carries it.
+  const laneRef = React.useRef<Lane>(undefined);
+  const lane = (laneRef.current ??= createLane());
   const searchParams = useSearchParams();
   const [userId] = React.useState(initialUser.id);
   const [isSignedIn, setIsSignedIn] = React.useState(true);
@@ -71,7 +74,9 @@ export function WorkspaceProvider({
 
   return (
     <WorkspaceContext.Provider value={value}>
-      {children}
+      <LaneProvider lane={lane} loaderMeta={ctx}>
+        {children}
+      </LaneProvider>
     </WorkspaceContext.Provider>
   );
 }
@@ -85,6 +90,11 @@ export function ClientWorkspaceProvider({
   initialTeamId: string;
   children: React.ReactNode;
 }) {
+  // The lane already exists: the bootstrap above this component read the current
+  // user through it, under the session-less meta. Re-providing the *same* lane
+  // with the real session keeps that entry — and everything else cached — while
+  // every later read is handed the session instead. The meta is not part of any
+  // key, which is exactly why the swap costs nothing.
   const lane = useLaneInstance();
   const [userId] = React.useState(initialUser.id);
   const [activeTeamId, setActiveTeamId] = React.useState(initialTeamId);
@@ -129,7 +139,9 @@ export function ClientWorkspaceProvider({
 
   return (
     <WorkspaceContext.Provider value={value}>
-      {children}
+      <LaneProvider lane={lane} loaderMeta={ctx}>
+        {children}
+      </LaneProvider>
     </WorkspaceContext.Provider>
   );
 }

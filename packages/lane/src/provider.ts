@@ -4,7 +4,7 @@ import * as React from "react";
 import { createLane } from "./core";
 import { domEventSource } from "./event-source";
 import type { LaneEventSource } from "./event-source";
-import type { Lane } from "./types";
+import type { Lane, LaneLoaderMeta, LaneLoaderMetaProp } from "./types";
 
 // A reader's opt-in to activity-based revalidation. Focus / reconnect are DOM
 // concerns the provider already owns (it holds the window listeners), so the
@@ -20,14 +20,15 @@ export type LaneRevalidation = {
   subscribe: (revalidator: Revalidator) => () => void;
 };
 
-// One context for everything the provider supplies: the store and its
-// revalidation registry. They share a provider and a lifetime and are always
-// read together (a reader needs both), so a single context models them more
-// honestly than two — and since `revalidation` never changes, nothing consumes
-// it in isolation that a split would spare a re-render.
+// One context for everything the provider supplies: the store, its revalidation
+// registry, and the loader meta. They share a provider and a lifetime and are
+// always read together (a reader needs all three), so a single context models
+// them more honestly than two — and since `revalidation` never changes, nothing
+// consumes it in isolation that a split would spare a re-render.
 type LaneContextValue = {
   lane: Lane;
   revalidation: LaneRevalidation;
+  loaderMeta: LaneLoaderMeta;
 };
 
 const LaneContext = React.createContext<LaneContextValue | null>(null);
@@ -56,12 +57,7 @@ function createRegistry(): {
   };
 }
 
-export function LaneProvider({
-  lane: providedLane,
-  focusThrottleInterval = DEFAULT_FOCUS_THROTTLE_INTERVAL,
-  eventSource = domEventSource,
-  children,
-}: {
+export type LaneProviderProps = {
   lane?: Lane;
   /**
    * Window focus and visibilitychange both fire on a tab switch. Focus
@@ -77,7 +73,15 @@ export function LaneProvider({
    */
   eventSource?: LaneEventSource;
   children: React.ReactNode;
-}) {
+} & LaneLoaderMetaProp;
+
+export function LaneProvider({
+  lane: providedLane,
+  focusThrottleInterval = DEFAULT_FOCUS_THROTTLE_INTERVAL,
+  eventSource = domEventSource,
+  loaderMeta,
+  children,
+}: LaneProviderProps) {
   // Both are created once and never re-created, so they are refs, not state.
   // The default lane is built lazily — only when no lane is supplied.
   const defaultLaneRef = React.useRef<Lane>(undefined);
@@ -116,10 +120,13 @@ export function LaneProvider({
     return eventSource({ onFocus, onReconnect });
   }, [revalidators, focusThrottleInterval, eventSource]);
 
-  // `revalidation` is stable, so this changes only when `lane` does.
+  // `revalidation` is stable, so this changes only when `lane` or the loader
+  // meta does. A changed meta re-renders readers, which is what makes the *next*
+  // read use it; reads already in flight keep the meta they started with, and
+  // entries already loaded are not invalidated — see `LaneRegister`.
   const value = React.useMemo<LaneContextValue>(
-    () => ({ lane, revalidation }),
-    [lane, revalidation],
+    () => ({ lane, loaderMeta: loaderMeta as LaneLoaderMeta, revalidation }),
+    [lane, loaderMeta, revalidation],
   );
 
   // React 19: render the context object directly as a provider (`.Provider` is
@@ -127,8 +134,16 @@ export function LaneProvider({
   return React.createElement(LaneContext, { value }, children);
 }
 
-// Both hooks require the provider; the caller name keeps the error specific.
-function useLaneContext(hook: string): LaneContextValue {
+/**
+ * Everything the provider supplies, in one context read. The read hooks need all
+ * of it, so they call this once rather than composing the narrow hooks below —
+ * three `useContext` calls and three copies of the "must be used within" message
+ * for one lookup, and the message would name whichever narrow hook happened to
+ * run first instead of the hook the caller wrote.
+ *
+ * Internal: the narrow hooks are the public surface.
+ */
+export function useLaneContext(hook: string): LaneContextValue {
   const value = React.useContext(LaneContext);
 
   if (!value) {

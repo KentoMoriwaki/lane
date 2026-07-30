@@ -2,9 +2,89 @@ export type LaneKey = readonly unknown[];
 
 export type LaneValue<T> = T | Promise<T>;
 
+/**
+ * Where an app declares what its loaders are handed besides the key — a session,
+ * a tenant, an API client — by module augmentation:
+ *
+ * ```ts
+ * declare module "use-lane" {
+ *   interface LaneRegister {
+ *     loaderMeta: WorkspaceCtx;
+ *   }
+ * }
+ * ```
+ *
+ * This exists to solve one problem: **a read whose loader needs a dependency
+ * must still be nameable without one.** Binding the dependency into the read
+ * factory (`taskReads(ctx).detail(id)`) makes the key unreachable wherever the
+ * context is — a mutation module, a Server Component, a component above the
+ * provider — so the codebase grows a second, parallel definition of every key
+ * just to address entries. Declaring the dependency here keeps the read a plain
+ * object whose arguments are exactly what decides its key, so `.key` costs
+ * nothing to reach and there is one definition per read.
+ *
+ * The dependency travels with the *lane*, not the read: `<LaneProvider
+ * loaderMeta={ctx}>` supplies it, and {@link LaneLoaderContext.meta} delivers it.
+ * That placement is the whole point — it is what a read does not have to know
+ * about. A single read that genuinely belongs to another context can still
+ * override it ({@link LaneUseOptions.loaderMeta}); because the lane's value is
+ * mandatory, that override is a narrowing rather than the only source, which is
+ * what keeps `meta` non-optional in the loader.
+ *
+ * It also means the value is **not part of any key**: two reads of one key under
+ * different `loaderMeta` name the same entry, and whichever loaded first wins.
+ * Scope what the dependency owns into the key, or drop those keys when it
+ * changes (`lane.removeAll(["tasks"])` on a team switch).
+ *
+ * The mechanism is react-query's `Register`, and so is the asymmetry in naming:
+ * `loaderMeta` is what you *declare and supply*, `meta` is what the loader
+ * *receives*, exactly as `queryMeta` is declared and `context.meta` received.
+ *
+ * An app that declares nothing is unaffected: `meta` is `undefined`, and the
+ * provider prop and `prefetch` argument stay absent.
+ */
+export interface LaneRegister {}
+
+/**
+ * What {@link LaneRegister} declares, or `undefined` when it declares nothing.
+ * Non-optional once declared — a loader that reads `meta` needs no `!`, because
+ * the provider cannot omit it.
+ */
+export type LaneLoaderMeta = LaneRegister extends { loaderMeta: infer M }
+  ? M
+  : undefined;
+
+/**
+ * The `loaderMeta` prop, required exactly when {@link LaneRegister} declares one.
+ * Declaring the dependency is what makes forgetting to supply it a type error —
+ * at the provider, the one place it is supplied, rather than at every read.
+ */
+export type LaneLoaderMetaProp = LaneRegister extends { loaderMeta: infer M }
+  ? { loaderMeta: M }
+  : { loaderMeta?: undefined };
+
+/**
+ * The same requirement as a trailing argument, for the read that happens outside
+ * React and so cannot reach the provider: `lane.prefetch(read, { loaderMeta })`.
+ * A rest tuple rather than a parameter, so an app that declares nothing keeps
+ * calling `lane.prefetch(read)` with one argument.
+ */
+export type LaneLoaderMetaArgs = LaneRegister extends { loaderMeta: infer M }
+  ? [options: { loaderMeta: M }]
+  : [options?: { loaderMeta?: undefined }];
+
 export type LaneLoaderContext<C = unknown> = {
   key: LaneKey;
   signal: AbortSignal;
+  /**
+   * What the lane was given as `loaderMeta` — the dependency a loader needs that
+   * is not part of its key. See {@link LaneRegister} for how it is declared and
+   * why it lives on the lane rather than on the read.
+   *
+   * Snapshotted when the read is created, like `current`, so every retry of that
+   * read sees the value the read started with.
+   */
+  meta: LaneLoaderMeta;
   /**
    * The entry's last fulfilled value, or `undefined` on a first load.
    *
@@ -213,8 +293,15 @@ export type Lane = {
    * whole read rather than a key, because it is the one that *performs* a read.
    * Only the fetch-shaping options apply (`retry` / `retryDelay`) — `staleTime` /
    * `whenStale` stay the eventual reader's call.
+   *
+   * It is also the one read that happens outside React, so it is the one place
+   * `loaderMeta` is passed by hand rather than taken from the provider — and only
+   * when {@link LaneRegister} declares one.
    */
-  prefetch<T, C = T>(read: LaneReadSpec<T, C>): Promise<LaneRead<T>>;
+  prefetch<T, C = T>(
+    read: LaneReadSpec<T, C>,
+    ...args: LaneLoaderMetaArgs
+  ): Promise<LaneRead<T>>;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
   /**
@@ -308,6 +395,28 @@ export type LaneRefetchOnFocus = boolean | "always";
 export type LaneRefetchOnReconnect = boolean | "always";
 
 export type LaneUseOptions = {
+  /**
+   * Read this entry with a different `meta` than the lane carries — the per-read
+   * override of {@link LaneRegister}'s `loaderMeta`.
+   *
+   * Optional, and safely so: the lane always has one (the provider cannot omit
+   * it), so this narrows a guaranteed value rather than standing in for a missing
+   * one. That is the difference from react-query's `meta`, which is the *only*
+   * place the value can come from and is therefore always possibly-`undefined`.
+   * Here the fallback is mandatory and the override is not, so `meta` stays
+   * non-optional inside the loader either way.
+   *
+   * The type is `LaneRegister`'s, so this costs no type parameter and nothing to
+   * annotate. It is **not part of the key** — same as the lane-level value — so
+   * two reads of one key with different meta name the same entry and whichever
+   * loads first wins. Reach for it when a single read genuinely belongs to
+   * another context (an admin impersonating a tenant, a cross-team lookup) and
+   * scope that into the key yourself.
+   *
+   * In a batch (`useLanesAll`) a member's own override wins over the batch's, the
+   * way every other read option does.
+   */
+  loaderMeta?: LaneLoaderMeta;
   staleTime?: number;
   /**
    * What a read does when the cached value is stale (older than `staleTime`):

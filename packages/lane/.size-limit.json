@@ -18,6 +18,6 @@
     "path": "dist/index.js",
     "import": "*",
     "ignore": ["react", "react-dom"],
-    "limit": "4.7 kB"
+    "limit": "4.85 kB"
   }
 ]

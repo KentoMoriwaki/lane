@@ -69,14 +69,25 @@ workspace, loads enough for a meaningful first render, canonicalizes invalid URL
 state, and passes serializable initial data to the client tree. Seed it with
 [`LaneHydration`](./api-reference.md#hydration-rsc-seeding).
 
-Both layers can share one key module. `use-lane` puts `"use client"` on its React
+Both layers can share one read module. `use-lane` puts `"use client"` on its React
 modules individually rather than on the package, so
-[`laneKey`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds) and
-[`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation) are callable
-in the Server Component that builds the snapshots, from the same `"use-lane"`
-import the client hooks use. Keys and read definitions therefore live in one
-place for both halves of the route, instead of a server-safe list of literals plus
-a typed copy of it on the client.
+[`laneKey`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds),
+[`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation), and
+[`laneSnapshot`](./api-reference.md#lanesnapshotreadorkey-data) are callable in
+the Server Component that builds the snapshots, from the same `"use-lane"` import
+the client hooks use. Reads therefore live in one place for both halves of the
+route, instead of a server-safe list of literals plus a typed copy of it on the
+client:
+
+```ts
+// page.tsx — a Server Component. No loader runs; a read is a plain object.
+const snapshots = { entries: [laneSnapshot(taskLanes.list(filters), tasks)] };
+```
+
+What makes that work in both directions is that a read's arguments are only what
+decides its key — the session its loaders need arrives from the lane as
+[`loaderMeta`](./api-reference.md#laneregister--what-loaders-are-handed-besides-the-key),
+which the server seed never has to produce.
 
 After hydration, the client tree owns live data through Lane: filters and search
 update durable URL state without forcing an RSC reload, Lane reads the hydrated

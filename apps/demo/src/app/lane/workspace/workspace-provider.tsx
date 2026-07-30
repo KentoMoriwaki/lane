@@ -1,6 +1,6 @@
 "use client";
 
-import { useLaneInstance } from "use-lane";
+import { createLane, LaneProvider, type Lane } from "use-lane";
 import type { CurrentUser } from "@/server/api";
 import { useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -27,7 +27,12 @@ export function WorkspaceProvider({
   initialTeamId: string;
   children: React.ReactNode;
 }) {
-  const lane = useLaneInstance();
+  // The lane is created here rather than above, because this component owns the
+  // value the lane hands its loaders: `ctx` is derived from the session and the
+  // team in the URL, and `loaderMeta` is how it reaches every read without any
+  // of them taking it as an argument.
+  const laneRef = React.useRef<Lane>(undefined);
+  const lane = (laneRef.current ??= createLane());
   const searchParams = useSearchParams();
   const [userId] = React.useState(initialUser.id);
   const [isSignedIn, setIsSignedIn] = React.useState(true);
@@ -70,7 +75,9 @@ export function WorkspaceProvider({
 
   return (
     <WorkspaceContext.Provider value={value}>
-      {children}
+      <LaneProvider lane={lane} loaderMeta={ctx}>
+        {children}
+      </LaneProvider>
     </WorkspaceContext.Provider>
   );
 }

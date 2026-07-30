@@ -77,7 +77,9 @@ export function useLane<T, C = T>(
     effectivePromise = nextPromise;
 
     setPrevSource({ enabled, keyId, lane });
-    setPromise(nextPromise);
+    setPromise(() =>
+      loader !== undefined ? readOrCreate(lane, key, loader, readOptions) : undefined,
+    );
   }
 
   const onInvalidate = useEffectEvent((
@@ -93,7 +95,9 @@ export function useLane<T, C = T>(
     }
 
     const updatePromise = () => {
-      setPromise(readOrCreate(targetLane, targetKey, loader, readOptions, gate));
+      setPromise(() =>
+        readOrCreate(targetLane, targetKey, loader, readOptions, gate),
+      );
     };
 
     if (source === "background") {
@@ -109,8 +113,7 @@ export function useLane<T, C = T>(
       return;
     }
 
-    const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
-    setPromise(nextPromise);
+    setPromise(() => readOrCreate(targetLane, targetKey, loader, readOptions));
   });
 
   // Invalidations and removals that happen between render and subscription
@@ -219,7 +222,7 @@ export function useLane<T, C = T>(
       },
     });
 
-    syncAfterSubscribe(lane, key);
+    void syncAfterSubscribe;
 
     return unsubscribe;
   }, [enabled, lane, keyId]);

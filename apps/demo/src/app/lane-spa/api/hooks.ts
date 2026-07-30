@@ -11,7 +11,6 @@ import type {
 import { useLane, useLaneInstance, type Lane } from "use-lane";
 import * as React from "react";
 import { useWorkspaceCtx } from "@/app/lane-spa/workspace/workspace-provider";
-import type { WorkspaceCtx } from "./client";
 import {
   addTaskLabel,
   createLabel,
@@ -22,7 +21,7 @@ import {
   updateTask,
 } from "./endpoints";
 import type { TaskFilters } from "./endpoints";
-import { laneReads } from "./lane-reads";
+import { laneKeys, laneReads } from "./lane-reads";
 import {
   queryKeys,
   TEAM_SCOPED_KEYS,
@@ -103,9 +102,9 @@ export function useCreateTask() {
 
   return React.useCallback(async (input: CreateTaskInput): Promise<Task> => {
     const task = await createTask(ctx, input);
-    // Publishing through the read's own definition type-checks the value
-    // against what that key holds — a bare key carries no type at all.
-    lane.set(laneReads.task(ctx, task.id), task);
+    // The key carries what its entry holds, so the publication is checked
+    // against `Task` — and needs nothing but the key.
+    lane.set(laneKeys.task(task.id), task);
     lane.invalidateAll(["tasks"]);
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
@@ -124,7 +123,7 @@ export function useUpdateTask(taskId: string) {
     strategy: TaskCacheStrategy,
   ): Promise<Task> => {
     const task = await updateTask(ctx, taskId, input);
-    publishTask(lane, ctx, task, strategy);
+    publishTask(lane, task, strategy);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -151,7 +150,7 @@ export function useAddTaskLabel(taskId: string) {
 
   return React.useCallback(async (label: TeamLabel): Promise<Task> => {
     const task = await addTaskLabel(ctx, taskId, label.id);
-    publishTask(lane, ctx, task, taskCacheStrategies.labels);
+    publishTask(lane, task, taskCacheStrategies.labels);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -162,7 +161,7 @@ export function useRemoveTaskLabel(taskId: string) {
 
   return React.useCallback(async (labelId: string): Promise<Task> => {
     const task = await removeTaskLabel(ctx, taskId, labelId);
-    publishTask(lane, ctx, task, taskCacheStrategies.labels);
+    publishTask(lane, task, taskCacheStrategies.labels);
     return task;
   }, [ctx, lane, taskId]);
 }
@@ -214,11 +213,10 @@ export function useWorkspaceRefresh() {
 
 function publishTask(
   lane: Lane,
-  ctx: WorkspaceCtx,
   task: Task,
   strategy: TaskCacheStrategy,
 ) {
-  lane.set(laneReads.task(ctx, task.id), task);
+  lane.set(laneKeys.task(task.id), task);
   lane.updateAll<Task[]>(
     (entry) => {
       const filters = taskFiltersFromEntry(entry);

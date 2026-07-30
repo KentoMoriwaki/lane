@@ -1,4 +1,4 @@
-import { isLaneKey, isPrefixKey, keyOf, serializeKey } from "./keys";
+import { isPrefixKey, serializeKey } from "./keys";
 import { replaceEqualDeep } from "./structural";
 import type {
   Lane,
@@ -13,7 +13,6 @@ import type {
   LaneReadSpec,
   LaneRetryDelay,
   LaneScope,
-  LaneTarget,
   LaneUpdater,
   LaneValue,
   LaneWhenStale,
@@ -128,25 +127,30 @@ export function createLane(options: LaneOptions = {}): Lane {
       // timer — an unadopted prefetch is an orphan, reclaimed by the lane-wide
       // sweep on whatever cycle a later unsubscribe triggers.
       //
-      // A spec supplies the key, the loader, and its own retry policy; its
-      // `staleTime` / `whenStale` are deliberately dropped, because those are
-      // read-time decisions and this is not the read.
-      const spec = isLaneKey(keyOrSpec) ? undefined : keyOrSpec;
-      const source = spec ?? options;
+      // Both call forms collapse to one read description. A spec's `staleTime` /
+      // `whenStale` are deliberately dropped: those are read-time decisions and
+      // this is not the read.
+      // `Array.isArray` does not narrow a `readonly unknown[]` out of a union,
+      // so the spec is asserted rather than inferred — a key is an array and a
+      // spec is not, which is the whole distinction.
+      const spec = (
+        Array.isArray(keyOrSpec) ? undefined : keyOrSpec
+      ) as LaneReadSpec<T, C> | undefined;
+      const shape = spec ?? options;
 
       return readOrCreate<T, C>(
         lane,
-        spec ? spec.key : (keyOrSpec as LaneKey),
-        spec ? spec.loader : (maybeLoader as LaneLoader<T, C>),
+        spec?.key ?? (keyOrSpec as LaneKey),
+        spec?.loader ?? (maybeLoader as LaneLoader<T, C>),
         {
-          retry: source.retry,
-          retryDelay: source.retryDelay,
+          retry: shape.retry,
+          retryDelay: shape.retryDelay,
           whenStale: "revalidate",
         },
       );
     },
-    invalidate(target, options = {}) {
-      const entry = findEntry(state, target);
+    invalidate(key, options = {}) {
+      const entry = state.entries.get(serializeKey(key));
 
       if (!entry) {
         return;
@@ -161,8 +165,7 @@ export function createLane(options: LaneOptions = {}): Lane {
         invalidateLaneEntry(state, entry, options, source);
       }
     },
-    set<T>(target: LaneTarget, valueOrPromise: LaneValue<T>) {
-      const key = keyOf(target);
+    set<T>(key: LaneKey, valueOrPromise: LaneValue<T>) {
       const keyId = serializeKey(key);
       const entry = getOrCreateEntry(state, key, keyId);
       const promise = publishEntryValue(state, entry, valueOrPromise);
@@ -171,8 +174,8 @@ export function createLane(options: LaneOptions = {}): Lane {
 
       return promise;
     },
-    update<T>(target: LaneTarget, updater: LaneUpdater<T>) {
-      const entry = findEntry(state, target);
+    update<T>(key: LaneKey, updater: LaneUpdater<T>) {
+      const entry = state.entries.get(serializeKey(key));
 
       if (!entry) {
         return undefined;
@@ -186,8 +189,8 @@ export function createLane(options: LaneOptions = {}): Lane {
         return promise ? [promise] : [];
       });
     },
-    remove(target) {
-      const entry = findEntry(state, target);
+    remove(key) {
+      const entry = state.entries.get(serializeKey(key));
 
       if (!entry) {
         return;
@@ -200,8 +203,8 @@ export function createLane(options: LaneOptions = {}): Lane {
         removeLaneEntry(state, entry);
       }
     },
-    cancel(target) {
-      const entry = findEntry(state, target);
+    cancel(key) {
+      const entry = state.entries.get(serializeKey(key));
 
       if (!entry) {
         return;
@@ -598,19 +601,6 @@ function notifyRemove(entry: LaneEntry): void {
   for (const subscriber of [...entry.subscribers]) {
     subscriber.onRemove?.(info);
   }
-}
-
-/**
- * The existing entry an exact-key operation addresses, or `undefined` when the
- * key holds nothing. Every such operation is a no-op on an absent entry — Lane
- * never creates a slot just to invalidate, update, remove, or cancel it — so
- * they all share this lookup.
- */
-function findEntry(
-  state: LaneState,
-  target: LaneTarget,
-): LaneEntry | undefined {
-  return state.entries.get(serializeKey(keyOf(target)));
 }
 
 function getOrCreateEntry(

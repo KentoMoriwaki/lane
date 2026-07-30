@@ -7,6 +7,7 @@ import { useLaneInstance } from "./provider";
 import type {
   LaneInvalidateOptions,
   LaneKey,
+  LaneKeyOf,
   LaneRead,
   LaneUseOptions,
 } from "./types";
@@ -264,15 +265,21 @@ export function useInfiniteLane<P, C>(
  * };
  *
  * const { promise, loadMore } = useInfiniteLane(feedLanes.list(filters));
- * lane.invalidate(feedLanes.list(filters)); // the key travels with it
+ * lane.invalidate(feedLanes.list(filters).key); // the key travels with it
  * ```
  *
  * Identity at runtime, like `laneRead`: what it buys is that `P` and `C` are
  * inferred and checked where the list is defined — `nextCursor` must return the
- * cursor `fetchPage` takes — instead of at each call site.
+ * cursor `fetchPage` takes — instead of at each call site. Its `key` is tagged
+ * with the accumulated `InfiniteLaneValue`, so `lane.set` / `lane.update`
+ * through it are checked against the whole list rather than one page.
  */
 export function infiniteLaneRead<P, C>(
   spec: InfiniteLaneReadSpec<P, C>,
-): InfiniteLaneReadSpec<P, C> {
-  return spec;
+): InfiniteLaneReadSpec<P, C> & { key: LaneKeyOf<InfiniteLaneValue<P, C>> } {
+  // The key is tagged with what the *entry* holds — the accumulated list, not
+  // one page — so a write through it is checked against the whole value.
+  return spec as InfiniteLaneReadSpec<P, C> & {
+    key: LaneKeyOf<InfiniteLaneValue<P, C>>;
+  };
 }

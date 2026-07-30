@@ -1,21 +1,52 @@
-import type { LaneKey, LaneTarget } from "./types";
+import type { LaneKey, LaneKeyOf } from "./types";
 
 export function serializeKey(key: LaneKey): string {
   return stableStringify(key);
 }
 
 /**
- * The key an exact-key operation addresses, from either form it accepts: a key,
- * or a read spec carrying one. A key is always an array and a spec never is, so
- * the two are told apart structurally — no marker property, nothing for a caller
- * to keep in sync.
+ * Declare what a key holds: the same array, typed as a {@link LaneKeyOf} so
+ * `set` and `update` through it are checked.
+ *
+ * `laneRead` already tags the key of the read it describes, and that is the
+ * usual source of a typed key. This is for the other half of the codebase — the
+ * one that writes. A mutation path addresses entries; it has no business
+ * importing fetchers (or the request context a fetcher needs) just to name one,
+ * so a key factory can carry the types on its own:
+ *
+ * ```ts
+ * export const taskKeys = {
+ *   detail: (id: string) => laneKey<Task>(["task", id]),
+ * };
+ *
+ * lane.set(taskKeys.detail(task.id), task);          // checked, no loader in sight
+ * laneRead({ key: taskKeys.detail(id), loader: … }); // and the read reuses it
+ * ```
+ *
+ * Passing a typed key to `laneRead` is not just reuse: the key's type and the
+ * loader's result have to agree, or the read does not compile. That is the
+ * colocation guarantee running in the other direction — a factory of keys and a
+ * factory of reads can no longer drift apart.
+ *
+ * The type argument is required and unverified. `laneKey<Task>(["task", id])`
+ * asserts that this key's entry holds a `Task`; nothing checks it against a
+ * loader unless a `laneRead` brings them together. It is the one place in Lane
+ * where you state a type instead of inferring one — which is why the loaded type
+ * belongs on the read wherever a read exists.
  */
-export function keyOf(target: LaneTarget): LaneKey {
-  return isLaneKey(target) ? target : target.key;
+export function laneKey<T>(key: LaneKey): LaneKeyOf<T> {
+  return key as LaneKeyOf<T>;
 }
 
-export function isLaneKey(target: LaneTarget): target is LaneKey {
-  return Array.isArray(target);
+/**
+ * Whether a read was described as a bare key or as a spec — a key is always an
+ * array and a spec never is, so the two are told apart structurally, with no
+ * marker property for a caller to keep in sync.
+ */
+export function isLaneKey(
+  keyOrSpec: LaneKey | { key: LaneKey },
+): keyOrSpec is LaneKey {
+  return Array.isArray(keyOrSpec);
 }
 
 export function isPrefixKey(prefix: LaneKey, key: LaneKey): boolean {

@@ -162,8 +162,9 @@ function RenameButton({ userId }: { userId: string }) {
 - **Optimistic UI stays local.** Lane ships no mutation helper; use
   `useOptimistic` / `useActionState` in the component that owns the action.
 - **A read can be one value.** `laneRead({ key, loader, ...options })` colocates
-  a read the way react-query's `queryOptions()` does, and Lane takes it wherever
-  it takes a key — reads, `prefetch`, `invalidate`, and a type-checked `set`.
+  a read the way react-query's `queryOptions()` does. The loaded type rides on the
+  **key** it hands back (like react-query's `DataTag`), so `set` / `update` are
+  type-checked from the key alone and a mutation path never imports a fetcher.
 
 ## API at a glance
 
@@ -172,15 +173,16 @@ function RenameButton({ userId }: { userId: string }) {
 | `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation via a pluggable `eventSource` (browser default; React Native / CLI / custom). |
 | `useLane(key, loader, options?)` | Read a key. Returns `{ promise, isTransitionPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
 | `useLanePromise(key, loader, options?)` | Thin wrapper returning just `promise`. |
-| `laneRead({ key, loader, …options })` | Colocate a read's key, loader, and options in one value — react-query's `queryOptions()` for Lane. Pass it to `useLane`, `useLanesAll`, `prefetch`, `invalidate`, `set`, … |
+| `laneRead({ key, loader, …options })` | Colocate a read's key, loader, and options in one value — react-query's `queryOptions()` for Lane. Reads take the whole thing (`useLane`, `useLanesAll`, `prefetch`); entry operations take its `key`. |
+| `laneKey<T>(key)` | A key that carries what its entry holds, so `set` / `update` through it are type-checked — no loader needed. |
 | `useInfiniteLane(key, options, readOptions?)` | A cursor-paginated list under one key. Returns `{ promise, loadMore, … }`; `use(promise)` yields `{ pages, params, hasNext }`. Colocate it with `infiniteLaneRead`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
 | `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime }`. |
 | `LaneHydration` | Apply RSC-loaded snapshots as authoritative seed values. |
 
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
-`updateAll`, `remove` / `removeAll` — the exact-key ones take a key or a
-`laneRead` spec. `useLane` options: `staleTime`, `whenStale`,
+`updateAll`, `remove` / `removeAll` — all keyed; `set` / `update` are checked
+when given a typed key. `useLane` options: `staleTime`, `whenStale`,
 `retry`, `retryDelay`, `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
 `createLane` options: `gcTime`. Loaders receive `{ key, signal, current }`, where
 `current` is the entry's last fulfilled value.

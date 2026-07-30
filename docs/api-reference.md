@@ -18,6 +18,7 @@ import {
   useLaneInstance,
   laneRead,
   infiniteLaneRead,
+  laneKey,
   createLane,
 } from "use-lane";
 ```
@@ -192,10 +193,12 @@ and pass that one value wherever the read is named. It is Lane's equivalent of
 react-query's `queryOptions()`.
 
 ```ts
-function laneRead<T, C = T>(spec: LaneReadSpec<T, C>): LaneReadSpec<T, C>;
+function laneRead<T, C = T>(
+  spec: LaneReadSpec<T, C>,
+): LaneReadSpec<T, C> & { key: LaneKeyOf<T> };
 
 type LaneReadSpec<T, C = T> = LaneUseOptions & {
-  key: LaneKey;
+  key: LaneKeyOf<T> | LanePlainKey;
   loader: LaneLoader<T, C>;
 };
 ```
@@ -223,17 +226,24 @@ const { promise, isTransitionPending } = useLane(taskLanes.detail(id));
 const { data: task } = use(promise);
 ```
 
-Every consumer accepts a spec wherever it accepts a key:
+**Reads take the whole definition; entry operations take its `key`.**
 
-| Consumer | With a spec |
+| Consumer | Call |
 | --- | --- |
 | [`useLane`](#uselanekey-loader-options) | `useLane(taskLanes.detail(id))` |
 | [`useLanePromise`](#uselanepromisekey-loader-options) | `use(useLanePromise(taskLanes.detail(id)))` |
 | [`useLanesAll`](#uselanesallreads-options--a-batch-read) | `useLanesAll(ids.map(taskLanes.detail))` |
 | [`useInfiniteLane`](#useinfinitelanekey-options-readoptions--a-cursor-paginated-list) | `useInfiniteLane(feedLanes.list(filters))` — built with [`infiniteLaneRead`](#infinitelanereadspec) |
 | [`prefetch`](#prefetch) | `lane.prefetch(taskLanes.detail(id))` |
-| [`invalidate`](#invalidate--invalidateall) / [`remove`](#remove--removeall) / [`cancel`](#cancel) | `lane.invalidate(taskLanes.detail(id))` |
-| [`set`](#set) / [`update`](#update--updateall) | `lane.set(taskLanes.detail(task.id), task)` |
+| [`invalidate`](#invalidate--invalidateall) / [`remove`](#remove--removeall) / [`cancel`](#cancel) | `lane.invalidate(taskLanes.detail(id).key)` |
+| [`set`](#set) / [`update`](#update--updateall) | `lane.set(taskLanes.detail(task.id).key, task)` — checked |
+
+The split is not arbitrary. `prefetch` *performs* a read, so it needs the loader;
+publishing, invalidating, and removing *address an entry*, and none of them does.
+Making them take the whole read would mean a mutation path importing fetchers —
+and whatever request context those fetchers need — to name a key it already
+knows. So the loaded type travels on the **key** instead: see
+[`LaneKeyOf`](#lanekeyoft--a-key-that-knows-what-it-holds).
 
 **Why colocate.** A key factory in one module and a fetcher in another are two
 halves of one fact, and no type checks that a call site pairs them correctly —
@@ -246,9 +256,9 @@ next reads the same key with none.
 the point, not the call. What it adds is types:
 
 - **`T` is inferred at the definition** from the loader's return type, so every
-  consumer reads that type back instead of re-inferring it. This is what makes
-  the *write* side checked: `lane.set(spec, value)` and `lane.update(spec, updater)`
-  know what the read holds, where a bare key carries no type and checks nothing.
+  consumer reads that type back instead of re-inferring it — and the `key` it
+  hands back is a [`LaneKeyOf<T>`](#lanekeyoft--a-key-that-knows-what-it-holds),
+  which is how the type reaches the write side.
 - **The shape is checked where it is written**, so a mistyped option is an error
   at the definition rather than a silently ignored property at three call sites.
 
@@ -286,12 +296,67 @@ nothing needs memoizing for identity. (`useLanesAll` still wants a
 reason it always did.)
 
 **Scoped operations still take a scope.** `invalidateAll` / `updateAll` /
-`removeAll` deliberately do not accept a spec: a spec describes *one* read, while
-a scope selects a family of existing entries — `lane.invalidateAll(["tasks"])`.
-See [Key matching](./design-notes.md#key-matching-exact-vs-scoped).
+`removeAll` take a prefix or predicate, never one read's key —
+`lane.invalidateAll(["tasks"])`. See
+[Key matching](./design-notes.md#key-matching-exact-vs-scoped).
 
 > `laneRead` *describes* a read; [`LaneRead<T>`](#lanereadt) is what one
 > *resolves to*.
+
+### `LaneKeyOf<T>` — a key that knows what it holds
+
+```ts
+function laneKey<T>(key: LaneKey): LaneKeyOf<T>;
+
+type LaneKeyOf<T> = LaneKey & { readonly [tag]: T }; // phantom; nothing at runtime
+```
+
+A key is where type information goes to die in a cache API: `["task", id]` is an
+array of two strings, and nothing in it says `Task`, so `lane.set(["task", id],
+anything)` can only take the caller's word for it. A `LaneKeyOf<Task>` is the
+same array carrying its loaded type in a phantom property, which makes the write
+checkable:
+
+```ts
+lane.set(taskLanes.detail(id).key, task); // ✓
+lane.set(taskLanes.detail(id).key, project); // ✗ not what this key holds
+lane.update(taskLanes.detail(id).key, (task) => ({ ...task, done: true })); // `task` is Task
+```
+
+`laneRead` stamps the tag from its loader's return type, so a colocated read is
+already the source of a typed key — `spec.key`. Use `laneKey` for the other half
+of a codebase, the one that only writes:
+
+```ts
+// keys.ts — no loaders, no request context, importable from anywhere.
+export const taskKeys = {
+  detail: (id: string) => laneKey<Task>(["task", id]),
+  list: (filters: TaskFilters) => laneKey<Task[]>(["tasks", filters]),
+};
+
+// mutations.ts
+lane.set(taskKeys.detail(saved.id), saved); // checked, and nothing else imported
+```
+
+Handing a typed key to `laneRead` ties the two together: the key's type and the
+loader's result must agree, or the read does not compile.
+
+```ts
+laneRead({ key: taskKeys.detail(id), loader: ({ signal }) => fetchTask(id, signal) }); // ✓
+laneRead({ key: taskKeys.detail(id), loader: ({ signal }) => fetchProject(id, signal) }); // ✗
+```
+
+Two things to know:
+
+- **The tag is an assertion, not a proof.** `laneKey<Task>(…)` states what the
+  entry holds; nothing verifies it unless a `laneRead` brings a loader alongside.
+  That is why the loaded type belongs on the read wherever a read exists — a
+  `laneKey` type argument is the one place in Lane where you state a type instead
+  of inferring one.
+- **A tagged key is a key.** It is the same array at runtime, matches the same
+  entry, serializes the same way, and is accepted anywhere `LaneKey` is —
+  `invalidate`, `remove`, `cancel`, scopes, hydration snapshots. Only `set` and
+  `update` read the tag.
 
 ### `LaneResult<T>`
 
@@ -758,7 +823,9 @@ const warm = () =>
   exposes only `retry` / `retryDelay`. A
   [spec](#lanereadspec--key--loader-colocation) is warmed the same way — its
   `retry` / `retryDelay` apply and its freshness options are left to the reader,
-  so `lane.prefetch(taskLanes.detail(id))` is the whole hover handler.
+  so `lane.prefetch(taskLanes.detail(id))` is the whole hover handler. This is the
+  one instance method that takes a read rather than a key, because warming means
+  running the loader.
 
 The returned `Promise<LaneRead<T>>` is the warmed promise — usually ignored, but
 available to `await` if you want to sequence work after the warm-up. A rejected
@@ -839,28 +906,33 @@ under [Reading data](#prefetch).
 ```ts
 type Lane = {
   prefetch<T>(key: LaneKey, loader: LaneLoader<T>, options?: LanePrefetchOptions): Promise<LaneRead<T>>;
-  invalidate(target: LaneTarget, options?: LaneInvalidateOptions): void;
+  prefetch<T>(spec: LaneReadSpec<T>): Promise<LaneRead<T>>;
+  invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
-  set<T>(target: LaneTarget, valueOrPromise: T | Promise<T>): Promise<LaneRead<T>>;
-  update<T>(target: LaneTarget, updater: LaneUpdater<T>): Promise<LaneRead<T>> | undefined;
+  // A `LaneKeyOf<T>` decides the value's type; a plain key lets the value decide it.
+  set<T>(key: LaneKeyOf<T>, valueOrPromise: T | Promise<T>): Promise<LaneRead<T>>;
+  set<T>(key: LanePlainKey, valueOrPromise: T | Promise<T>): Promise<LaneRead<T>>;
+  update<T>(key: LaneKeyOf<T>, updater: LaneUpdater<T>): Promise<LaneRead<T>> | undefined;
+  update<T>(key: LanePlainKey, updater: LaneUpdater<T>): Promise<LaneRead<T>> | undefined;
   updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<LaneRead<T>>[];
-  remove(target: LaneTarget): void;
+  remove(key: LaneKey): void;
   removeAll(scope: LaneScope): void;
-  cancel(target: LaneTarget): void;
+  cancel(key: LaneKey): void;
 };
-
-// A key, or anything carrying one — so a `laneRead` spec is accepted wherever
-// its key would be. `set` / `update` / `prefetch` additionally take the spec's
-// type from it, which is what makes those calls checked.
-type LaneTarget = LaneKey | { key: LaneKey };
 ```
 
-Every exact-key method takes either form:
+Every method here addresses **entries**, so every one of them takes a key — a
+plain array, or a [`LaneKeyOf`](#lanekeyoft--a-key-that-knows-what-it-holds) when
+you want the value checked:
 
 ```ts
 lane.invalidate(["task", id]);
-lane.invalidate(taskLanes.detail(id)); // same entry, one definition
+lane.invalidate(taskLanes.detail(id).key); // same entry, one definition
+lane.set(taskKeys.detail(saved.id), saved); // checked against what the key holds
 ```
+
+`prefetch` is the exception and takes a whole read, because it is the only method
+that *performs* one.
 
 ### `invalidate` / `invalidateAll`
 
@@ -1027,15 +1099,16 @@ const saved = await updateTask(id, input);
 lane.set(["task", saved.id], saved);
 ```
 
-Publishing through a [spec](#lanereadspec--key--loader-colocation) is
-type-checked — the read's own type reaches the write, so the value has to be what
-that key holds:
+Publishing to a [`LaneKeyOf`](#lanekeyoft--a-key-that-knows-what-it-holds) is
+type-checked — the key carries what its entry holds, so the value has to be that:
 
 ```ts
-lane.set(taskLanes.detail(saved.id), saved);
-// @ts-expect-error — not what this read loads
-lane.set(taskLanes.detail(saved.id), { title: saved.title });
+lane.set(taskKeys.detail(saved.id), saved);
+// @ts-expect-error — not what this key holds
+lane.set(taskKeys.detail(saved.id), { title: saved.title });
 ```
+
+A plain key carries no type, so the value decides it, exactly as before.
 
 `set` is **not** an optimistic-update mechanism. Optimistic state belongs in
 component-local `useOptimistic`.
@@ -1053,8 +1126,8 @@ type LaneUpdater<T> = (current: T, entry: LaneEntryInfo) => T | Promise<T>;
 lane.update<Task>(["task", id], (task) => ({ ...task, done: true }));
 lane.updateAll<Task[]>(["tasks"], (list) => list.filter((t) => t.id !== id));
 
-// Through a spec, `current` is typed by the read itself — no type argument.
-lane.update(taskLanes.detail(id), (task) => ({ ...task, done: true }));
+// Through a typed key, `current` comes from the key — no type argument.
+lane.update(taskKeys.detail(id), (task) => ({ ...task, done: true }));
 ```
 
 ### `remove` / `removeAll`
@@ -1216,13 +1289,15 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
 `InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
 `Lane`, `LaneEntryInfo`, `LaneEventSource`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneOptions`,
-`LanePrefetchOptions`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
+`LaneKeyOf`, `LanePlainKey`, `LanePrefetchOptions`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`,
 `LaneResult`, `LaneRetryDelay`, `LaneRevalidateHandlers`,
-`LaneScope`, `LaneSnapshot`, `LaneTarget`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`,
+`LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`,
 `ReactNativeAppState`, `ReactNativeEventSourceOptions`, `ReactNativeNetInfo`.
 
 Runtime exports beyond the hooks and `createLane`: `laneRead`,
-`infiniteLaneRead` (see [`laneRead`](#lanereadspec--key--loader-colocation)),
+`infiniteLaneRead`, `laneKey` (see
+[`laneRead`](#lanereadspec--key--loader-colocation) and
+[`LaneKeyOf`](#lanekeyoft--a-key-that-knows-what-it-holds)),
 `domEventSource`, `noopEventSource`, `createReactNativeEventSource` (see
 [Event sources](#event-sources)).
 

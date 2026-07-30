@@ -290,22 +290,37 @@ freshness; and the loader that actually fills the entry is whichever one mounted
 first.
 
 `laneRead({ key, loader, ...options })` makes the read itself the value that
-travels, and every consumer accepts it — the read hooks, `prefetch`, and the
-exact-key methods. It is identity at runtime; the whole feature is where the
-types live. Fixing `T` at the definition is what carries the read's type to the
-*write* side: `set` and `update` through a spec are checked against what that key
-holds, which a bare key can never be, because a key carries no type at all.
+travels. It is identity at runtime; the whole feature is where the types live.
+
+**What travels is decided by what an operation needs.** A read needs the loader,
+so `useLane`, `useLanesAll`, and `prefetch` take the whole definition. Publishing,
+invalidating, and removing address an *entry* — the loader has nothing to do with
+them, and requiring one would make every mutation path import fetchers, and
+whatever request context those fetchers close over, to name a key it already
+knows. So they take the key, and the loaded type rides along on it: a
+`LaneKeyOf<T>` is the same array with the type in a phantom property, which is
+what makes `set` and `update` checkable at all. (A key is otherwise where type
+information goes to die: `["task", id]` says nothing about `Task`.) It is the same
+mechanism as react-query's `DataTag`, and it is why the store needed no new
+runtime to gain checked writes.
+
+That split has a consequence worth stating: the type can be declared *without* a
+read. `laneKey<T>(key)` exists for the write-only half of a codebase, and a read
+built on such a key must load what the key claims — the colocation guarantee
+running in the other direction.
 
 Two boundaries keep it from becoming a second way to describe everything:
 
-- **Scoped operations still take a scope.** A spec is one read; `invalidateAll`
-  answers a different question ("every entry under this prefix") and a
-  full exact key is not an answer to it. Colocation does not change what
+- **Scoped operations still take a scope.** `invalidateAll` answers a different
+  question ("every entry under this prefix") and one read's full key is not an
+  answer to it. Colocation does not change what
   [exact vs scoped](#key-matching-exact-vs-scoped) means.
-- **There is no registry behind a spec.** Lane still addresses entries by
+- **There is no registry behind either helper.** Lane still addresses entries by
   serialized key, so two objects from the same factory name the same read and
-  nothing has to be memoized, deduplicated, or registered at startup. A spec is
-  worth nothing at runtime — which is exactly why it costs nothing.
+  nothing has to be memoized, deduplicated, or registered at startup. Both
+  helpers are worth nothing at runtime — which is exactly why they cost nothing:
+  the core is byte-for-byte the store it was before, apart from `prefetch`
+  learning to accept a read.
 
 ## A deliberately small core
 
@@ -339,6 +354,7 @@ When more than one approach is possible, Lane prefers:
 
 - invalidating source data over patching cache entries
 - one definition per read over a key factory the loader has to be paired with
+- the loaded type on the key, so addressing an entry never needs a loader
 - exact-key operations for single reads, scoped operations for key families
 - exact-key publication only for authoritative values already in hand
 - local React state for optimistic UI, not shared cache writes

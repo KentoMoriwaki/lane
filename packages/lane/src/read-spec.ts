@@ -1,4 +1,4 @@
-import type { LaneGatedReadSpec, LaneReadSpec } from "./types";
+import type { LaneGatedReadSpec, LaneKeyOf, LaneReadSpec } from "./types";
 
 /**
  * Colocate a read's key, loader, and options into one value that every consumer
@@ -14,20 +14,29 @@ import type { LaneGatedReadSpec, LaneReadSpec } from "./types";
  *     }),
  * };
  *
- * const { promise } = useLane(taskLanes.detail(id)); // reads
- * lane.prefetch(taskLanes.detail(id));               // warms
- * lane.invalidate(taskLanes.detail(id));             // converges
- * lane.set(taskLanes.detail(task.id), task);         // publishes, type-checked
+ * const { promise } = useLane(taskLanes.detail(id));  // reads
+ * lane.prefetch(taskLanes.detail(id));                // warms
+ * lane.invalidate(taskLanes.detail(id).key);          // converges
+ * lane.set(taskLanes.detail(task.id).key, task);      // publishes, checked
  * ```
+ *
+ * The reads take the whole definition; the entry operations take only its `key`,
+ * which is where the loaded type lives.
  *
  * At runtime this returns the object it was given. Its entire job is types, and
  * there are two of them:
  *
- * 1. **Inference.** It infers `T` from the loader's return type, so a spec is
- *    fully typed the moment it is defined and every consumer reads that type
- *    back instead of re-inferring it. This is why `lane.set(spec, value)` can
- *    check the value at all — the type reaches the write side, which a key never
- *    does.
+ * 1. **Inference, and a key that carries it.** `T` comes from the loader's
+ *    return type, so a read is fully typed the moment it is defined — and the
+ *    `key` it hands back is a {@link LaneKeyOf}, a key that knows what its entry
+ *    holds. That is what reaches the *write* side: `lane.set(spec.key, value)`
+ *    is checked, where a plain key carries no type and can check nothing.
+ *
+ *    The type travels on the key rather than on the read because publishing,
+ *    invalidating, and removing address an entry — none of them needs a loader,
+ *    so none of them should have to import one (or the context one would need).
+ *    `prefetch` is the exception, and takes the whole read, because it is the one
+ *    operation that performs one.
  * 2. **A checked shape.** A bare object literal is checked only against whatever
  *    the consumer's parameter happens to be; `laneRead` checks it where it is
  *    written, so a typo in an option name is an error at the definition rather
@@ -43,12 +52,16 @@ import type { LaneGatedReadSpec, LaneReadSpec } from "./types";
  * key, so they name the same read. Specs can be built per render, in an event
  * handler, or on the server; nothing has to be memoized for identity.
  */
-export function laneRead<T, C = T>(spec: LaneReadSpec<T, C>): LaneReadSpec<T, C>;
+export function laneRead<T, C = T>(
+  spec: LaneReadSpec<T, C>,
+): LaneReadSpec<T, C> & { key: LaneKeyOf<T> };
 export function laneRead<T, C = T>(
   spec: LaneGatedReadSpec<T, C>,
-): LaneGatedReadSpec<T, C>;
+): LaneGatedReadSpec<T, C> & { key: LaneKeyOf<T> };
 export function laneRead<T, C = T>(
   spec: LaneGatedReadSpec<T, C>,
-): LaneGatedReadSpec<T, C> {
-  return spec;
+): LaneGatedReadSpec<T, C> & { key: LaneKeyOf<T> } {
+  // The tag is a type-level assertion about the key, so the value passes
+  // through untouched; only the signature above changes what callers see.
+  return spec as LaneGatedReadSpec<T, C> & { key: LaneKeyOf<T> };
 }

@@ -54,11 +54,14 @@ task touches that rule.
   key that changes every render refetches every render; the loader itself can be an
   inline closure (no `useCallback` needed). → `references/common-mistakes.md`
 - **Colocate a read with `laneRead`** when a key is used in more than one place.
-  `laneRead({ key, loader, ...options })` is Lane's `queryOptions()`: one value
-  accepted by `useLane` / `useLanePromise` / `useLanesAll` / `prefetch` /
-  `invalidate` / `set` / `update` / `remove` / `cancel`, so a key can't drift
-  away from its loader or its freshness, and writes through it are type-checked.
-  Scoped `*All` operations still take a prefix or predicate scope.
+  `laneRead({ key, loader, ...options })` is Lane's `queryOptions()`, so a key
+  can't drift away from its loader or its freshness. **Reads take the definition**
+  (`useLane` / `useLanePromise` / `useLanesAll` / `prefetch`); **entry operations
+  take its `key`** (`invalidate` / `set` / `update` / `remove` / `cancel`), because
+  none of them needs a loader. The key carries the loaded type (`LaneKeyOf<T>`, the
+  same trick as react-query's `DataTag`), so `set` / `update` through it are
+  checked; `laneKey<T>(key)` declares one for a write-only module. Scoped `*All`
+  operations still take a prefix or predicate scope.
   → `references/api-reference.md#lanereadspec--key--loader-colocation`
 - **One owner per key per subtree.** Dedupe makes re-reading a key in a child
   free in requests, but each reader is another subscription, pending flag, and
@@ -95,9 +98,9 @@ task touches that rule.
   a status object on top of Lane. → `references/migrating.md`
 - **`queryOptions()` factories port directly** to `laneRead` — same idea, and the
   call sites map one for one (`useQuery` → `useLane`, `prefetchQuery` →
-  `prefetch`, `setQueryData` → `set`). `invalidateQueries` is the exception: it
-  takes filters, while `invalidate` takes one key — a family is
-  `invalidateAll(prefix)`. → `references/migrating.md`
+  `prefetch`, `setQueryData(opts.queryKey, v)` → `set(spec.key, v)`).
+  `invalidateQueries` is the exception: it takes filters, while `invalidate` takes
+  one key — a family is `invalidateAll(prefix)`. → `references/migrating.md`
 - **Ephemeral UI needs its own boundary.** A modal / popover / combobox / tab panel
   that fires an initial read suspends to the nearest ancestor and *unmounts the
   surface* — put a `Suspense` inside it. → `references/common-mistakes.md`
@@ -127,5 +130,6 @@ exact signatures you can also read the package's bundled `dist/index.d.ts`.
 | `staleTime` / `whenStale`, polling, focus / reconnect, `gcTime` retention | `references/api-reference.md#laneuseoptions`, `#lifecycle-behavior` |
 | Keys, and scoped (prefix / predicate) operations | `references/api-reference.md#keys` |
 | Colocating a read's key + loader + options (react-query's `queryOptions()`) | `references/api-reference.md#lanereadspec--key--loader-colocation` |
+| Type-checked `set` / `update` from a key (react-query's `DataTag`) | `references/api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds` |
 | Prefetch / warm the cache on intent (hover, focus) | `references/api-reference.md#prefetch` |
 | RSC / loader seeding with `LaneHydration` | `references/api-reference.md#hydration-rsc-seeding` |

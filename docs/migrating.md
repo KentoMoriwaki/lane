@@ -18,6 +18,7 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `queryFn` / fetcher | the **loader** — forward `({ signal })` to `fetch` |
 | `queryOptions({ … })` | `laneRead({ key, loader, …options })` ([step 0](#step-0--keep-your-options-factories)) |
 | `infiniteQueryOptions({ … })` | `infiniteLaneRead({ key, initialCursor, fetchPage, nextCursor })` |
+| `DataTag` on `queryKey` | `LaneKeyOf<T>` — `spec.key`, or `laneKey<T>(…)` |
 | `useQuery().data` | `use(promise).data`, read under a `Suspense` boundary |
 | `useInfiniteQuery` | `useInfiniteLane` — one key holds the accumulated list ([step 6](#step-6--infinite-lists)) |
 | `isLoading` (no data yet) | a **`Suspense` fallback** — there is no flag |
@@ -69,18 +70,25 @@ The call sites map one for one:
 | `useQuery(taskQueries.detail(id))` | `useLane(taskLanes.detail(id))` |
 | `useSuspenseQuery(taskQueries.detail(id))` | `useLane(taskLanes.detail(id))` — every read suspends |
 | `queryClient.prefetchQuery(taskQueries.detail(id))` | `lane.prefetch(taskLanes.detail(id))` |
-| `queryClient.invalidateQueries(taskQueries.detail(id))` | `lane.invalidate(taskLanes.detail(id))` |
-| `queryClient.setQueryData(taskQueries.detail(id).queryKey, task)` | `lane.set(taskLanes.detail(id), task)` |
+| `queryClient.invalidateQueries(taskQueries.detail(id))` | `lane.invalidate(taskLanes.detail(id).key)` |
+| `queryClient.setQueryData(taskQueries.detail(id).queryKey, task)` | `lane.set(taskLanes.detail(id).key, task)` |
 | `useQueries({ queries: ids.map(taskQueries.detail) })` | `useLanesAll(ids.map(taskLanes.detail))` |
+
+The shape of that table is the same as react-query's, and for the same reason.
+`queryOptions` tags its `queryKey` with the data type (`DataTag`), which is what
+makes `getQueryData` / `setQueryData` typed from the key alone; Lane's
+[`LaneKeyOf`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds) is
+that idea, so anything addressing an entry takes `spec.key` and the loader stays
+out of it.
 
 Two differences worth knowing:
 
-- **`invalidateQueries` takes filters; `invalidate` takes one key.** Passing a
-  spec invalidates exactly that read. For a family, use a prefix or predicate
-  scope: `lane.invalidateAll(["tasks"])`.
-- **A spec makes writes type-checked.** `setQueryData` needs the key and infers
-  nothing from it; `lane.set(spec, value)` knows what the read holds and rejects
-  a value that isn't it.
+- **`invalidateQueries` takes filters; `invalidate` takes one key.** For a family,
+  use a prefix or predicate scope: `lane.invalidateAll(["tasks"])`.
+- **A write-only module needs no options factory.** Where react-query gets its tag
+  only from `queryOptions` (which requires a `queryFn`), Lane also has
+  `laneKey<T>(["task", id])` — a typed key with no loader, so a mutation module
+  imports keys and nothing else.
 
 Colocating is not required — `useLane(key, loader, options)` is the same read
 written out — but it is the shape that keeps a key from drifting away from the
@@ -254,7 +262,8 @@ Three things to carry across:
 ## Migration checklist
 
 - [ ] `queryOptions()` factories ported to `laneRead` — key, loader, and options
-      still in one place, now passed to reads *and* to `invalidate` / `set`.
+      still in one place; reads take the definition, `invalidate` / `set` take
+      its `key`.
 - [ ] Replaced `useQuery` reads with `useLane` + `use(promise)`; deleted the
       `isLoading` / `error` / `status` branches.
 - [ ] `Suspense` and Error Boundaries placed at the right granularity — including

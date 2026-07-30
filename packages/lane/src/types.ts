@@ -56,11 +56,57 @@ export type LaneLoader<T, C = T> = (
 
 export type LaneRetryDelay = (attempt: number, error: unknown) => number;
 
+declare const laneDataTag: unique symbol;
+
+/**
+ * A key that knows what its entry holds: `LaneKey` carrying the loaded type in a
+ * phantom property. `laneRead` stamps it from the loader's return type, so the
+ * type is written once, at the definition, and travels *with the key* from then
+ * on.
+ *
+ * That is what makes writes checkable. A key is where type information goes to
+ * die in a cache API — `["task", id]` is an array of a string and a string, and
+ * nothing in it says `Task`, so `lane.set(["task", id], anything)` can only take
+ * the caller's word for it. A key that carries its type turns the same call into
+ * a checked one:
+ *
+ * ```ts
+ * lane.set(taskLanes.detail(id).key, task); // checked against Task
+ * lane.update(taskLanes.detail(id).key, (task) => …); // `task` is Task
+ * ```
+ *
+ * **The key alone is enough**, which is the point of putting the type here
+ * rather than on the read: publishing, invalidating, and removing address an
+ * entry, and none of them needs a loader. So `.key` is all a mutation path has
+ * to import — no fetcher, and none of the context a fetcher would need. Only
+ * `prefetch` takes the whole read, because it is the one operation that
+ * *performs* one.
+ *
+ * The tag is an assertion, not a proof: it records what the read that defined
+ * the key loads. Nothing verifies that the value under the key came from that
+ * read — `set` publishing something else is exactly what the check is for.
+ *
+ * At runtime a tagged key is the same array as any other; the property exists
+ * only in the type.
+ */
+export type LaneKeyOf<T> = LaneKey & { readonly [laneDataTag]: T };
+
+/**
+ * A key with no type attached — the plain array form, which is every key not
+ * built by `laneRead`.
+ *
+ * It exists to keep the two `set` / `update` overloads apart. A tagged key must
+ * not fall through to the untyped signature (`T` would be re-inferred from the
+ * value, and the mismatch the tag exists to catch would type-check), so the
+ * untyped one has to *reject* a tagged key rather than merely accept both.
+ */
+export type LanePlainKey = LaneKey & { readonly [laneDataTag]?: undefined };
+
 /**
  * A read described in one place: the key, the loader that fills it, and the
  * options it is read with. Build one with {@link laneRead} and pass it wherever
- * a read is named — `useLane(spec)`, `useLanesAll([spec, …])`,
- * `lane.prefetch(spec)`, `lane.invalidate(spec)`, `lane.set(spec, value)`.
+ * a read is performed — `useLane(spec)`, `useLanesAll([spec, …])`,
+ * `lane.prefetch(spec)`.
  *
  * Colocation is the point. A key defined in one module and a loader in another
  * are two halves of one fact, and nothing checks that a call site pairs them
@@ -71,13 +117,17 @@ export type LaneRetryDelay = (attempt: number, error: unknown) => number;
  * freshness every call site gets — the drift that a shared key factory cannot
  * prevent, since options live at the call site and the key does not.
  *
- * The type parameters are the read's, unchanged: `T` is what the loader
- * resolves to and `C` is what it sees in `current`. Fixing them at definition
- * time is what makes the *writes* type-checked too — `lane.set(spec, value)` and
- * `lane.update(spec, updater)` know the read's type, where a bare key cannot.
+ * The type parameters are the read's, unchanged: `T` is what the loader resolves
+ * to and `C` is what it sees in `current`. Fixing them at definition time is
+ * also what lets `laneRead` hand back a {@link LaneKeyOf} — the type reaching
+ * the *write* side without the loader having to come along.
+ *
+ * `key` accepts a plain array — a hand-written literal, or a spread of another
+ * spec — and also a {@link LaneKeyOf} from `laneKey`, in which case the key's
+ * type and the loader's result must agree for the read to compile.
  */
 export type LaneReadSpec<T, C = T> = LaneUseOptions & {
-  key: LaneKey;
+  key: LaneKeyOf<T> | LanePlainKey;
   loader: LaneLoader<T, C>;
 };
 
@@ -89,24 +139,13 @@ export type LaneReadSpec<T, C = T> = LaneUseOptions & {
  *
  * `T` is still inferred from the loader when it is a conditional
  * (`enabled ? load : undefined`); annotate the spec (`laneRead<Task>({ … })`)
- * when the loader can be nothing else.
+ * when the loader can be nothing else. Gating does not affect the key: a gated
+ * read still knows what it would load, so its `.key` is tagged too.
  */
 export type LaneGatedReadSpec<T, C = T> = LaneUseOptions & {
-  key: LaneKey;
+  key: LaneKeyOf<T> | LanePlainKey;
   loader: LaneLoader<T, C> | undefined;
 };
-
-/**
- * What an exact-key operation addresses: a key, or anything carrying one — so a
- * spec is accepted wherever its key would be, and a read defined once is
- * invalidated, published to, or removed by that same definition.
- *
- * Scoped operations (`invalidateAll`, `updateAll`, `removeAll`) deliberately do
- * *not* take a spec. A spec describes one read; a scope selects a family of
- * existing entries, which is a different question and still answered by a prefix
- * key or a predicate.
- */
-export type LaneTarget = LaneKey | { key: LaneKey };
 
 export type LaneScope =
   | LaneKey
@@ -180,33 +219,34 @@ export type Lane = {
     options?: LanePrefetchOptions,
   ): Promise<LaneRead<T>>;
   /**
-   * Warm a read from its own definition. Only the fetch-shaping options are
-   * taken from the spec (`retry` / `retryDelay`) — `staleTime` / `whenStale`
-   * stay the eventual reader's call, exactly as with the key form.
+   * Warm a read from its own definition. This is the one method that takes a
+   * whole read rather than a key, because it is the one that *performs* a read.
+   * Only the fetch-shaping options are taken from the spec (`retry` /
+   * `retryDelay`) — `staleTime` / `whenStale` stay the eventual reader's call,
+   * exactly as with the key form.
    */
   prefetch<T, C = T>(spec: LaneReadSpec<T, C>): Promise<LaneRead<T>>;
-  invalidate(target: LaneTarget, options?: LaneInvalidateOptions): void;
+  invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
-  set<T>(key: LaneKey, valueOrPromise: LaneValue<T>): Promise<LaneRead<T>>;
   /**
-   * Publishing through a spec is type-checked: the value must be what that read
-   * loads. A bare key cannot check anything — it carries no type.
+   * Publishing to a {@link LaneKeyOf} is checked against what that key holds —
+   * `lane.set(taskLanes.detail(id).key, task)`. The type rides on the key, so a
+   * mutation path needs the key and nothing else.
    */
-  set<T, C = T>(
-    spec: LaneGatedReadSpec<T, C>,
-    valueOrPromise: LaneValue<T>,
-  ): Promise<LaneRead<T>>;
+  set<T>(key: LaneKeyOf<T>, valueOrPromise: LaneValue<T>): Promise<LaneRead<T>>;
+  /** A plain key carries no type, so the value decides it, as it always has. */
+  set<T>(key: LanePlainKey, valueOrPromise: LaneValue<T>): Promise<LaneRead<T>>;
+  /** Checked like `set`: the updater's `current` is what the key holds. */
   update<T>(
-    key: LaneKey,
+    key: LaneKeyOf<T>,
     updater: LaneUpdater<T>,
   ): Promise<LaneRead<T>> | undefined;
-  /** Type-checked like `set`: the updater's `current` is the read's own type. */
-  update<T, C = T>(
-    spec: LaneGatedReadSpec<T, C>,
+  update<T>(
+    key: LanePlainKey,
     updater: LaneUpdater<T>,
   ): Promise<LaneRead<T>> | undefined;
   updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>): Promise<LaneRead<T>>[];
-  remove(target: LaneTarget): void;
+  remove(key: LaneKey): void;
   removeAll(scope: LaneScope): void;
   /**
    * Stop the key's in-flight read. Unlike every other operation here it does not
@@ -237,7 +277,7 @@ export type Lane = {
    * A settled read is not in progress, so cancelling one does nothing; use
    * `invalidate` or `remove` to discard a value.
    */
-  cancel(target: LaneTarget): void;
+  cancel(key: LaneKey): void;
 };
 
 /**

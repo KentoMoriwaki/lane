@@ -7,6 +7,7 @@ import { afterEach, beforeAll, describe, expect, expectTypeOf, it, vi } from "vi
 import {
   createLane,
   infiniteLaneRead,
+  laneKey,
   laneRead,
   LaneProvider,
   useInfiniteLane,
@@ -18,6 +19,7 @@ import type {
   Lane,
   LaneGatedReadSpec,
   LaneGatedResult,
+  LaneKeyOf,
   LaneLoader,
   LaneRead,
   LaneReadSpec,
@@ -140,8 +142,8 @@ describe("laneRead", () => {
   });
 });
 
-describe("a spec as a Lane target", () => {
-  it("invalidates the read it describes", async () => {
+describe("the key a spec carries", () => {
+  it("invalidates the entry it names", async () => {
     const lane = createLane();
     const spec = laneRead({ key: ["task", "t1"], loader: async () => "loaded" });
     const app = await render(probeApp(lane, spec));
@@ -154,32 +156,32 @@ describe("a spec as a Lane target", () => {
     await waitForText(app.container, "published");
 
     await act(async () => {
-      lane.invalidate(spec);
+      lane.invalidate(spec.key);
       await settlePromiseHandlers();
     });
     await waitForText(app.container, "loaded");
   });
 
-  it("publishes and updates through the spec", async () => {
+  it("publishes and updates through the key", async () => {
     const lane = createLane();
     const spec = laneRead({ key: ["task", "t1"], loader: async () => "loaded" });
     const app = await render(probeApp(lane, spec));
     await waitForText(app.container, "loaded");
 
     await act(async () => {
-      lane.set(spec, "published");
+      lane.set(spec.key, "published");
       await settlePromiseHandlers();
     });
     await waitForText(app.container, "published");
 
     await act(async () => {
-      lane.update(spec, (current) => `${current}+patched`);
+      lane.update(spec.key, (current) => `${current}+patched`);
       await settlePromiseHandlers();
     });
     await waitForText(app.container, "published+patched");
   });
 
-  it("removes the entry the spec names", async () => {
+  it("removes the entry it names", async () => {
     const lane = createLane();
     const loader = vi
       .fn<() => Promise<string>>()
@@ -191,7 +193,7 @@ describe("a spec as a Lane target", () => {
     await waitForText(app.container, "first");
 
     await act(async () => {
-      lane.remove(spec);
+      lane.remove(spec.key);
       await settlePromiseHandlers();
     });
 
@@ -199,7 +201,7 @@ describe("a spec as a Lane target", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
-  it("cancels the in-flight read the spec names", async () => {
+  it("cancels the in-flight read it names", async () => {
     const lane = createLane();
     const pending = deferred<string>();
     let signal: AbortSignal | undefined;
@@ -216,9 +218,40 @@ describe("a spec as a Lane target", () => {
     await settlePromiseHandlers();
     expect(signal?.aborted).toBe(false);
 
-    lane.cancel(spec);
+    lane.cancel(spec.key);
 
     expect(signal?.aborted).toBe(true);
+  });
+});
+
+describe("laneKey", () => {
+  it("hands back the key it was given", () => {
+    const key = ["task", "t1"];
+
+    expect(laneKey<string>(key)).toBe(key);
+  });
+
+  it("names the same entry a read of that key does", async () => {
+    const lane = createLane();
+    // The write side declares the key on its own — no loader, no fetcher, none
+    // of the context a fetcher would need.
+    const taskKeys = { detail: (id: string) => laneKey<string>(["task", id]) };
+    const spec = laneRead({
+      key: taskKeys.detail("t1"),
+      loader: async () => "loaded",
+    });
+
+    const app = await render(probeApp(lane, spec));
+    await waitForText(app.container, "loaded");
+
+    await act(async () => {
+      lane.set(taskKeys.detail("t1"), "published");
+      await settlePromiseHandlers();
+    });
+
+    // Tagging is type-level only: the reader converged, so both forms resolved
+    // to one entry.
+    await waitForText(app.container, "published");
   });
 });
 
@@ -401,10 +434,10 @@ describe("infiniteLaneRead", () => {
     await click(app.container, "more");
     await waitForStatus(app.container, "item-0,item-1|more:yes");
 
-    // The key travels with the definition, so the same spec addresses the entry
+    // The key travels with the definition, so it addresses the entry on its own
     // — and the re-read walks the chain as deep as the list already is.
     await act(async () => {
-      lane.invalidate(spec);
+      lane.invalidate(spec.key);
       await settlePromiseHandlers();
     });
     await waitForStatus(app.container, "item-0,item-1|more:yes");
@@ -426,8 +459,10 @@ function typeExpectations(lane: Lane): void {
     staleTime: 60_000,
   });
 
-  // `T` comes from the loader's return type, at the definition.
-  expectTypeOf(detail).toEqualTypeOf<LaneReadSpec<Task, Task>>();
+  // `T` comes from the loader's return type, at the definition — and the key it
+  // hands back carries that type.
+  expectTypeOf(detail).toExtend<LaneReadSpec<Task, Task>>();
+  expectTypeOf(detail.key).toEqualTypeOf<LaneKeyOf<Task>>();
 
   // A definite loader keeps `promise` definite; a gated one does not.
   expectTypeOf(useLane(detail)).toEqualTypeOf<LaneResult<Task>>();
@@ -442,8 +477,10 @@ function typeExpectations(lane: Lane): void {
     key: ["task", task.id],
     loader: task.id ? async () => task : undefined,
   });
-  expectTypeOf(gated).toEqualTypeOf<LaneGatedReadSpec<Task, Task>>();
+  expectTypeOf(gated).toExtend<LaneGatedReadSpec<Task, Task>>();
   expectTypeOf(useLane(gated)).toEqualTypeOf<LaneGatedResult<Task>>();
+  // Gating does not change what the entry would hold, so the key is tagged too.
+  expectTypeOf(gated.key).toEqualTypeOf<LaneKeyOf<Task>>();
 
   // `C` still defaults to `T`, and is still the way to type `current`.
   const accumulating = laneRead<Task[], string>({
@@ -453,26 +490,67 @@ function typeExpectations(lane: Lane): void {
       return [task];
     },
   });
-  expectTypeOf(accumulating).toEqualTypeOf<LaneReadSpec<Task[], string>>();
+  expectTypeOf(accumulating).toExtend<LaneReadSpec<Task[], string>>();
+  // The tag is what the entry holds (`T`), never what `current` is (`C`).
+  expectTypeOf(accumulating.key).toEqualTypeOf<LaneKeyOf<Task[]>>();
 
-  // Writes are checked against the read's type — the payoff of fixing `T` at
-  // the definition instead of at the call site.
-  lane.set(detail, task);
-  lane.update(detail, (current) => {
+  // Writes through a tagged key are checked against what that key holds — no
+  // loader involved, and no type argument at the call site.
+  expectTypeOf(lane.set(detail.key, task)).toEqualTypeOf<
+    Promise<LaneRead<Task>>
+  >();
+  lane.update(detail.key, (current) => {
     expectTypeOf(current).toEqualTypeOf<Task>();
     return { ...current, title: "Edited" };
   });
-  // @ts-expect-error — not what this read loads.
-  lane.set(detail, "not a task");
+  // @ts-expect-error — not what this key holds.
+  lane.set(detail.key, "not a task");
   // @ts-expect-error — same check on the updater's result.
-  lane.update(detail, () => "not a task");
+  lane.update(detail.key, () => "not a task");
+  // @ts-expect-error — and on what the updater is handed.
+  lane.update(detail.key, (current: string) => current);
 
-  // A key stays a key everywhere a spec is accepted.
+  // A key factory can carry the types on its own — no loader, no request
+  // context, which is the point of tagging the key rather than the read.
+  const taskKeys = { detail: (id: string) => laneKey<Task>(["task", id]) };
+  expectTypeOf(taskKeys.detail(task.id)).toEqualTypeOf<LaneKeyOf<Task>>();
+  expectTypeOf(lane.set(taskKeys.detail(task.id), task)).toEqualTypeOf<
+    Promise<LaneRead<Task>>
+  >();
+  // @ts-expect-error — the key says Task.
+  lane.set(taskKeys.detail(task.id), { title: "no id" });
+
+  // A read built on a typed key must load what that key claims to hold: the two
+  // halves are checked against each other, in both directions.
+  const fromTypedKey = laneRead({
+    key: taskKeys.detail(task.id),
+    loader: async () => task,
+  });
+  expectTypeOf(fromTypedKey.key).toEqualTypeOf<LaneKeyOf<Task>>();
+  // @ts-expect-error — the loader must produce what the key claims to hold.
+  laneRead({ key: taskKeys.detail(task.id), loader: async () => 42 });
+
+  // A plain key carries no type, so the value still decides it, exactly as
+  // before tagging existed.
+  expectTypeOf(lane.set(["task", task.id], task)).toEqualTypeOf<
+    Promise<LaneRead<Task>>
+  >();
+  expectTypeOf(
+    lane.update<Task>(["task", task.id], (current) => current),
+  ).toEqualTypeOf<Promise<LaneRead<Task>> | undefined>();
+
+  // Entry operations that carry no value take either kind of key.
   lane.invalidate(["task", task.id]);
-  lane.invalidate(detail);
-  lane.remove(detail);
-  lane.cancel(detail);
+  lane.invalidate(detail.key);
+  lane.remove(detail.key);
+  lane.cancel(detail.key);
+  lane.invalidateAll(["task"]);
+
+  // `prefetch` is the one method that takes the whole read: it performs one.
   expectTypeOf(lane.prefetch(detail)).toEqualTypeOf<Promise<LaneRead<Task>>>();
+  expectTypeOf(
+    lane.prefetch(["task", task.id], async () => task),
+  ).toEqualTypeOf<Promise<LaneRead<Task>>>();
   // @ts-expect-error — prefetch needs something to load.
   lane.prefetch(gated);
 
@@ -486,8 +564,14 @@ function typeExpectations(lane: Lane): void {
     fetchPage: async (cursor: number) => ({ rows: [task], next: cursor + 1 }),
     nextCursor: (page) => page.next,
   });
+  type FeedPage = { rows: Task[]; next: number };
   expectTypeOf(useInfiniteLane(feed).promise).toEqualTypeOf<
-    Promise<LaneRead<InfiniteLaneValue<{ rows: Task[]; next: number }, number>>>
+    Promise<LaneRead<InfiniteLaneValue<FeedPage, number>>>
+  >();
+  // An infinite key holds the accumulated list, so that is what it is tagged
+  // with — a write through it is checked against the whole value, not one page.
+  expectTypeOf(feed.key).toEqualTypeOf<
+    LaneKeyOf<InfiniteLaneValue<FeedPage, number>>
   >();
 }
 

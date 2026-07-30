@@ -14,19 +14,33 @@ All notable changes to `use-lane` are documented here. The format is based on
   stay at each call site, where nothing checks that they belong to that key.
   `useLane(taskKeys.detail(id), () => fetchTasks(filters))` type-checks and is
   wrong, and two components can read one key with different freshness. A spec
-  makes the whole read the unit that travels, and every consumer takes it —
-  `useLane`, `useLanePromise`, `useLanesAll`, `useInfiniteLane` (via
-  `infiniteLaneRead`), and the exact-key instance methods `prefetch`,
-  `invalidate`, `set`, `update`, `remove`, `cancel`. Scoped operations
-  (`invalidateAll` / `updateAll` / `removeAll`) deliberately keep taking a scope:
-  a spec is one read, and selecting a family of existing entries is a different
-  question. Fixing `T` at the definition is what makes the write side checked —
-  `lane.set(spec, value)` and `lane.update(spec, updater)` know what that read
-  holds, where a bare key carries no type and checks nothing. At runtime the
-  factory is identity and there is no registry behind a spec: Lane still
-  addresses entries by serialized key, so specs can be rebuilt per render, in a
-  handler, or on the server, and nothing needs memoizing for identity. A gated
-  read is a spec whose `loader` is `undefined`, unchanged in meaning.
+  makes the whole read the unit that travels: `useLane`, `useLanePromise`,
+  `useLanesAll`, `useInfiniteLane` (via `infiniteLaneRead`), and `prefetch` take
+  it. At runtime the factory is identity and there is no registry behind a spec —
+  Lane still addresses entries by serialized key, so specs can be rebuilt per
+  render, in a handler, or on the server, and nothing needs memoizing for
+  identity. A gated read is a spec whose `loader` is `undefined`, unchanged in
+  meaning.
+
+- **`laneKey<T>(key)` and `LaneKeyOf<T>`** — a key that carries what its entry
+  holds, so `set` and `update` through it are type-checked. This is the same trick
+  as react-query's `DataTag`, and it is what keeps the *write* side out of the
+  colocation business: publishing, invalidating, and removing address an entry,
+  and none of them needs a loader, so requiring the whole read would make every
+  mutation path import fetchers — and whatever request context those fetchers
+  close over — to name a key it already knows. `laneRead` stamps the tag from its
+  loader's return type (`spec.key`), and `laneKey<Task>(["task", id])` declares one
+  for the half of a codebase that only writes. Handing a typed key back to
+  `laneRead` checks the two against each other: a loader that does not produce
+  what the key claims to hold no longer compiles. A tagged key is an ordinary
+  array at runtime and is accepted anywhere `LaneKey` is; only `set` / `update`
+  read the tag, and a plain key still lets the value decide its own type exactly
+  as before.
+
+- **`prefetch(spec)`** — the one instance method that takes a whole read rather
+  than a key, because it is the one that *performs* one. Its `retry` /
+  `retryDelay` come from the spec; `staleTime` / `whenStale` stay the eventual
+  reader's call, as with the key form.
 
 - **`infiniteLaneRead({ key, initialCursor, fetchPage, nextCursor, ...options })`**
   — the same, for `useInfiniteLane`, whose loader is a cursor walk rather than a
@@ -163,11 +177,6 @@ All notable changes to `use-lane` are documented here. The format is based on
   `isBackgroundPending`.
 
 ### Changed
-
-- **The core size budget moves 2.2 kB → 2.3 kB.** Accepting a `laneRead` spec
-  wherever a key is accepted adds `keyOf` plus one shared `findEntry` — which
-  replaces four duplicated `entries.get(serializeKey(key))` lookups — for about
-  50 bytes.
 
 - **`remove` / `removeAll` now drop the entry's last fulfilled value**, not just
   its cached promise. Removal means the entry no longer belongs in client state —

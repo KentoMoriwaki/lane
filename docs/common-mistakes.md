@@ -307,11 +307,20 @@ export const taskLanes = {
     }),
 };
 
-// Every call site, read and write alike
+// Reads take the definition; entry operations take its key.
 useLane(taskLanes.detail(id));
 lane.prefetch(taskLanes.detail(id));
-lane.invalidate(taskLanes.detail(id));
-lane.set(taskLanes.detail(task.id), task); // checked against the read's type
+lane.invalidate(taskLanes.detail(id).key);
+lane.set(taskLanes.detail(task.id).key, task); // checked against what it holds
+```
+
+A module that only writes does not have to import the read at all — `laneKey<Task>`
+gives it a typed key with no loader attached:
+
+```ts
+export const taskKeys = { detail: (id: string) => laneKey<Task>(["task", id]) };
+
+lane.set(taskKeys.detail(saved.id), saved); // still checked
 ```
 
 Two reads that genuinely differ should differ in their **key** — `["task", id]`

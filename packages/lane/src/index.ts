@@ -14,6 +14,7 @@ export type {
   ReactNativeNetInfo,
 } from "./event-source";
 export { LaneHydration } from "./hydration";
+export { laneKey } from "./keys";
 export { LaneProvider, useLaneInstance } from "./provider";
 export { laneRead } from "./read-spec";
 export { infiniteLaneRead, useInfiniteLane } from "./use-infinite-lane";
@@ -33,9 +34,11 @@ export type {
   LaneHydrationSnapshots,
   LaneInvalidateOptions,
   LaneKey,
+  LaneKeyOf,
   LaneLoader,
   LaneLoaderContext,
   LaneOptions,
+  LanePlainKey,
   LanePrefetchOptions,
   LaneRead,
   LaneReadSpec,
@@ -46,7 +49,6 @@ export type {
   LaneRetryDelay,
   LaneScope,
   LaneSnapshot,
-  LaneTarget,
   LaneUpdater,
   LaneUseOptions,
   LaneValue,

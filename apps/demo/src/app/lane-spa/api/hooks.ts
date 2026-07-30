@@ -21,11 +21,7 @@ import {
   updateTask,
 } from "./endpoints";
 import type { TaskFilters } from "./endpoints";
-import { laneKeys, workspaceReads } from "./lane-reads";
-import {
-  queryKeys,
-  TEAM_SCOPED_KEYS,
-} from "./query-options";
+import { laneKeys, TEAM_SCOPED_KEYS, workspaceReads } from "./lane-reads";
 import {
   replaceTaskInList,
   type TaskCacheStrategy,
@@ -34,6 +30,7 @@ import {
 } from "./task-cache-sync";
 
 /* -------------------------------- Reads -------------------------------- */
+
 /**
  * The workspace's reads, bound to the current session + team. `workspaceReads`
  * takes the context once so each factory below it takes only what decides its
@@ -133,7 +130,7 @@ export function useDeleteTask() {
 
   return React.useCallback(async (taskId: string): Promise<void> => {
     await deleteTask(ctx, taskId);
-    lane.remove(queryKeys.task(taskId));
+    lane.remove(laneKeys.task(taskId));
     removeTaskFromTaskLists(lane, taskId);
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
@@ -173,7 +170,7 @@ export function useCreateLabel() {
     input: CreateLabelInput,
   ): Promise<TeamLabel> => {
     const label = await createLabel(ctx, input);
-    lane.invalidate(queryKeys.labels);
+    lane.invalidate(laneKeys.labels());
     return label;
   }, [ctx, lane]);
 }
@@ -186,7 +183,7 @@ export function useCreateProject() {
     input: CreateProjectInput,
   ) => {
     const project = await createProject(ctx, input);
-    lane.invalidate(queryKeys.projects);
+    lane.invalidate(laneKeys.projects());
     return project;
   }, [ctx, lane]);
 }
@@ -200,10 +197,10 @@ export function useWorkspaceRefresh() {
   const refresh = React.useCallback(() => {
     startRefresh(() => {
       lane.invalidateAll(["tasks"]);
-      lane.invalidate(queryKeys.insights);
-      lane.invalidate(queryKeys.projects);
-      lane.invalidate(queryKeys.labels);
-      lane.invalidate(queryKeys.members);
+      lane.invalidate(laneKeys.insights());
+      lane.invalidate(laneKeys.projects());
+      lane.invalidate(laneKeys.labels());
+      lane.invalidate(laneKeys.members());
     });
   }, [lane]);
 
@@ -260,11 +257,11 @@ function scheduleDerivedWorkspaceRefresh(
 
   React.startTransition(() => {
     if (refresh.insights) {
-      lane.invalidate(queryKeys.insights);
+      lane.invalidate(laneKeys.insights());
     }
 
     if (refresh.projects) {
-      lane.invalidate(queryKeys.projects);
+      lane.invalidate(laneKeys.projects());
     }
   });
 }

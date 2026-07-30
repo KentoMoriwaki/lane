@@ -23,35 +23,52 @@ import {
   fetchTeams,
   type TaskFilters,
 } from "./endpoints";
-import { queryKeys } from "./query-options";
-
 /**
- * The keys the workspace writes to, carrying what each entry holds.
+ * Every key this workspace addresses, carrying what its entry holds.
  *
- * `queryKeys` (in `query-options.ts`) stays as it is: plain arrays, importable
- * from the server for RSC seeding and usable as prefix scopes. This layer adds
- * the types, so a publication is checked — `lane.set` here cannot put a
- * `Project` under a task key — and it deliberately holds **no loaders**, because
- * addressing an entry never needs one. That is what lets `publishTask` below
- * take no request context at all.
+ * `laneKey<T>` is what makes a write checked — `lane.set` here cannot put a
+ * `Project` under a task key — and this layer deliberately holds **no loaders**,
+ * because addressing an entry never needs one. That is what lets `publishTask`
+ * (in `hooks.ts`) take no request context at all.
+ *
+ * Team-owned keys omit `teamId`: the active team travels in request headers, and
+ * the workspace provider removes these keys when it changes (see
+ * `TEAM_SCOPED_KEYS`). Session-level keys are kept separate.
  */
 export const laneKeys = {
-  currentUser: () => laneKey<CurrentUser>(queryKeys.currentUser),
-  teams: () => laneKey<TeamSummary[]>(queryKeys.teams),
-  tasks: (filters: TaskFilters) => laneKey<Task[]>(queryKeys.tasks(filters)),
-  task: (taskId: string) => laneKey<Task>(queryKeys.task(taskId)),
-  projects: () => laneKey<Project[]>(queryKeys.projects),
-  labels: () => laneKey<TeamLabel[]>(queryKeys.labels),
-  members: () => laneKey<TeamMember[]>(queryKeys.members),
-  insights: () => laneKey<Insights>(queryKeys.insights),
+  currentUser: () => laneKey<CurrentUser>(["current-user"]),
+  teams: () => laneKey<TeamSummary[]>(["teams"]),
+  tasks: (filters: TaskFilters) => laneKey<Task[]>(["tasks", filters]),
+  task: (taskId: string) => laneKey<Task>(["task", taskId]),
+  taskBlockedBy: (taskId: string) =>
+    laneKey<Task[]>(["task-blocked-by", taskId]),
+  taskBlocking: (taskId: string) => laneKey<Task[]>(["task-blocking", taskId]),
+  projects: () => laneKey<Project[]>(["projects"]),
+  labels: () => laneKey<TeamLabel[]>(["labels"]),
+  members: () => laneKey<TeamMember[]>(["members"]),
+  insights: () => laneKey<Insights>(["insights"]),
 };
+
+/**
+ * The key families that belong to the active team and are removed when it
+ * changes. Prefix *scopes*, not keys — they name a family of entries rather than
+ * one, so they carry no type.
+ */
+export const TEAM_SCOPED_KEYS = [
+  ["tasks"],
+  ["task"],
+  ["projects"],
+  ["labels"],
+  ["members"],
+  ["insights"],
+] as const;
 
 /**
  * Every read the workspace performs, defined once — `laneRead` colocates a
  * read's key, its loader, and the options it is read with, the way
  * react-query's `queryOptions()` does.
  *
- * Sharing only the *key* (see `query-options.ts`) shares half a read: the
+ * Sharing only the *key* shares half a read: the
  * loader and the freshness options would still be written at each call site,
  * where nothing checks that they belong to that key. Here `useTasks` cannot
  * accidentally read `["tasks", filters]` with a one-second `staleTime` while
@@ -108,14 +125,14 @@ export function workspaceReads(ctx: WorkspaceCtx) {
      */
     blockedBy: (taskId: string, ids: string[]) =>
       laneRead({
-        key: queryKeys.taskBlockedBy(taskId),
+        key: laneKeys.taskBlockedBy(taskId),
         loader: ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
         refetchOnMount: true,
         staleTime: 5_000,
       }),
     blocking: (taskId: string, ids: string[]) =>
       laneRead({
-        key: queryKeys.taskBlocking(taskId),
+        key: laneKeys.taskBlocking(taskId),
         loader: ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
         refetchOnMount: true,
         staleTime: 5_000,

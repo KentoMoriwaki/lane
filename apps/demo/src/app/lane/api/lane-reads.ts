@@ -22,27 +22,30 @@ import {
   fetchTeams,
   type TaskFilters,
 } from "./endpoints";
-import { queryKeys } from "./query-options";
+import { entryKeys } from "./keys";
 
 /**
- * The keys the workspace writes to, carrying what each entry holds.
+ * The same keys as `keys.ts`, carrying what each entry holds.
  *
- * `queryKeys` (in `query-options.ts`) stays as it is: plain arrays, importable
- * from the server for RSC seeding and usable as prefix scopes. This layer adds
- * the types, so a publication is checked — `lane.set` here cannot put a
- * `Project` under a task key — and it deliberately holds **no loaders**, because
- * addressing an entry never needs one. That is what lets `publishTask` below
- * take no request context at all.
+ * This layer exists because of one constraint, not by preference: `laneKey` is a
+ * runtime export of a `"use client"` package, so it cannot be called in the
+ * server-safe module the RSC seed path imports (see `keys.ts`). The literals stay
+ * there; the types are attached here, which is what makes a write checked —
+ * `lane.set` cannot put a `Project` under a task key.
+ *
+ * It deliberately holds **no loaders**, because addressing an entry never needs
+ * one. That is what lets `publishTask` (in `hooks.ts`) take no request context at
+ * all.
  */
 export const laneKeys = {
-  currentUser: () => laneKey<CurrentUser>(queryKeys.currentUser),
-  teams: () => laneKey<TeamSummary[]>(queryKeys.teams),
-  tasks: (filters: TaskFilters) => laneKey<Task[]>(queryKeys.tasks(filters)),
-  task: (taskId: string) => laneKey<Task>(queryKeys.task(taskId)),
-  projects: () => laneKey<Project[]>(queryKeys.projects),
-  labels: () => laneKey<TeamLabel[]>(queryKeys.labels),
-  members: () => laneKey<TeamMember[]>(queryKeys.members),
-  insights: () => laneKey<Insights>(queryKeys.insights),
+  currentUser: () => laneKey<CurrentUser>(entryKeys.currentUser),
+  teams: () => laneKey<TeamSummary[]>(entryKeys.teams),
+  tasks: (filters: TaskFilters) => laneKey<Task[]>(entryKeys.tasks(filters)),
+  task: (taskId: string) => laneKey<Task>(entryKeys.task(taskId)),
+  projects: () => laneKey<Project[]>(entryKeys.projects),
+  labels: () => laneKey<TeamLabel[]>(entryKeys.labels),
+  members: () => laneKey<TeamMember[]>(entryKeys.members),
+  insights: () => laneKey<Insights>(entryKeys.insights),
 };
 
 /**
@@ -50,7 +53,7 @@ export const laneKeys = {
  * read's key, its loader, and the options it is read with, the way
  * react-query's `queryOptions()` does.
  *
- * Sharing only the *key* (see `query-options.ts`) shares half a read: the
+ * Sharing only the *key* shares half a read: the
  * loader and the freshness options would still be written at each call site,
  * where nothing checks that they belong to that key. Here `useTasks` cannot
  * accidentally read `["tasks", filters]` with a one-second `staleTime` while

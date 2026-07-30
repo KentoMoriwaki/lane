@@ -4,7 +4,7 @@ import { LaneProvider, useLane } from "use-lane";
 import * as React from "react";
 import { fetchCurrentUser } from "@/app/lane-spa/api/endpoints";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane-spa/api/endpoints";
-import { queryKeys } from "@/app/lane-spa/api/query-options";
+import { laneKeys } from "@/app/lane-spa/api/lane-reads";
 import {
   ClientWorkspaceProvider,
   useWorkspace,
@@ -28,7 +28,7 @@ export function ClientOnlyWorkspaceApp() {
 function ClientOnlyWorkspaceBootstrap() {
   const currentUser = React.use(
     useLane({
-      key: queryKeys.currentUser,
+      key: laneKeys.currentUser(),
       loader: () => fetchCurrentUser({ userId: "", teamId: "" }),
     }).promise,
   ).data;

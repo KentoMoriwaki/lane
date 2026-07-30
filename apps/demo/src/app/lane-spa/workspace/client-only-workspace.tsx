@@ -27,9 +27,10 @@ export function ClientOnlyWorkspaceApp() {
 
 function ClientOnlyWorkspaceBootstrap() {
   const currentUser = React.use(
-    useLane(queryKeys.currentUser, () =>
-      fetchCurrentUser({ userId: "", teamId: "" }),
-    ).promise,
+    useLane({
+      key: queryKeys.currentUser,
+      loader: () => fetchCurrentUser({ userId: "", teamId: "" }),
+    }).promise,
   ).data;
 
   return (

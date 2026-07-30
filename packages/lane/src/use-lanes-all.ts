@@ -25,23 +25,15 @@ const EMPTY_OPTIONS: LaneUseOptions = {};
 
 function noop(): void {}
 
-/** One member of a batch, in either form the hook accepts. */
-type BatchRead<T, C> = readonly [LaneKey, LaneLoader<T>] | LaneReadSpec<T, C>;
-
-type Descriptor<T> = {
+type Descriptor<T, C> = {
   key: LaneKey;
   keyId: string;
-  // C-erased: the batch is typed by `T` alone, and its two member forms disagree
-  // about `C` (a tuple's loader is `LaneLoader<T, T>`, a spec's is whatever it
-  // was defined with). Every loader accepts a context that promises nothing
-  // about `current`, so `never` is the one type both forms fit — and `current`
-  // itself still reaches the loader body with the type it was written against.
-  loader: LaneLoader<T, never>;
-  // The member's own options, when it came from a spec. Kept separate from the
-  // shared ones rather than merged here: the shared `options` is usually a fresh
-  // object literal every render, and every consumer already reads it at render
-  // or fire time so a changed value takes effect without re-subscribing.
-  options: LaneUseOptions | undefined;
+  loader: LaneLoader<T, C>;
+  // The member's own read, which is also its options. Kept separate from the
+  // batch's shared ones rather than merged here: the shared `options` is usually
+  // a fresh object literal every render, and every consumer already reads it at
+  // render or fire time so a changed value takes effect without re-subscribing.
+  options: LaneUseOptions;
 };
 
 /**
@@ -75,16 +67,8 @@ type Descriptor<T> = {
  * `staleTime` / `refetchOn*` where it defines them, exactly as it would through
  * `useLane`, and inherits the rest from the batch.
  */
-export function useLanesAll<T>(
-  reads: readonly (readonly [LaneKey, LaneLoader<T>])[],
-  options?: LaneUseOptions,
-): Promise<LaneRead<T>[]>;
 export function useLanesAll<T, C = T>(
   reads: readonly LaneReadSpec<T, C>[],
-  options?: LaneUseOptions,
-): Promise<LaneRead<T>[]>;
-export function useLanesAll<T, C = T>(
-  reads: readonly BatchRead<T, C>[],
   options: LaneUseOptions = EMPTY_OPTIONS,
 ): Promise<LaneRead<T>[]> {
   const lane = useLaneInstance();
@@ -92,7 +76,7 @@ export function useLanesAll<T, C = T>(
 
   // Serialized once per (stable) `reads`, not every render.
   const descriptors = useMemo(
-    () => reads.map<Descriptor<T>>(toDescriptor),
+    () => reads.map<Descriptor<T, C>>(toDescriptor),
     [reads],
   );
 
@@ -139,7 +123,7 @@ export function useLanesAll<T, C = T>(
   // `undefined` when the trigger is off), so toggling a flag never re-subscribes.
   // Each fans the invalidation across the current keys; overlaps coalesce in the
   // store, so the smallest effective `staleTime` wins.
-  const mountRefetch = useEffectEvent((descriptor: Descriptor<T>) => {
+  const mountRefetch = useEffectEvent((descriptor: Descriptor<T, C>) => {
     const own = optionsFor(options, descriptor);
     const invalidateOptions = revalidateOptions(
       own.refetchOnMount,
@@ -238,38 +222,29 @@ export function useLanesAll<T, C = T>(
   return promise;
 }
 
-function toDescriptor<T, C>(read: BatchRead<T, C>): Descriptor<T> {
-  // A tuple member is an array and a spec never is — the same structural test
-  // that tells a key from a spec everywhere else in Lane.
-  if (Array.isArray(read)) {
-    const [key, loader] = read as readonly [LaneKey, LaneLoader<T>];
-    return { key, keyId: serializeKey(key), loader, options: undefined };
-  }
-
-  const spec = read as LaneReadSpec<T, C>;
+function toDescriptor<T, C>(read: LaneReadSpec<T, C>): Descriptor<T, C> {
   return {
-    key: spec.key,
-    keyId: serializeKey(spec.key),
-    loader: spec.loader,
-    options: spec,
+    key: read.key,
+    keyId: serializeKey(read.key),
+    loader: read.loader,
+    options: read,
   };
 }
 
 /**
  * The options one member is read with: its own where it defines them, the
- * batch's shared ones for the rest. A tuple member has none of its own, so it
- * gets the shared object unchanged — the common case allocates nothing.
+ * batch's shared ones for the rest.
  */
-function optionsFor<T>(
+function optionsFor<T, C>(
   shared: LaneUseOptions,
-  descriptor: Descriptor<T>,
+  descriptor: Descriptor<T, C>,
 ): LaneUseOptions {
-  return descriptor.options ? { ...shared, ...descriptor.options } : shared;
+  return { ...shared, ...descriptor.options };
 }
 
-function computeAggregate<T>(
+function computeAggregate<T, C>(
   lane: Lane,
-  descriptors: Descriptor<T>[],
+  descriptors: Descriptor<T, C>[],
   options: LaneUseOptions,
   gate?: Promise<void>,
 ): Promise<LaneRead<T>[]> {
@@ -288,9 +263,9 @@ function computeAggregate<T>(
 
 // Fire a background revalidation across every current member for a focus /
 // reconnect trigger, skipping the members whose own trigger is off.
-function revalidateAll<T>(
+function revalidateAll<T, C>(
   lane: Lane,
-  descriptors: Descriptor<T>[],
+  descriptors: Descriptor<T, C>[],
   shared: LaneUseOptions,
   trigger: "refetchOnFocus" | "refetchOnReconnect",
 ): void {

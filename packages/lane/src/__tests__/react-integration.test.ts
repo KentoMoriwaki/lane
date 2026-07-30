@@ -774,7 +774,7 @@ describe("React integration", () => {
 
     // Warm the cache imperatively (e.g. from a link's onMouseEnter), before any
     // reader mounts, and let it settle.
-    lane.prefetch(["tasks"], loader);
+    lane.prefetch({ key: ["tasks"], loader });
     await settlePromiseHandlers();
     expect(loader).toHaveBeenCalledTimes(1);
 
@@ -835,7 +835,7 @@ function Probe({
   options?: LaneUseOptions;
   invalidateOptions?: LaneInvalidateOptions;
 }) {
-  const result = useLane(cacheKey, loader, options);
+  const result = useLane({ ...options, key: cacheKey, loader });
   const read = React.use(result.promise);
   const value = read.data;
   const refresh =
@@ -865,8 +865,18 @@ function TwoReadProbe({
   loaderA: LaneLoader<string>;
   loaderB: LaneLoader<string>;
 }) {
-  const a = useLane(["a"], loaderA, { whenStale: "refetch", staleTime: 0 });
-  const b = useLane(["b"], loaderB, { whenStale: "refetch", staleTime: 0 });
+  const a = useLane({
+    key: ["a"],
+    loader: loaderA,
+    whenStale: "refetch",
+    staleTime: 0,
+  });
+  const b = useLane({
+    key: ["b"],
+    loader: loaderB,
+    whenStale: "refetch",
+    staleTime: 0,
+  });
   const va = React.use(a.promise).data;
   const vb = React.use(b.promise).data;
   return React.createElement("div", null, `${va}|${vb}`);
@@ -894,7 +904,10 @@ function GatedProbe({
   enabled: boolean;
   loader: LaneLoader<string>;
 }) {
-  const result = useLane(["tasks"], enabled ? loader : undefined);
+  const result = useLane({
+    key: ["tasks"],
+    loader: enabled ? loader : undefined,
+  });
   // `use` may be called conditionally — the gated read is unwrapped only when
   // there is a promise, otherwise the reader renders its own fallback.
   const value = result.promise ? React.use(result.promise).data : "disabled";
@@ -940,7 +953,7 @@ function DeferredOnMountProbe({
     }
   }, [flip]);
 
-  const { promise } = useLane(["tasks"], loader);
+  const { promise } = useLane({ key: ["tasks"], loader });
   const value = reveal ? React.use(promise).data : "placeholder";
 
   return React.createElement("div", null, `${value}|pending:${flag(isPending)}`);
@@ -971,7 +984,7 @@ function EagerOnMountProbe({ loader }: { loader: LaneLoader<string> }) {
     setReveal(true);
   }, []);
 
-  const { promise } = useLane(["tasks"], loader);
+  const { promise } = useLane({ key: ["tasks"], loader });
   const value = reveal ? React.use(promise).data : "placeholder";
 
   return React.createElement("div", null, value);
@@ -1015,7 +1028,10 @@ function GatedDeferOnMountProbe({
     }
   }, [flip]);
 
-  const { promise } = useLane(["tasks"], reveal ? loader : undefined);
+  const { promise } = useLane({
+    key: ["tasks"],
+    loader: reveal ? loader : undefined,
+  });
   const value = promise ? React.use(promise).data : "placeholder";
 
   return React.createElement("div", null, `${value}|pending:${flag(isPending)}`);

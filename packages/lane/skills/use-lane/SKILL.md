@@ -33,7 +33,10 @@ to the action via `useOptimistic` / `useActionState`).
 
 ```tsx
 // Read: Lane returns the promise; use() unwraps it; Suspense + Error Boundary do the UI.
-const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
+const { promise } = useLane({
+  key: ["user", id],
+  loader: ({ signal }) => fetchUser(id, signal),
+});
 const { data } = use(promise); // { data, refreshError } — no isLoading / error / status
 
 // Converge after a mutation: change the source, invalidate the key, re-read.

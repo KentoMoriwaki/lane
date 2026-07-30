@@ -119,11 +119,11 @@ function Toolbar({
 
 function UsersList() {
   const lane = useLaneInstance();
-  const { promise, isTransitionPending, invalidate } = useLane(
-    ["users"],
-    ({ signal }) => fetchUsers(signal),
-    READ_POLICY,
-  );
+  const { promise, isTransitionPending, invalidate } = useLane({
+    ...READ_POLICY,
+    key: ["users"],
+    loader: ({ signal }) => fetchUsers(signal),
+  });
   const { data } = use(promise);
 
   // lane.update: rewrite the cached value in place — no loader, no fetch.
@@ -167,11 +167,11 @@ function UsersList() {
 
 function UserDetail() {
   const { id } = useParams();
-  const { promise } = useLane(
-    ["user", id],
-    ({ signal }) => fetchUser(id!, signal),
-    READ_POLICY,
-  );
+  const { promise } = useLane({
+    ...READ_POLICY,
+    key: ["user", id],
+    loader: ({ signal }) => fetchUser(id!, signal),
+  });
   const { data } = use(promise);
 
   return (
@@ -210,11 +210,11 @@ function UserDetail() {
 
 function PostsList() {
   const lane = useLaneInstance();
-  const { promise, isTransitionPending, invalidate } = useLane(
-    ["posts"],
-    ({ signal }) => fetchPosts(signal),
-    READ_POLICY,
-  );
+  const { promise, isTransitionPending, invalidate } = useLane({
+    ...READ_POLICY,
+    key: ["posts"],
+    loader: ({ signal }) => fetchPosts(signal),
+  });
   const { data } = use(promise);
 
   const editInPlace = () => {

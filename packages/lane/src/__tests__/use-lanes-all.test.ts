@@ -5,10 +5,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createLane, LaneProvider, useLanesAll } from "../index";
-import type { Lane, LaneKey, LaneLoader, LaneUseOptions } from "../types";
+import type { Lane, LaneReadSpec, LaneUseOptions } from "../types";
 import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";
 
-type Reads = readonly (readonly [LaneKey, LaneLoader<string>])[];
+type Reads = readonly LaneReadSpec<string>[];
 
 type RenderedApp = {
   container: HTMLDivElement;
@@ -44,8 +44,8 @@ describe("useLanesAll", () => {
 
     const app = await render(
       batchApp(lane, [
-        [["a"], loaderA],
-        [["b"], loaderB],
+        { key: ["a"], loader: loaderA },
+        { key: ["b"], loader: loaderB },
       ]),
     );
 
@@ -62,8 +62,8 @@ describe("useLanesAll", () => {
 
     const app = await render(
       batchApp(lane, [
-        [["a"], () => a.promise],
-        [["b"], () => b.promise],
+        { key: ["a"], loader: () => a.promise },
+        { key: ["b"], loader: () => b.promise },
       ]),
     );
 
@@ -87,15 +87,15 @@ describe("useLanesAll", () => {
     const loaderA = vi.fn(async () => "A");
     const loaderB = vi.fn(async () => "B");
 
-    const app = await render(batchApp(lane, [[["a"], loaderA]]));
+    const app = await render(batchApp(lane, [{ key: ["a"], loader: loaderA }]));
     await waitForText(app.container, "A");
     expect(loaderA).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       app.root.render(
         batchApp(lane, [
-          [["a"], loaderA],
-          [["b"], loaderB],
+          { key: ["a"], loader: loaderA },
+          { key: ["b"], loader: loaderB },
         ]),
       );
       await settlePromiseHandlers();
@@ -113,14 +113,14 @@ describe("useLanesAll", () => {
 
     const app = await render(
       batchApp(lane, [
-        [["a"], loaderA],
-        [["b"], loaderB],
+        { key: ["a"], loader: loaderA },
+        { key: ["b"], loader: loaderB },
       ]),
     );
     await waitForText(app.container, "A,B");
 
     await act(async () => {
-      app.root.render(batchApp(lane, [[["a"], loaderA]]));
+      app.root.render(batchApp(lane, [{ key: ["a"], loader: loaderA }]));
       await settlePromiseHandlers();
     });
     await waitForText(app.container, "A");
@@ -143,8 +143,8 @@ describe("useLanesAll", () => {
 
     const app = await render(
       batchApp(lane, [
-        [["a"], loaderA],
-        [["b"], loaderB],
+        { key: ["a"], loader: loaderA },
+        { key: ["b"], loader: loaderB },
       ]),
     );
     await waitForText(app.container, "A,B");
@@ -167,13 +167,13 @@ describe("useLanesAll", () => {
 
     const lane = createLane();
     const reads: Reads = [
-      [
-        ["a"],
-        async () => {
+      {
+        key: ["a"],
+        loader: async () => {
           throw new Error("boom");
         },
-      ],
-      [["b"], async () => "B"],
+      },
+      { key: ["b"], loader: async () => "B" },
     ];
 
     const app = await render(
@@ -202,7 +202,7 @@ describe("useLanesAll", () => {
       .mockImplementationOnce(async () => "A1")
       .mockImplementationOnce(() => reload.promise);
 
-    const app = await render(batchApp(lane, [[["a"], loaderA]]));
+    const app = await render(batchApp(lane, [{ key: ["a"], loader: loaderA }]));
     await waitForText(app.container, "A1");
     expect(loaderA).toHaveBeenCalledTimes(1);
 
@@ -232,8 +232,8 @@ describe("useLanesAll", () => {
       batchApp(
         lane,
         [
-          [["a"], loaderA],
-          [["b"], loaderB],
+          { key: ["a"], loader: loaderA },
+          { key: ["b"], loader: loaderB },
         ],
         { refetchOnMount: "always" },
       ),
@@ -258,14 +258,14 @@ describe("useLanesAll", () => {
       .mockImplementationOnce(() => reload.promise);
 
     // Mount with focus refetch off.
-    const app = await render(batchApp(lane, [[["a"], loaderA]]));
+    const app = await render(batchApp(lane, [{ key: ["a"], loader: loaderA }]));
     await waitForText(app.container, "A1");
     expect(loaderA).toHaveBeenCalledTimes(1);
 
     // Turn `refetchOnFocus` on: the batch re-subscribes with the new option.
     await act(async () => {
       app.root.render(
-        batchApp(lane, [[["a"], loaderA]], { refetchOnFocus: true }),
+        batchApp(lane, [{ key: ["a"], loader: loaderA }], { refetchOnFocus: true }),
       );
       await settlePromiseHandlers();
     });

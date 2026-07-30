@@ -39,7 +39,6 @@ export type {
   LaneLoaderContext,
   LaneOptions,
   LanePlainKey,
-  LanePrefetchOptions,
   LaneRead,
   LaneReadSpec,
   LaneRefetchOnFocus,

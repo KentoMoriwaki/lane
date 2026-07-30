@@ -110,19 +110,18 @@ type LaneOptions = {
 
 ## Reading data
 
-### `useLane(key, loader, options?)`
+### `useLane(read)`
 
-Subscribe a component to a keyed async read.
+Subscribe a component to a keyed async read. A read is **one value** — its key,
+its loader, and the options it is read with:
 
 ```ts
-function useLane<T, C = T>(
-  key: LaneKey,
-  loader: LaneLoader<T, C>,
-  options?: LaneUseOptions,
-): LaneResult<T>;
+function useLane<T, C = T>(read: LaneReadSpec<T, C>): LaneResult<T>;
 
-// The same read, described in one value — see `laneRead` below.
-function useLane<T, C = T>(spec: LaneReadSpec<T, C>): LaneResult<T>;
+type LaneReadSpec<T, C = T> = LaneUseOptions & {
+  key: LaneKeyOf<T> | LanePlainKey;
+  loader: LaneLoader<T, C>;
+};
 ```
 
 - **`key`** — a structural array (`["task", id]`). See [Keys](#keys).
@@ -131,7 +130,12 @@ function useLane<T, C = T>(spec: LaneReadSpec<T, C>): LaneResult<T>;
   when the key has no cached promise. The `signal` aborts when the in-flight read
   is discarded (invalidation, removal, an authoritative `set` over a pending
   read, or GC).
-- **`options`** — see [`LaneUseOptions`](#laneuseoptions).
+- **the rest** — see [`LaneUseOptions`](#laneuseoptions). They ride flat on the
+  same object.
+
+Write it inline for a one-off read, or build it with
+[`laneRead`](#lanereadspec--key--loader-colocation) when the read is used in more
+than one place — same value either way, and every consumer of a read takes it.
 
 **`current`** is the entry's last fulfilled value, or `undefined` on a first
 load — snapshotted when the read is created, so every retry of that read sees
@@ -148,17 +152,20 @@ Its type is the read's **second type parameter, defaulting to the loaded type**,
 so annotating the read is what types it:
 
 ```tsx
-const { promise } = useLane<Feed>(["feed"], async ({ current, signal }) => {
-  const since = current?.cursor ?? null; // current: Feed | undefined
-  return fetchFeedSince(since, signal);
+const { promise } = useLane<Feed>({
+  key: ["feed"],
+  loader: async ({ current, signal }) => {
+    const since = current?.cursor ?? null; // current: Feed | undefined
+    return fetchFeedSince(since, signal);
+  },
 });
 ```
 
 Reading `current` without that annotation is a type error asking for one, never a
 silent `any`. The loaded type stays in the return position, so a loader that
-ignores `current` keeps inferring exactly as before — `useLane(["task", id], ({
-signal }) => fetchTask(id, signal))` still yields `LaneResult<Task>` with no type
-argument. Give `C` explicitly only for a loader whose `current` is deliberately
+ignores `current` keeps inferring exactly as before — `useLane({ key: ["task",
+id], loader: ({ signal }) => fetchTask(id, signal) })` still yields
+`LaneResult<Task>` with no type argument. Give `C` explicitly only for a loader whose `current` is deliberately
 narrower or wider than its result. [Why it is shaped this
 way](./design-notes.md#a-loaders-input-includes-what-it-already-produced).
 
@@ -167,7 +174,10 @@ inside a `Suspense` boundary — it resolves to a [`LaneRead<T>`](#lanereadt)
 (`{ data, refreshError }`):
 
 ```tsx
-const { promise } = useLane(["task", id], ({ signal }) => fetchTask(id, signal));
+const { promise } = useLane({
+  key: ["task", id],
+  loader: ({ signal }) => fetchTask(id, signal),
+});
 const { data: task, refreshError } = use(promise);
 ```
 
@@ -183,14 +193,17 @@ Thin wrapper that returns only the promise. Equivalent to
 the local `invalidate`.
 
 ```ts
-const { data: task } = use(useLanePromise(["task", id], loader));
+const { data: task } = use(useLanePromise({
+  key: ["task", id],
+  loader,
+}));
 ```
 
 ### `laneRead(spec)` — key + loader colocation
 
-Describe a read once — its key, its loader, and the options it is read with —
-and pass that one value wherever the read is named. It is Lane's equivalent of
-react-query's `queryOptions()`.
+Every read *is* one value — [`useLane`](#uselaneread) takes nothing else. What
+`laneRead` adds is a place to write that value **once** and the types that follow
+from it. It is Lane's equivalent of react-query's `queryOptions()`.
 
 ```ts
 function laneRead<T, C = T>(
@@ -226,14 +239,14 @@ const { promise, isTransitionPending } = useLane(taskLanes.detail(id));
 const { data: task } = use(promise);
 ```
 
-**Reads take the whole definition; entry operations take its `key`.**
+**Reads take the whole read; entry operations take its `key`.**
 
 | Consumer | Call |
 | --- | --- |
-| [`useLane`](#uselanekey-loader-options) | `useLane(taskLanes.detail(id))` |
-| [`useLanePromise`](#uselanepromisekey-loader-options) | `use(useLanePromise(taskLanes.detail(id)))` |
+| [`useLane`](#uselaneread) | `useLane(taskLanes.detail(id))` |
+| [`useLanePromise`](#uselanepromiseread) | `use(useLanePromise(taskLanes.detail(id)))` |
 | [`useLanesAll`](#uselanesallreads-options--a-batch-read) | `useLanesAll(ids.map(taskLanes.detail))` |
-| [`useInfiniteLane`](#useinfinitelanekey-options-readoptions--a-cursor-paginated-list) | `useInfiniteLane(feedLanes.list(filters))` — built with [`infiniteLaneRead`](#infinitelanereadspec) |
+| [`useInfiniteLane`](#useinfinitelaneread--a-cursor-paginated-list) | `useInfiniteLane(feedLanes.list(filters))` — built with [`infiniteLaneRead`](#infinitelanereadspec) |
 | [`prefetch`](#prefetch) | `lane.prefetch(taskLanes.detail(id))` |
 | [`invalidate`](#invalidate--invalidateall) / [`remove`](#remove--removeall) / [`cancel`](#cancel) | `lane.invalidate(taskLanes.detail(id).key)` |
 | [`set`](#set) / [`update`](#update--updateall) | `lane.set(taskLanes.detail(task.id).key, task)` — checked |
@@ -252,8 +265,8 @@ Options drift the same way, and more quietly: they live at the call site while
 the key does not, so one component reads a key with `staleTime: 60_000` and the
 next reads the same key with none.
 
-**What the factory buys you.** At runtime it returns its argument — the value is
-the point, not the call. What it adds is types:
+**What the factory buys you.** At runtime it returns its argument — a hand-written
+object literal reads the same way. What it adds is types:
 
 - **`T` is inferred at the definition** from the loader's return type, so every
   consumer reads that type back instead of re-inferring it — and the `key` it
@@ -261,8 +274,11 @@ the point, not the call. What it adds is types:
   which is how the type reaches the write side.
 - **The shape is checked where it is written**, so a mistyped option is an error
   at the definition rather than a silently ignored property at three call sites.
+  (An object literal passed straight to `useLane` is checked too — what a
+  variable-held literal loses, and `laneRead` restores, is the key tag and the
+  option names.)
 
-`C` — the type of [`current`](#uselanekey-loader-options) — still defaults to `T`
+`C` — the type of [`current`](#uselaneread) — still defaults to `T`
 and is still given explicitly (`laneRead<Feed, Cursor>({ … })`) for a loader whose
 `current` is deliberately narrower or wider than its result.
 
@@ -474,33 +490,16 @@ disabled.
 
 ### `useLanesAll(reads, options?)` — a batch read
 
-Read a **dynamic-length** set of `[key, loader]` pairs with one hook and get back
-a single stable `Promise.all` of their values. `useLane` calls a fixed set of
-hooks, so it can't be called in a loop over a list whose length varies;
-`useLanesAll` orchestrates all the reads internally over the same core primitives.
+Read a **dynamic-length** set of reads with one hook and get back a single stable
+`Promise.all` of their values. `useLane` calls a fixed set of hooks, so it can't
+be called in a loop over a list whose length varies; `useLanesAll` orchestrates
+all the reads internally over the same core primitives.
 
 ```ts
-function useLanesAll<T>(
-  reads: readonly (readonly [LaneKey, LaneLoader<T>])[],
-  options?: LaneUseOptions, // shared by every read
-): Promise<LaneRead<T>[]>;
-
-// Or as specs, which carry their own options (see `laneRead`).
 function useLanesAll<T, C = T>(
   reads: readonly LaneReadSpec<T, C>[],
-  options?: LaneUseOptions, // the fallback for what a spec does not set
+  options?: LaneUseOptions, // the fallback for what a read does not set
 ): Promise<LaneRead<T>[]>;
-```
-
-```tsx
-const promise = useLanesAll(
-  ids.map((id) => [["task", id], ({ signal }) => fetchTask(id, signal)]),
-  { staleTime: 60_000 },
-);
-
-// Suspends until all resolve (they load in parallel); a rejecting *initial* load
-// throws to the Error Boundary.
-const tasks = use(promise).map((read) => read.data);
 ```
 
 A batch is usually derived from a list, which is where
@@ -509,10 +508,13 @@ the same read applied to different inputs:
 
 ```tsx
 const reads = useMemo(() => ids.map(taskLanes.detail), [ids]);
+
+// Suspends until all resolve (they load in parallel); a rejecting *initial* load
+// throws to the Error Boundary.
 const tasks = use(useLanesAll(reads)).map((read) => read.data);
 ```
 
-Each `[key, loader]` (or spec) is its own keyed read — independently cached,
+Each member is its own keyed read — independently cached,
 deduped, subscribed (focus / reconnect / `refetchOnMount`), and invalidatable,
 exactly as if you had called `useLane` for each. Three deliberate simplifications
 versus a per-item API:
@@ -520,10 +522,9 @@ versus a per-item API:
 - **The loader is required.** To leave a read out, omit it from the array — there
   is no per-item gating (that is what `loader: undefined` does on a single
   `useLane`).
-- **`options` are shared** by every read in the batch (changing them
-  re-subscribes all, matching `useLane`'s option reactivity). A **spec carries
-  its own**, which win where it sets them: a member reads exactly the way it is
-  defined, and inherits the rest from the batch.
+- **A member's own options win**; the batch's `options` argument is the fallback
+  for what a member does not set. So a read behaves in a batch exactly as it
+  would through `useLane`, and a batch-wide policy needs no edit to each member.
 - **The return is just the promise** — one stable, `use()`-able `Promise.all`,
   not an array of per-item handles.
 
@@ -561,24 +562,21 @@ For rendering N *independent* rows (not aggregating), don't use `useLanesAll` at
 all — render a child component per row and call `useLane` inside each, so every
 row keeps its own Suspense boundary and pending state.
 
-### `useInfiniteLane(key, options, readOptions?)` — a cursor-paginated list
+### `useInfiniteLane(read)` — a cursor-paginated list
 
 Read an infinite list as **one key holding the whole accumulated list**, with the
 page depth read back out of the cached value rather than kept in the key or in
 component state. It is `useLane` plus a loader that walks the cursor chain as
-deep as [`current`](#uselanekey-loader-options) already is — no core machinery,
+deep as [`current`](#uselaneread) already is — no core machinery,
 nothing an ordinary read does not already do.
 
 ```ts
-function useInfiniteLane<P, C>(
-  key: LaneKey,
-  options: {
-    initialCursor: C;
-    fetchPage: (cursor: C, context: { signal?: AbortSignal }) => Promise<P>;
-    nextCursor: (page: P, cursor: C) => C | null;
-  },
-  readOptions?: LaneUseOptions,
-): {
+function useInfiniteLane<P, C>(read: {
+  key: LaneKey;
+  initialCursor: C;
+  fetchPage: (cursor: C, context: { signal?: AbortSignal }) => Promise<P>;
+  nextCursor: (page: P, cursor: C) => C | null;
+} & LaneUseOptions): {
   promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
   loadMore: () => Promise<LaneRead<InfiniteLaneValue<P, C>>> | undefined;
   isTransitionPending: boolean;
@@ -714,7 +712,7 @@ Notes:
   covers every page again. An `invalidate` while *nothing* is mounted is the
   exception: it drops the entry (no cache, no subscriber), so the next mount
   starts from one page — the same asymmetry described under
-  [`current`](#uselanekey-loader-options).
+  [`current`](#uselaneread).
 
 ### Deferred reads (render first, swap when ready)
 
@@ -744,9 +742,10 @@ function ComponentGraph({ selectedId }: { selectedId: string }) {
   }, []);
 
   // Loader always set → the fetch starts on the first render, not when revealed.
-  const { promise } = useLane(["component-graph", selectedId], ({ signal }) =>
-    fetchComponentGraph(selectedId, signal),
-  );
+  const { promise } = useLane({
+    key: ["component-graph", selectedId],
+    loader: ({ signal }) => fetchComponentGraph(selectedId, signal),
+  });
 
   // Not revealed yet: render the placeholder, never a fallback. `use` is only
   // reached when `reveal` is true, so the first render never suspends.
@@ -837,9 +836,10 @@ data before navigation:
 ```tsx
 const lane = useLaneInstance();
 const warm = () =>
-  lane.prefetch(["component-graph", id], ({ signal }) =>
-    fetchComponentGraph(id, signal),
-  );
+  lane.prefetch({
+    key: ["component-graph", id],
+    loader: ({ signal }) => fetchComponentGraph(id, signal),
+  });
 
 <Link href={`/component/${id}`} onMouseEnter={warm} onFocus={warm} />;
 ```
@@ -1074,7 +1074,10 @@ after each load never fires mid-flight:
 
 ```tsx
 function Polled({ id }: { id: string }) {
-  const { promise } = useLane(["task", id], ({ signal }) => fetchTask(id, signal));
+  const { promise } = useLane({
+    key: ["task", id],
+    loader: ({ signal }) => fetchTask(id, signal),
+  });
   const lane = useLaneInstance();
   const task = use(promise).data;
 
@@ -1112,7 +1115,10 @@ function Polled({ id }: { id: string }) {
   external key, and its identity is stable across renders — depend on it directly
   and the render-path caveat above falls away:
   ```tsx
-  const { promise, invalidate } = useLane(["task", id], ({ signal }) => fetchTask(id, signal));
+  const { promise, invalidate } = useLane({
+    key: ["task", id],
+    loader: ({ signal }) => fetchTask(id, signal),
+  });
   const task = use(promise).data;
   useEffect(() => {
     const timer = setInterval(() => invalidate({ background: true, onlyIf: "settled" }), 5_000);
@@ -1177,7 +1183,7 @@ lane.removeAll(() => true); // clear everything, e.g. on sign out
 Removal drops the entry's **last fulfilled value** along with its cached promise,
 so nothing can serve the removed data back: neither
 [stale-on-error](#stale-on-error), which would otherwise fall back to it when the
-next read fails, nor the next loader's [`current`](#uselanekey-loader-options).
+next read fails, nor the next loader's [`current`](#uselaneread).
 This matters because an entry a reader still holds survives the removal itself —
 the key slot stays, the value does not.
 
@@ -1285,7 +1291,7 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
   treat the data as old and retry. Only an **initial** load (no previous value)
   rejects the promise and reaches the Error Boundary.
 - **The last fulfilled value.** One value per entry backs both the stale-on-error
-  fallback above and the [`current`](#uselanekey-loader-options) a loader is
+  fallback above and the [`current`](#uselaneread) a loader is
   handed. It outlives invalidation (which clears the cached promise, not the
   value) and is dropped by [`remove`](#remove--removeall), by garbage collection,
   and by an invalidation of an entry no reader is holding — that last one deletes

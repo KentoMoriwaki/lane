@@ -27,14 +27,14 @@ export type LaneLoaderContext<C = unknown> = {
    * type.** It cannot simply *be* the loaded type: that would put the loader's
    * own type parameter in the loader's *parameter* position, and TypeScript
    * fixes a type parameter before it checks a context-sensitive argument's body,
-   * so `useLane(key, ({ signal }) => fetchTask(id, signal))` — the form the docs
-   * recommend everywhere — would infer `LaneRead<unknown>` instead of
+   * so an inline `loader: ({ signal }) => fetchTask(id, signal)` — the form the
+   * docs recommend everywhere — would infer `LaneRead<unknown>` instead of
    * `LaneRead<Task>`. (`NoInfer` does not change that.) Keeping the loaded type
    * to the return position and `current` on its own parameter preserves
    * inference, and annotating the read types `current` with it:
    *
    * ```ts
-   * useLane<Feed>(["feed"], async ({ current, signal }) => …);
+   * useLane<Feed>({ key: ["feed"], loader: async ({ current }) => … });
    * //          ^ current is Feed | undefined
    * ```
    *
@@ -104,14 +104,14 @@ export type LanePlainKey = LaneKey & { readonly [laneDataTag]?: undefined };
 
 /**
  * A read described in one place: the key, the loader that fills it, and the
- * options it is read with. Build one with {@link laneRead} and pass it wherever
- * a read is performed — `useLane(spec)`, `useLanesAll([spec, …])`,
- * `lane.prefetch(spec)`.
+ * options it is read with — the only shape a read is ever described in. Write it
+ * inline for a one-off, or build it with {@link laneRead} to share one definition
+ * across `useLane`, `useLanesAll`, and `lane.prefetch`.
  *
  * Colocation is the point. A key defined in one module and a loader in another
  * are two halves of one fact, and nothing checks that a call site pairs them
- * correctly: `useLane(taskKeys.detail(id), () => fetchTasks(filters))` type-checks
- * and is wrong. A spec makes the pair the unit that travels.
+ * correctly: a `taskKeys.detail(id)` key next to a `fetchTasks(filters)` loader
+ * type-checks and is wrong. `laneRead` gives the pair one place to live.
  *
  * Options ride along flat, so the freshness a read is defined with is the
  * freshness every call site gets — the drift that a shared key factory cannot
@@ -205,27 +205,14 @@ export type LaneInvalidateOptions = {
   after?: Promise<unknown>;
 };
 
-/**
- * Options for `Lane.prefetch`. Only the fetch-shaping knobs apply — `staleTime`
- * / `whenStale` are read-time concerns the eventual reader decides, and prefetch
- * always uses `"revalidate"` so a repeat call dedupes onto the warm cache.
- */
-export type LanePrefetchOptions = Pick<LaneUseOptions, "retry" | "retryDelay">;
-
 export type Lane = {
-  prefetch<T, C = T>(
-    key: LaneKey,
-    loader: LaneLoader<T, C>,
-    options?: LanePrefetchOptions,
-  ): Promise<LaneRead<T>>;
   /**
-   * Warm a read from its own definition. This is the one method that takes a
+   * Warm a read before any reader mounts. This is the one method that takes a
    * whole read rather than a key, because it is the one that *performs* a read.
-   * Only the fetch-shaping options are taken from the spec (`retry` /
-   * `retryDelay`) — `staleTime` / `whenStale` stay the eventual reader's call,
-   * exactly as with the key form.
+   * Only the fetch-shaping options apply (`retry` / `retryDelay`) — `staleTime` /
+   * `whenStale` stay the eventual reader's call.
    */
-  prefetch<T, C = T>(spec: LaneReadSpec<T, C>): Promise<LaneRead<T>>;
+  prefetch<T, C = T>(read: LaneReadSpec<T, C>): Promise<LaneRead<T>>;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
   /**

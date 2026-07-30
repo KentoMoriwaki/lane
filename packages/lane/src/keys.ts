@@ -38,17 +38,6 @@ export function laneKey<T>(key: LaneKey): LaneKeyOf<T> {
   return key as LaneKeyOf<T>;
 }
 
-/**
- * Whether a read was described as a bare key or as a spec — a key is always an
- * array and a spec never is, so the two are told apart structurally, with no
- * marker property for a caller to keep in sync.
- */
-export function isLaneKey(
-  keyOrSpec: LaneKey | { key: LaneKey },
-): keyOrSpec is LaneKey {
-  return Array.isArray(keyOrSpec);
-}
-
 export function isPrefixKey(prefix: LaneKey, key: LaneKey): boolean {
   if (prefix.length > key.length) {
     return false;

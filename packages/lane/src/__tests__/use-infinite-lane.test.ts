@@ -412,7 +412,8 @@ function NullCursorProbe({
 }: {
   fetchPage: (cursor: number | null) => Promise<Page>;
 }) {
-  const { promise } = useInfiniteLane<Page, number | null>(["null-cursor"], {
+  const { promise } = useInfiniteLane<Page, number | null>({
+    key: ["null-cursor"],
     fetchPage: (cursor) => fetchPage(cursor),
     initialCursor: null,
     nextCursor: (page) => page.next,
@@ -434,15 +435,13 @@ function FeedProbe({
   fetchPage: PageFetcher;
   options?: LaneUseOptions;
 }) {
-  const result = useInfiniteLane<Page, number>(
-    ["feed"],
-    {
-      fetchPage: (cursor) => fetchPage(cursor),
-      initialCursor: 0,
-      nextCursor: (page) => page.next,
-    },
-    options,
-  );
+  const result = useInfiniteLane<Page, number>({
+    ...options,
+    key: ["feed"],
+    fetchPage: (cursor) => fetchPage(cursor),
+    initialCursor: 0,
+    nextCursor: (page) => page.next,
+  });
 
   React.useEffect(() => {
     handle = result;

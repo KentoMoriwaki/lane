@@ -109,7 +109,10 @@ if (error) return <ErrorView />;
 return <Profile user={data} />;
 
 // After (Lane)
-const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
+const { promise } = useLane({
+  key: ["user", id],
+  loader: ({ signal }) => fetchUser(id, signal),
+});
 const { data } = use(promise);
 return <Profile user={data} />;
 ```
@@ -169,7 +172,10 @@ on screen while the next one loads:
 ```tsx
 const deferred = useDeferredValue(filters);
 const isStale = deferred !== filters; // drive a pending affordance off this
-const { promise } = useLane(["rows", deferred], ({ signal }) => fetchRows(deferred, signal));
+const { promise } = useLane({
+  key: ["rows", deferred],
+  loader: ({ signal }) => fetchRows(deferred, signal),
+});
 ```
 
 See [key changes that flash](./common-mistakes.md#key-changes-that-flash-filters-navigation-props).
@@ -207,7 +213,7 @@ See [polling](./api-reference.md#polling).
 
 ## Step 6 — infinite lists
 
-`useInfiniteQuery` becomes [`useInfiniteLane`](./api-reference.md#useinfinitelanekey-options-readoptions--a-cursor-paginated-list).
+`useInfiniteQuery` becomes [`useInfiniteLane`](./api-reference.md#useinfinitelaneread--a-cursor-paginated-list).
 The shapes line up almost one for one, and the two caches hold the same thing —
 one entry per list, holding every page:
 
@@ -231,7 +237,8 @@ const { data, fetchNextPage, hasNextPage } = useInfiniteQuery({
 const items = data?.pages.flatMap((page) => page.items) ?? [];
 
 // After (Lane)
-const { promise, loadMore } = useInfiniteLane(["feed", filters], {
+const { promise, loadMore } = useInfiniteLane({
+  key: ["feed", filters],
   initialCursor: null as string | null,
   fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
   nextCursor: (page) => page.nextCursor,

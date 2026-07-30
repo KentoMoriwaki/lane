@@ -549,10 +549,12 @@ function typeExpectations(lane: Lane): void {
   // `prefetch` is the one method that takes the whole read: it performs one.
   expectTypeOf(lane.prefetch(detail)).toEqualTypeOf<Promise<LaneRead<Task>>>();
   expectTypeOf(
-    lane.prefetch(["task", task.id], async () => task),
+    lane.prefetch({ key: ["task", task.id], loader: async () => task }),
   ).toEqualTypeOf<Promise<LaneRead<Task>>>();
   // @ts-expect-error — prefetch needs something to load.
   lane.prefetch(gated);
+  // @ts-expect-error — and a key is not a read.
+  lane.prefetch(["task", task.id]);
 
   expectTypeOf(useLanesAll([detail, detail])).toEqualTypeOf<
     Promise<LaneRead<Task>[]>

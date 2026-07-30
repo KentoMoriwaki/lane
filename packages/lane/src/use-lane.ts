@@ -15,7 +15,7 @@ import {
   subscribeLane,
 } from "./core";
 import type { LaneInvalidationSource } from "./core";
-import { isLaneKey, serializeKey } from "./keys";
+import { serializeKey } from "./keys";
 import { useLaneInstance, useLaneRevalidation } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
@@ -24,43 +24,22 @@ import type {
   LaneGatedResult,
   LaneInvalidateOptions,
   LaneKey,
-  LaneLoader,
   LaneRead,
   LaneReadSpec,
   LaneResult,
-  LaneUseOptions,
 } from "./types";
 
-const EMPTY_OPTIONS: LaneUseOptions = {};
-
-export function useLane<T, C = T>(spec: LaneReadSpec<T, C>): LaneResult<T>;
+export function useLane<T, C = T>(read: LaneReadSpec<T, C>): LaneResult<T>;
 export function useLane<T, C = T>(
-  spec: LaneGatedReadSpec<T, C>,
+  read: LaneGatedReadSpec<T, C>,
 ): LaneGatedResult<T>;
 export function useLane<T, C = T>(
-  key: LaneKey,
-  loader: LaneLoader<T, C>,
-  options?: LaneUseOptions,
-): LaneResult<T>;
-export function useLane<T, C = T>(
-  key: LaneKey,
-  loader: LaneLoader<T, C> | undefined,
-  options?: LaneUseOptions,
-): LaneGatedResult<T>;
-export function useLane<T, C = T>(
-  keyOrSpec: LaneKey | LaneGatedReadSpec<T, C>,
-  maybeLoader?: LaneLoader<T, C>,
-  maybeOptions?: LaneUseOptions,
+  read: LaneGatedReadSpec<T, C>,
 ): LaneResult<T> | LaneGatedResult<T> {
-  // The two call forms describe the same read; a spec just carries all three
-  // parts in one value. Unpacking it here (rather than normalizing into a new
-  // object) keeps the hook body identical for both, allocates nothing per
-  // render, and leaves the spec itself as the options bag — so options are still
-  // read fresh on every render and at every fire time.
-  const separate = isLaneKey(keyOrSpec);
-  const key = separate ? keyOrSpec : keyOrSpec.key;
-  const loader = separate ? maybeLoader : keyOrSpec.loader;
-  const options = separate ? (maybeOptions ?? EMPTY_OPTIONS) : keyOrSpec;
+  // A read is one value: its key, its loader, and the options it is read with.
+  // The value doubles as the options bag — no destructuring into a normalized
+  // copy — so every option is read fresh on each render and at each fire time.
+  const { key, loader } = read;
 
   const lane = useLaneInstance();
   const revalidation = useLaneRevalidation();
@@ -69,7 +48,7 @@ export function useLane<T, C = T>(
   // unambiguous disable signal: no fetch, no subscription, no stored entry.
   const enabled = loader !== undefined;
   const keyId = serializeKey(key);
-  const readOptions = toReadOptions(options);
+  const readOptions = toReadOptions(read);
   const [isTransitionPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
   const [promise, setPromise] = useState<Promise<LaneRead<T>> | undefined>(() =>
@@ -170,8 +149,8 @@ export function useLane<T, C = T>(
   const refetchOnMount = useEffectEvent(
     (targetLane: Lane, targetKeyId: string) => {
       const invalidateOptions = revalidateOptions(
-        options.refetchOnMount,
-        options.staleTime,
+        read.refetchOnMount,
+        read.staleTime,
       );
 
       if (!invalidateOptions) {
@@ -187,8 +166,8 @@ export function useLane<T, C = T>(
   // fire time, so toggling the flag never re-subscribes.
   const revalidateOnFocus = useEffectEvent(() => {
     const invalidateOptions = revalidateOptions(
-      options.refetchOnFocus,
-      options.staleTime,
+      read.refetchOnFocus,
+      read.staleTime,
     );
 
     if (!invalidateOptions) {
@@ -200,8 +179,8 @@ export function useLane<T, C = T>(
 
   const revalidateOnReconnect = useEffectEvent(() => {
     const invalidateOptions = revalidateOptions(
-      options.refetchOnReconnect,
-      options.staleTime,
+      read.refetchOnReconnect,
+      read.staleTime,
     );
 
     if (!invalidateOptions) {
@@ -271,34 +250,13 @@ export function useLane<T, C = T>(
 }
 
 export function useLanePromise<T, C = T>(
-  spec: LaneReadSpec<T, C>,
+  read: LaneReadSpec<T, C>,
 ): Promise<LaneRead<T>>;
 export function useLanePromise<T, C = T>(
-  spec: LaneGatedReadSpec<T, C>,
+  read: LaneGatedReadSpec<T, C>,
 ): Promise<LaneRead<T>> | undefined;
 export function useLanePromise<T, C = T>(
-  key: LaneKey,
-  loader: LaneLoader<T, C>,
-  options?: LaneUseOptions,
-): Promise<LaneRead<T>>;
-export function useLanePromise<T, C = T>(
-  key: LaneKey,
-  loader: LaneLoader<T, C> | undefined,
-  options?: LaneUseOptions,
-): Promise<LaneRead<T>> | undefined;
-export function useLanePromise<T, C = T>(
-  keyOrSpec: LaneKey | LaneGatedReadSpec<T, C>,
-  maybeLoader?: LaneLoader<T, C>,
-  maybeOptions?: LaneUseOptions,
+  read: LaneGatedReadSpec<T, C>,
 ): Promise<LaneRead<T>> | undefined {
-  // Both forms reach `useLane` through the same single call — the gated
-  // overload, since neither the loader nor the spec is known to be present
-  // here. One call site, so the hook order never depends on which form was used.
-  const separate = isLaneKey(keyOrSpec);
-
-  return useLane<T, C>(
-    separate ? keyOrSpec : keyOrSpec.key,
-    separate ? maybeLoader : keyOrSpec.loader,
-    separate ? maybeOptions : keyOrSpec,
-  ).promise;
+  return useLane<T, C>(read).promise;
 }

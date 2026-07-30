@@ -61,16 +61,14 @@ export function FeedList({
   const isSwappingParams = deferredFeed !== feed;
 
   const { promise, loadMore, isTransitionPending, isBackgroundPending } =
-    useInfiniteLane<FeedPageResponse, FeedCursor>(
-      feedKey(deferredFeed),
-      {
-        fetchPage: (cursor, { signal }) =>
-          fetchFeedPage({ cursor, feed: deferredFeed, signal }),
-        initialCursor: null,
-        nextCursor: (page) => page.nextCursor,
-      },
-      { refetchOnMount },
-    );
+    useInfiniteLane<FeedPageResponse, FeedCursor>({
+      key: feedKey(deferredFeed),
+      fetchPage: (cursor, { signal }) =>
+        fetchFeedPage({ cursor, feed: deferredFeed, signal }),
+      initialCursor: null,
+      nextCursor: (page) => page.nextCursor,
+      refetchOnMount,
+    });
 
   const { data, refreshError } = use(promise);
 

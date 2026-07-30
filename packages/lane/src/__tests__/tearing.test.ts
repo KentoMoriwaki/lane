@@ -644,7 +644,7 @@ function Reader({
 }) {
   useFrames(frames);
 
-  const result = useLane(cacheKey, loader);
+  const result = useLane({ key: cacheKey, loader });
   const read = React.use(result.promise);
   const pending = flags
     ? `:t${result.isTransitionPending ? 1 : 0}b${result.isBackgroundPending ? 1 : 0}`

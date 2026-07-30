@@ -8,7 +8,6 @@ import type {
   LaneKey,
   LaneLoader,
   LaneOptions,
-  LanePrefetchOptions,
   LaneRead,
   LaneReadSpec,
   LaneRetryDelay,
@@ -115,11 +114,7 @@ export function createLane(options: LaneOptions = {}): Lane {
   };
 
   const lane: Lane = {
-    prefetch<T, C = T>(
-      keyOrSpec: LaneKey | LaneReadSpec<T, C>,
-      maybeLoader?: LaneLoader<T, C>,
-      options: LanePrefetchOptions = {},
-    ) {
+    prefetch<T, C = T>(read: LaneReadSpec<T, C>) {
       // Warm the cache without subscribing or suspending: start the load and
       // hand back the promise for a later reader to adopt. Pin "revalidate" so a
       // re-fired prefetch (e.g. repeated link hover) dedupes onto the in-flight
@@ -127,27 +122,13 @@ export function createLane(options: LaneOptions = {}): Lane {
       // timer — an unadopted prefetch is an orphan, reclaimed by the lane-wide
       // sweep on whatever cycle a later unsubscribe triggers.
       //
-      // Both call forms collapse to one read description. A spec's `staleTime` /
-      // `whenStale` are deliberately dropped: those are read-time decisions and
-      // this is not the read.
-      // `Array.isArray` does not narrow a `readonly unknown[]` out of a union,
-      // so the spec is asserted rather than inferred — a key is an array and a
-      // spec is not, which is the whole distinction.
-      const spec = (
-        Array.isArray(keyOrSpec) ? undefined : keyOrSpec
-      ) as LaneReadSpec<T, C> | undefined;
-      const shape = spec ?? options;
-
-      return readOrCreate<T, C>(
-        lane,
-        spec?.key ?? (keyOrSpec as LaneKey),
-        spec?.loader ?? (maybeLoader as LaneLoader<T, C>),
-        {
-          retry: shape.retry,
-          retryDelay: shape.retryDelay,
-          whenStale: "revalidate",
-        },
-      );
+      // A read's `staleTime` / `whenStale` are deliberately ignored here: those
+      // are read-time decisions and this is not the read.
+      return readOrCreate<T, C>(lane, read.key, read.loader, {
+        retry: read.retry,
+        retryDelay: read.retryDelay,
+        whenStale: "revalidate",
+      });
     },
     invalidate(key, options = {}) {
       const entry = state.entries.get(serializeKey(key));

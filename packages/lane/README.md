@@ -18,7 +18,10 @@ shared request across components, and a way to replace that promise after the
 source changes. Lane is exactly that layer — and nothing React already provides.
 
 ```tsx
-const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
+const { promise } = useLane({
+  key: ["user", id],
+  loader: ({ signal }) => fetchUser(id, signal),
+});
 const { data: user } = use(promise); // Suspense owns loading, Error Boundaries own errors
 ```
 
@@ -93,10 +96,13 @@ import { Suspense, use } from "react";
 import { useLane } from "use-lane";
 
 function Profile({ userId }: { userId: string }) {
-  const { promise } = useLane(["user", userId], async ({ signal }) => {
-    const res = await fetch(`/api/users/${userId}`, { signal });
-    if (!res.ok) throw new Error("Failed to load user");
-    return (await res.json()) as User;
+  const { promise } = useLane({
+    key: ["user", userId],
+    loader: async ({ signal }) => {
+      const res = await fetch(`/api/users/${userId}`, { signal });
+      if (!res.ok) throw new Error("Failed to load user");
+      return (await res.json()) as User;
+    },
   });
 
   const { data: user } = use(promise);

@@ -17,7 +17,7 @@ Whatever the host, an integration comes down to five decisions:
 | Concern | How |
 | --- | --- |
 | **Identity** | Derive each Lane key from durable route/URL state — `key = f(URL)`. Revisiting a route re-reads the same key. |
-| **Seeding** | Either seed from the host's data layer with [`LaneHydration`](./api-reference.md#hydration-rsc-seeding), or let a client component fetch on first read via [`useLane`](./api-reference.md#uselanekey-loader-options). |
+| **Seeding** | Either seed from the host's data layer with [`LaneHydration`](./api-reference.md#hydration-rsc-seeding), or let a client component fetch on first read via [`useLane`](./api-reference.md#uselaneread). |
 | **Navigation** | Commit route changes inside a React transition so a suspending read keeps the current screen instead of flashing a Suspense fallback. |
 | **Convergence** | After a mutation, converge with `invalidate` (re-read), or publish authoritative data with `set` / `update`. |
 | **Retention** | How long a route's entry survives back/forward is a Lane policy — `gcTime` + `whenStale` — not the router. |
@@ -97,7 +97,10 @@ const snapshots = { entries: [{ key: ["tasks", filters], data: tasks }] };
 
 <LaneProvider>
   <LaneHydration snapshots={snapshots}>
-    <Workspace /> {/* client: useLane(["tasks", filters], …) reads the seed */}
+    <Workspace /> {/* client: useLane({
+      key: ["tasks", filters],
+      loader: …,
+    }) reads the seed */}
   </LaneHydration>
 </LaneProvider>;
 ```
@@ -131,7 +134,9 @@ flash-free transitions by default.
 
 ```tsx
 function UsersRoute() {
-  const { promise } = useLane(["users"], ({ signal }) => fetchUsers(signal), {
+  const { promise } = useLane({
+    key: ["users"],
+    loader: ({ signal }) => fetchUsers(signal),
     staleTime: 5_000,
     whenStale: "revalidate", // so back/forward to a stale route does not suspend
   });
@@ -161,7 +166,10 @@ function withHydration(Ui) {
   return function HydratedRoute() {
     return (
       <LaneHydration snapshots={useLoaderData()}>
-        <Ui /> {/* useLane(["users"], …) finds the hydrated promise */}
+        <Ui /> {/* useLane({
+          key: ["users"],
+          loader: …,
+        }) finds the hydrated promise */}
       </LaneHydration>
     );
   };

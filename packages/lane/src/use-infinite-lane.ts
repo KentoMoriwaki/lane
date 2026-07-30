@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { updateEntry } from "./core";
-import { isLaneKey, serializeKey } from "./keys";
+import { serializeKey } from "./keys";
 import { useLaneInstance } from "./provider";
 import type {
   LaneInvalidateOptions,
@@ -110,50 +110,31 @@ export type InfiniteLaneResult<P, C> = {
  * deliberately not papered over.
  *
  * ```tsx
- * const { promise, loadMore, isTransitionPending } = useInfiniteLane(
- *   ["feed", filters],
- *   {
- *     initialCursor: null as string | null,
- *     fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
- *     nextCursor: (page) => page.nextCursor,
- *   },
- * );
+ * const { promise, loadMore, isTransitionPending } = useInfiniteLane({
+ *   key: ["feed", filters],
+ *   initialCursor: null as string | null,
+ *   fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+ *   nextCursor: (page) => page.nextCursor,
+ * });
  *
  * const { data, refreshError } = use(promise);
  * // data.pages / data.hasNext — never a status object.
  * ```
  */
 export function useInfiniteLane<P, C>(
-  spec: InfiniteLaneReadSpec<P, C>,
-): InfiniteLaneResult<P, C>;
-export function useInfiniteLane<P, C>(
-  key: LaneKey,
-  options: InfiniteLaneOptions<P, C>,
-  readOptions?: LaneUseOptions,
-): InfiniteLaneResult<P, C>;
-export function useInfiniteLane<P, C>(
-  keyOrSpec: LaneKey | InfiniteLaneReadSpec<P, C>,
-  maybeOptions?: InfiniteLaneOptions<P, C>,
-  maybeReadOptions?: LaneUseOptions,
+  read: InfiniteLaneReadSpec<P, C>,
 ): InfiniteLaneResult<P, C> {
-  // A spec is all three arguments in one value; unpacked here so the body below
-  // never has to know which form the caller used.
-  const separate = isLaneKey(keyOrSpec);
-  const key = separate ? keyOrSpec : keyOrSpec.key;
-  const options = separate
-    ? (maybeOptions as InfiniteLaneOptions<P, C>)
-    : keyOrSpec;
-  const readOptions = separate ? maybeReadOptions : keyOrSpec;
+  const { key, initialCursor, fetchPage, nextCursor } = read;
 
   const lane = useLaneInstance();
   const keyId = serializeKey(key);
 
-  const { initialCursor, fetchPage, nextCursor } = options;
-
   const { invalidate, isBackgroundPending, isTransitionPending, promise } =
-    useLane<InfiniteLaneValue<P, C>>(
-      key,
-      async ({ current, signal }) => {
+    // The read options pass straight through; the pagination fields ride along
+    // inert (a read only ever looks at the four it knows).
+    useLane<InfiniteLaneValue<P, C>>({
+      ...read,
+      loader: async ({ current, signal }) => {
         // `current` is typed by the explicit type argument above, so this reads
         // the accumulated value directly — no narrowing, no cast.
         // How deep this key already is. A first load is one page.
@@ -188,8 +169,7 @@ export function useInfiniteLane<P, C>(
 
         return { hasNext: next !== null, pages, params };
       },
-      readOptions,
-    );
+    });
 
   // `useCallback` with its real dependencies — no more, and nothing suppressed.
   // Addressing the entry by `keyId` rather than `key` is what keeps the list

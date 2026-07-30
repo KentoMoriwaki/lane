@@ -84,10 +84,26 @@ CI runs unit tests, typechecks, and the E2E suite on every push and pull request
 
 ## Building & publishing `use-lane`
 
-`pnpm --filter use-lane build` (tsup) emits ESM + CJS bundles with type
-definitions to `packages/lane/dist/`, keeping the `"use client"` directive at the
-top of each bundle. Inside the workspace the package resolves to `src/` directly;
-`publishConfig` switches the entry points to `dist/` when packing.
+`pnpm --filter use-lane build` (tsup) emits ESM + CJS to `packages/lane/dist/`
+with type definitions, **one output file per source module** rather than one
+bundle per format. That is what makes `"use client"` a per-file boundary: the
+five React modules (`provider`, `hydration`, and the three hooks) carry the
+directive, `src/index.ts` does not, and the remaining eight modules stay
+importable from a Server Component. Keep it that way — putting the directive back
+on the barrel would make the whole package client-only again, and `laneKey` /
+`laneRead` / `createLane` would stop working server-side.
+
+The public entry stays a single `"."` export; there are no `/server` or `/client`
+subpaths. A server module importing the barrel tree-shakes the client-marked
+files away, which is why `sideEffects: false` matters. `bundle: false` in
+[`tsup.config.ts`](packages/lane/tsup.config.ts) is what preserves the files, and
+a small `renderChunk` plugin there points each emitted file at its own format's
+siblings (`./core.js` from ESM, `./core.cjs` from CJS) — esbuild's transform mode
+copies our extensionless specifiers through verbatim, which Node resolves in
+neither format.
+
+Inside the workspace the package resolves to `src/` directly; `publishConfig`
+switches the entry points to `dist/` when packing.
 
 The published tarball also bundles an [Agent Skills](https://agentskills.io/)
 skill at `skills/use-lane/SKILL.md`. Its reference docs are projected from the

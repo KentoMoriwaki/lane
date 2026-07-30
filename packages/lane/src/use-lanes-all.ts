@@ -65,7 +65,9 @@ type Descriptor<T, C> = {
  * derived from a list. A spec carries its own options, so "shared by every read"
  * becomes "the shared `options` is the fallback": a member reads with its own
  * `staleTime` / `refetchOn*` where it defines them, exactly as it would through
- * `useLane`, and inherits the rest from the batch.
+ * `useLane`, and inherits the rest from the batch. "Where it defines them" means
+ * *with a value* — an option a member leaves `undefined` is unspecified, not an
+ * override, so the batch's still applies.
  */
 export function useLanesAll<T, C = T>(
   reads: readonly LaneReadSpec<T, C>[],
@@ -236,14 +238,42 @@ function toDescriptor<T, C>(read: LaneReadSpec<T, C>): Descriptor<T, C> {
  * batch's shared ones for the rest. With no shared options — the common case,
  * since a member usually carries its own — the member's read *is* the answer, so
  * the merge is skipped rather than allocating a copy per member per recompute.
+ *
+ * Resolved option by option with `??` rather than by spreading the member over
+ * the batch. The two differ on exactly one input, and it is one a caller writes by
+ * accident: a member that carries an *explicit* `undefined` — `staleTime:
+ * props.staleTime` where the prop is optional, which `strict` alone does not flag.
+ * A spread lets that shadow the batch's value and drop the member to the built-in;
+ * `??` treats it as unspecified, which is what `undefined` means everywhere else in
+ * Lane (the read path resolves `options?.staleTime ?? 0`, an absent loader gates a
+ * read off, an absent trigger is off). This is the only place in the library with
+ * two tiers to disagree about, so it is the only place the distinction was ever
+ * observable — and the reason to spend seven `??` here is that it keeps the rule
+ * sayable once for all of Lane.
+ *
+ * Naming the seven also drops `key` / `loader` from the result, which a spread of
+ * the member's read carried along inert. Nothing reads them off these options:
+ * `computeAggregate` takes both from the descriptor.
  */
 function optionsFor<T, C>(
   shared: LaneUseOptions,
   descriptor: Descriptor<T, C>,
 ): LaneUseOptions {
-  return shared === EMPTY_OPTIONS
-    ? descriptor.options
-    : { ...shared, ...descriptor.options };
+  const own = descriptor.options;
+
+  if (shared === EMPTY_OPTIONS) {
+    return own;
+  }
+
+  return {
+    refetchOnFocus: own.refetchOnFocus ?? shared.refetchOnFocus,
+    refetchOnMount: own.refetchOnMount ?? shared.refetchOnMount,
+    refetchOnReconnect: own.refetchOnReconnect ?? shared.refetchOnReconnect,
+    retry: own.retry ?? shared.retry,
+    retryDelay: own.retryDelay ?? shared.retryDelay,
+    staleTime: own.staleTime ?? shared.staleTime,
+    whenStale: own.whenStale ?? shared.whenStale,
+  };
 }
 
 function computeAggregate<T, C>(

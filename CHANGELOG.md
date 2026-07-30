@@ -181,6 +181,23 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Fixed
 
+- **An explicit `undefined` on a `useLanesAll` member no longer shadows the
+  batch's option.** A member's options are resolved against the batch's option by
+  option with `??` instead of by spreading the member over the batch. The two agree
+  on every input but one, and it is one a caller writes by accident:
+  `staleTime: props.staleTime` where the prop is optional type-checks under
+  `strict`, and the spread let that `undefined` shadow the batch's value and drop
+  the member to the built-in `staleTime: 0` — so a batch-wide minute became "always
+  stale", and `refetchOnMount` refetched every member it should have skipped.
+  `undefined` now means *unspecified* here as it does everywhere else in Lane (the
+  read path resolves `options?.staleTime ?? 0`, an absent loader gates a read off,
+  an absent trigger is off); a member that names a *value* still wins, unchanged.
+  This was the only place in the library with two tiers to disagree about, so it
+  was the only place the distinction was observable. Naming the seven options also
+  drops `key` / `loader`, which the spread carried along inert. Costs 76 B on the
+  `useLanesAll` path (951 → 1027 B minified + gzipped); neither tracked budget
+  covers that module, and both are unchanged.
+
 - **`whenStale: "refetch"` no longer loops on the second visit to a key.**
   Returning to a key that had already been mounted once refetched, suspended,
   and then refetched again on every retry of the render that had not committed

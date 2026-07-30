@@ -82,9 +82,15 @@ describe("hydrateMany", () => {
     subscribeInvalidate(lane, ["tasks"], invalidateListener);
     subscribeRemove(lane, ["tasks"], removeListener);
 
-    hydrateMany(lane, {
+    // Publishing and announcing are separate steps: seeding happens during a
+    // render, the announcement from the effect that follows it.
+    const notify = hydrateMany(lane, {
       entries: [{ key: ["tasks"], data: "server" }],
     });
+
+    expect(invalidateListener).not.toHaveBeenCalled();
+
+    notify();
 
     expect(invalidateListener).toHaveBeenCalledTimes(1);
     expect(invalidateListener).toHaveBeenCalledWith(

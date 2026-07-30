@@ -1263,9 +1263,16 @@ type LaneSnapshot<T = unknown> = { key: LaneKey; data: T };
 type LaneHydrationSnapshots = { entries: readonly LaneSnapshot[] };
 ```
 
+Seeding happens **during** this component's render, so `children` read fulfilled
+promises on their very first render — the boundary never suspends and no fetch is
+started that a later publish would have to overwrite. The announcement that
+mounted readers need on a *re*-hydration is deferred to an effect, because a
+reader's `setState` dispatched from another component's render pass is dropped by
+React.
+
 A given snapshots instance is applied to a given lane **at most once**, so
-repeated provider renders and Strict Mode do not re-seed. Identity is what that
-promise is keyed on, which has a corollary worth stating plainly:
+repeated renders and Strict Mode do not re-seed. Identity is what that is keyed
+on, which has a corollary worth stating plainly:
 
 > **`snapshots` must be produced outside render** — one object per data payload,
 > delivered to the component. A Server Component's props satisfy this, and so does
@@ -1276,11 +1283,10 @@ promise is keyed on, which has a corollary worth stating plainly:
 >
 > What breaks is building it *inside* a render —
 > `<LaneHydration snapshots={buildSnapshots(seeds)}>` in a component body. Every
-> render then hands over a new object, so every render suspends on a fresh
-> hydration promise and the boundary never commits: the subtree stays on its
-> Suspense fallback indefinitely. (Same failure as an inline
-> [`Promise.all`](#uselanesallreads-options--a-batch-read), for the same reason.)
-> If the assembly has to happen in a component, `useMemo` it on the source data.
+> render then hands over a new object, which is a new seeding: it re-publishes the
+> server values over anything the client has written since, and aborts any read in
+> flight for those keys. If the assembly has to happen in a component, `useMemo`
+> it on the source data.
 
 Build the snapshots on the server from the same keys your hooks use:
 

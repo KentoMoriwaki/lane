@@ -5,9 +5,12 @@ import { hydrateMany } from "./core";
 import { useLaneInstance } from "./provider";
 import type { Lane, LaneHydrationSnapshots } from "./types";
 
-const hydrationResources = new WeakMap<
+// One seeding per (snapshots, lane): the value a server render produced is
+// applied once however often the boundary re-renders, and a new instance — a new
+// server render, a new loader result — is a new seeding, deliberately.
+const seedings = new WeakMap<
   LaneHydrationSnapshots,
-  WeakMap<Lane, Promise<void>>
+  WeakMap<Lane, { notify: (() => void) | undefined }>
 >();
 
 export function LaneHydration({
@@ -18,46 +21,41 @@ export function LaneHydration({
   children: React.ReactNode;
 }) {
   const lane = useLaneInstance();
+  // Seeded during render, so `children` read fulfilled promises on their very
+  // first render — no suspend, no fetch that a later publish would overwrite.
+  const seeding = seedOnce(lane, snapshots);
 
-  React.use(getHydrationPromise(lane, snapshots));
+  // The announcement is the half that cannot happen during render: a reader's
+  // `setState` dispatched from this render pass is dropped. Mounted readers only
+  // exist on a re-hydration, which is exactly when this matters.
+  React.useEffect(() => {
+    const notify = seeding.notify;
+    seeding.notify = undefined;
+    notify?.();
+  }, [seeding]);
 
   return children;
 }
 
-function getHydrationPromise(
+function seedOnce(
   lane: Lane,
   snapshots: LaneHydrationSnapshots,
-): Promise<void> {
-  let resourcesByLane = hydrationResources.get(snapshots);
+): { notify: (() => void) | undefined } {
+  let byLane = seedings.get(snapshots);
 
-  if (!resourcesByLane) {
-    resourcesByLane = new WeakMap();
-    hydrationResources.set(snapshots, resourcesByLane);
+  if (!byLane) {
+    byLane = new WeakMap();
+    seedings.set(snapshots, byLane);
   }
 
-  const existing = resourcesByLane.get(lane);
+  const existing = byLane.get(lane);
 
   if (existing) {
     return existing;
   }
 
-  const promise = createHydrationPromise(lane, snapshots);
-  resourcesByLane.set(lane, promise);
-  return promise;
-}
+  const seeding = { notify: hydrateMany(lane, snapshots) };
+  byLane.set(lane, seeding);
 
-function createHydrationPromise(
-  lane: Lane,
-  snapshots: LaneHydrationSnapshots,
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    setTimeout(() => {
-      try {
-        hydrateMany(lane, snapshots);
-        resolve();
-      } catch (error) {
-        reject(error);
-      }
-    }, 0);
-  });
+  return seeding;
 }

@@ -265,10 +265,20 @@ boundary: produced outside render, once per data payload. A Server Component's
 props satisfy that, and so does a router loader's data — both give exactly the
 granularity the rule wants, one object per load and stable across the re-renders
 of it, without hashing content or diffing entries, and without a "seeded already"
-flag that would have to be reset on navigation. The bet has a cost, and it is not
-a silent one: a caller who *builds* snapshots inside a render gets a new object
-each time, so the boundary suspends on a fresh hydration promise every render and
-never commits. That is the same shape as an inline
+flag that would have to be reset on navigation. The bet has a cost: a caller who
+*builds* snapshots inside a render gets a new object each time, so every render
+re-publishes the server values over whatever the client has written since.
+
+**Seeding is a render-phase write; announcing it is not.** The two halves run at
+different times for a reason each. Publishing has to happen during render, because
+that is where reads are created — a seed applied any later means the first read
+has already started a fetch that the seed then overwrites, which is the fetch the
+seeding existed to avoid. Announcing cannot happen there: notification calls a
+subscriber's `setState`, and React drops one dispatched from another component's
+render pass, so mounted readers would never converge on a re-hydration. It runs
+from the effect that follows instead. That split is why `LaneHydration` neither
+suspends nor defers to a timer: nothing has to wait for a value that is already
+in the store by the time `children` render. That is the same shape as an inline
 `Promise.all` in a suspending component, and it is documented next to the prop
 rather than guarded at runtime, because the guard would have to be either a
 content hash (which breaks authoritative re-seeding of unchanged data) or a

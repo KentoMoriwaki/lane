@@ -85,6 +85,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
 }
 ```
 
+The provider creates and owns the Lane instance — per render, so it is
+request-scoped on the server without a per-request factory. Set app-wide read
+options there too: `<LaneProvider defaults={{ staleTime: 30_000, retry: 2 }}>`.
+
 **2. Read with `useLane` and unwrap with `use`.** Lane returns the promise; a
 `Suspense` boundary owns the loading state and an Error Boundary owns the
 initial-load failure.
@@ -165,8 +169,8 @@ function RenameButton({ userId }: { userId: string }) {
 - **Lifecycle built in.** Garbage collection (`gcTime`, default 5 min), `retry` /
   `retryDelay`, and `refetchOnFocus` / `refetchOnMount` / `refetchOnReconnect`
   revalidation. Every read option has an app-wide fallback —
-  `createLane({ defaults })`, react-query's `defaultOptions.queries`. Polling is
-  userland — a self-scheduled `invalidate`.
+  `<LaneProvider defaults={…}>` (or `createLane({ defaults })`), react-query's
+  `defaultOptions.queries`. Polling is userland — a self-scheduled `invalidate`.
 - **Optimistic UI stays local.** Lane ships no mutation helper; use
   `useOptimistic` / `useActionState` in the component that owns the action.
 - **A read can be one value.** `laneRead({ key, loader, ...options })` colocates
@@ -178,7 +182,7 @@ function RenameButton({ userId }: { userId: string }) {
 
 | Export | Purpose |
 | --- | --- |
-| `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation via a pluggable `eventSource` (browser default; React Native / CLI / custom). |
+| `LaneProvider` | Provides a Lane instance to the tree (creating one unless you pass `lane`); takes app-wide read `defaults`; wires focus / reconnect revalidation via a pluggable `eventSource` (browser default; React Native / CLI / custom). |
 | `useLane(key, loader, options?)` | Read a key. Returns `{ promise, isTransitionPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
 | `useLanePromise(key, loader, options?)` | Thin wrapper returning just `promise`. |
 | `laneRead({ key, loader, …options })` | Colocate a read's key, loader, and options in one value — react-query's `queryOptions()` for Lane. Reads take the whole thing (`useLane`, `useLanesAll`, `prefetch`); entry operations take its `key`. |
@@ -192,8 +196,9 @@ function RenameButton({ userId }: { userId: string }) {
 `updateAll`, `remove` / `removeAll` — all keyed; `set` / `update` are checked
 when given a typed key. `useLane` options: `staleTime`, `whenStale`,
 `retry`, `retryDelay`, `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
-`createLane` options: `gcTime`, and `defaults` — the same read options, applied to
-every read that does not specify them. Loaders receive `{ key, signal, current }`, where
+`LaneProvider` / `createLane` options: `defaults` — the same read options, applied
+to every read that does not specify them (write them on the provider unless you own
+the instance) — plus `gcTime` on `createLane`. Loaders receive `{ key, signal, current }`, where
 `current` is the entry's last fulfilled value.
 
 See the **[API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md)**

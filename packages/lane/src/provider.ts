@@ -4,7 +4,7 @@ import * as React from "react";
 import { createLane } from "./core";
 import { domEventSource } from "./event-source";
 import type { LaneEventSource } from "./event-source";
-import type { Lane } from "./types";
+import type { Lane, LaneUseOptions } from "./types";
 
 // A reader's opt-in to activity-based revalidation. Focus / reconnect are DOM
 // concerns the provider already owns (it holds the window listeners), so the
@@ -58,11 +58,35 @@ function createRegistry(): {
 
 export function LaneProvider({
   lane: providedLane,
+  defaults,
   focusThrottleInterval = DEFAULT_FOCUS_THROTTLE_INTERVAL,
   eventSource = domEventSource,
   children,
 }: {
   lane?: Lane;
+  /**
+   * App-wide fallbacks for every read option, for the lane this provider creates
+   * — the usual way to set them, because letting the provider own the lane is
+   * the usual way to hold one. A module-level `createLane()` is shared by every
+   * request on the server; the provider's is created per render, so it is
+   * request-scoped for free.
+   *
+   * They are forwarded into that `createLane()` rather than published through
+   * context, which is what keeps them reachable from a `lane.prefetch` in an
+   * event handler or a router loader: the defaults live on the instance, the
+   * prop is only where you write them.
+   *
+   * Read once, when the provider creates its lane. A later change is ignored,
+   * matching `createLane({ defaults })` — a default is read when a load starts
+   * and when a trigger fires, and could never reach a promise already cached.
+   * Pass options at the read for policy that varies at runtime.
+   *
+   * Mutually exclusive with `lane`: a lane you created carries its own defaults
+   * (`createLane({ defaults })`), and a provider cannot add to them without
+   * either mutating a shared instance or making a subtree disagree with the
+   * instance every non-React path reads. Passing both throws.
+   */
+  defaults?: LaneUseOptions;
   /**
    * Window focus and visibilitychange both fire on a tab switch. Focus
    * revalidations within this window are coalesced into one (default 5s).
@@ -78,10 +102,19 @@ export function LaneProvider({
   eventSource?: LaneEventSource;
   children: React.ReactNode;
 }) {
+  if (providedLane && defaults) {
+    throw new Error(
+      "LaneProvider: pass `defaults` or `lane`, not both — put them on the lane you created: createLane({ defaults })",
+    );
+  }
+
   // Both are created once and never re-created, so they are refs, not state.
-  // The default lane is built lazily — only when no lane is supplied.
+  // The default lane is built lazily — only when no lane is supplied — and takes
+  // the `defaults` prop with it, so they end up on the instance exactly as
+  // `createLane({ defaults })` puts them there. Read once, with the lane.
   const defaultLaneRef = React.useRef<Lane>(undefined);
-  const lane = providedLane ?? (defaultLaneRef.current ??= createLane());
+  const lane =
+    providedLane ?? (defaultLaneRef.current ??= createLane({ defaults }));
 
   const registryRef = React.useRef<ReturnType<typeof createRegistry>>(undefined);
   const { revalidators, revalidation } = (registryRef.current ??= createRegistry());

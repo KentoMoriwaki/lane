@@ -364,21 +364,28 @@ export type LaneOptions = {
    * });
    * ```
    *
-   * **They belong to the instance rather than to context** because `prefetch`
-   * runs outside React — a router loader, an RSC, a link's `onMouseEnter` — and
-   * defaults that only reached the provider would leave that one path reading
-   * with the bare built-ins. The instance is the one thing every path already
-   * has, which is also where `gcTime` already lives.
+   * Most apps write them on the provider instead —
+   * `<LaneProvider defaults={{ … }}>` — which forwards them into the
+   * `createLane()` it already does. Reach for this form when you hold the
+   * instance yourself: a server-side warm-up, or one lane shared across
+   * providers.
+   *
+   * **Either way they end up on the instance, never in context**, because
+   * `prefetch` runs outside React — a router loader, an RSC, a link's
+   * `onMouseEnter` — and defaults published through context would leave that one
+   * path reading with the bare built-ins. The instance is the one thing every path
+   * already has, which is also where `gcTime` lives.
    *
    * Resolution is `??`, so `undefined` means *unspecified*: a read cannot un-set
    * a default by passing `undefined`. Write the built-in value explicitly
    * (`staleTime: 0`, `refetchOnFocus: false`) to opt one read out.
    *
-   * Fixed at construction. A default is read when a load starts and when a
-   * trigger fires, so a mutable one would be an external mutable source read
-   * during render — and it could never reach a promise the lane has already
-   * cached. For policy that varies at runtime, pass options at the read, or swap
-   * the whole instance (`useLane` switches lanes during render).
+   * Fixed when the lane is created — which is once, for the provider's lane too,
+   * so a changed `defaults` prop is ignored. A default is read when a load starts
+   * and when a trigger fires, so a mutable one would be an external mutable
+   * source read during render, and it could never reach a promise the lane has
+   * already cached. For policy that varies at runtime, pass options at the read,
+   * or swap the whole instance (`useLane` switches lanes during render).
    */
   defaults?: LaneUseOptions;
 };

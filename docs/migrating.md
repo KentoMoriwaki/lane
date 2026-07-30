@@ -32,7 +32,7 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `refetchInterval` | a **userland poll** — a self-scheduled `invalidate` |
 | `refetchOnWindowFocus` | `refetchOnFocus` (`LaneProvider` wires focus / reconnect) |
 | `staleTime` / `gcTime` | `staleTime` (read option) / `gcTime` (`createLane`) |
-| `defaultOptions: { queries }` | `createLane({ defaults })` ([step 0](#app-wide-defaults-come-with-it)) |
+| `defaultOptions: { queries }` | `<LaneProvider defaults={…}>` ([step 0](#app-wide-defaults-come-with-it)) |
 | `setQueryDefaults(key, …)` | no per-key tier — a key's options live on its `laneRead` |
 | `QueryClientProvider` | `LaneProvider` |
 
@@ -99,18 +99,26 @@ loader and options it belongs to. See
 
 ### App-wide defaults come with it
 
-The client-level tier ports too: `createLane({ defaults })` takes the same options
-a read takes, and a read only writes what it means to say differently.
+The client-level tier ports too: `defaults` takes the same options a read takes,
+and a read only writes what it means to say differently. In Lane it goes on the
+provider, so there is no client to construct and hand over.
 
-```ts
+```tsx
 // Before (React Query)
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 2 } },
 });
+<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 
 // After (Lane)
-const lane = createLane({ defaults: { staleTime: 30_000, retry: 2 } });
+<LaneProvider defaults={{ staleTime: 30_000, retry: 2 }}>{children}</LaneProvider>
 ```
+
+That also removes the per-request dance on the server: the "make one
+`QueryClient` per request, never at module scope" rule exists because the client
+is yours to hold, and `LaneProvider`'s lane is created with the render. Reach for
+`createLane({ defaults })` only when you deliberately hold the instance — a
+server-side warm-up, or one lane across several providers.
 
 **Port the defaults you were relying on, not just the ones you wrote.** React
 Query ships `retry: 3`, `refetchOnMount: true`, `refetchOnWindowFocus: true`, and
@@ -118,15 +126,17 @@ Query ships `retry: 3`, `refetchOnMount: true`, `refetchOnWindowFocus: true`, an
 all three triggers `false`). Behavior you never configured was still behavior, so
 carry it over explicitly:
 
-```ts
-const lane = createLane({
-  defaults: {
+```tsx
+<LaneProvider
+  defaults={{
     retry: 3,
     refetchOnMount: true,
     refetchOnFocus: true,
     refetchOnReconnect: true,
-  },
-});
+  }}
+>
+  {children}
+</LaneProvider>
 ```
 
 `undefined` means *unspecified* in both, so a read opts out of a default by
@@ -310,7 +320,7 @@ Three things to carry across:
 - [ ] `queryOptions()` factories ported to `laneRead` — key, loader, and options
       still in one place; reads take the definition, `invalidate` / `set` take
       its `key`.
-- [ ] `defaultOptions.queries` ported to `createLane({ defaults })`, **including
+- [ ] `defaultOptions.queries` ported to `<LaneProvider defaults={…}>`, **including
       the react-query defaults you never wrote** (`retry: 3`, `refetchOnMount`,
       `refetchOnWindowFocus`, `refetchOnReconnect`) — Lane's built-ins are off.
 - [ ] Replaced `useQuery` reads with `useLane` + `use(promise)`; deleted the

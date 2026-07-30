@@ -612,8 +612,8 @@ refetch status into `useState` / `useEffect`.
 **Do** use the read/instance options for revalidation and freshness:
 `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`, `staleTime`,
 `whenStale`, and `gcTime`. Set the app-wide policy once with
-[`createLane({ defaults })`](./api-reference.md#read-option-defaults) rather than
-repeating it on every read. See
+[`<LaneProvider defaults={…}>`](./api-reference.md#read-option-defaults) rather
+than repeating it on every read. See
 [lifecycle behavior](./api-reference.md#lifecycle-behavior).
 
 **Polling is userland** — there is no `refetchInterval` in core. A poll is a

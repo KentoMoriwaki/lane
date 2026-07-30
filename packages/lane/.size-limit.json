@@ -11,6 +11,6 @@
     "path": "dist/index.js",
     "import": "{ LaneProvider, useLane }",
     "ignore": ["react", "react-dom"],
-    "limit": "3.5 kB"
+    "limit": "3.6 kB"
   }
 ]

@@ -4,7 +4,13 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createLane, LaneProvider, useLane, useLanesAll } from "../index";
+import {
+  createLane,
+  LaneProvider,
+  useLane,
+  useLaneInstance,
+  useLanesAll,
+} from "../index";
 import type {
   Lane,
   LaneLoader,
@@ -175,6 +181,110 @@ describe("lane defaults through a reader", () => {
     await waitForText(app.container, "A2,B2");
   });
 });
+
+// The prop is the usual place to write defaults, because letting the provider own
+// the lane is the usual way to hold one — but it forwards them into the
+// `createLane` it already does, so they end up on the instance rather than in
+// context.
+describe("LaneProvider defaults", () => {
+  it("forwards them into the lane it creates", async () => {
+    const loader = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("first")
+      .mockResolvedValueOnce("second");
+
+    const app = await render(
+      React.createElement(LaneProvider, {
+        defaults: { refetchOnMount: "always" },
+        children: React.createElement(
+          React.Suspense,
+          { fallback: "loading" },
+          React.createElement(ReadProbe, { loader }),
+        ),
+      }),
+    );
+
+    // The reader mounted over its own just-settled value and the defaulted
+    // "always" refreshed it — no `lane` prop, no read options anywhere.
+    await waitForText(app.container, "second");
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("reaches a prefetch fired outside React", async () => {
+    let captured: Lane | undefined;
+    const loader = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(new Error("flaky"))
+      .mockResolvedValueOnce("warm");
+
+    function Capture() {
+      captured = useLaneInstance();
+      return null;
+    }
+
+    await render(
+      React.createElement(LaneProvider, {
+        defaults: { retry: 1, retryDelay: () => 0 },
+        children: React.createElement(Capture),
+      }),
+    );
+
+    if (!captured) {
+      throw new Error("the provider did not supply a lane");
+    }
+
+    // This is why the prop forwards into the instance instead of publishing to
+    // context: a warm-up fired from a router loader or an event handler sees no
+    // context and carries no read options, and still gets the app's retry policy.
+    await expect(
+      captured.prefetch({ key: ["tasks"], loader }),
+    ).resolves.toEqual({ data: "warm" });
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects `lane` and `defaults` together", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const app = await render(
+      React.createElement(CatchBoundary, {
+        children: React.createElement(LaneProvider, {
+          defaults: { staleTime: 1_000 },
+          lane: createLane(),
+          children: null,
+        }),
+      }),
+    );
+
+    // A lane you created carries its own defaults; there is no honest way for a
+    // provider to add to them, so the ambiguity is an error rather than a
+    // precedence rule to remember.
+    expect(app.container.textContent).toContain("caught:");
+    expect(app.container.textContent).toContain("createLane({ defaults })");
+  });
+});
+
+class CatchBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return React.createElement(
+        "div",
+        null,
+        `caught:${this.state.error.message}`,
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 function ReadProbe({
   loader,

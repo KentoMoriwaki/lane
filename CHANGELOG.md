@@ -179,7 +179,8 @@ All notable changes to `use-lane` are documented here. The format is based on
   rejection on an unknown number of keys — while a bound form would be safe but
   carried by every reader and called by almost none.
 
-- **`createLane({ defaults })`** — an app-wide floor under every read option;
+- **`<LaneProvider defaults={…}>` / `createLane({ defaults })`** — an app-wide floor
+  under every read option;
   react-query's `defaultOptions.queries` for Lane. A read being one value said
   where its options live, not what they are when the read does not care, so the
   freshness an app wants everywhere had to be written on every read and was free to
@@ -188,32 +189,49 @@ All notable changes to `use-lane` are documented here. The format is based on
   is one line: **the read's own option > `useLanesAll`'s shared options >
   `defaults` > built-in.**
 
-  It sits on the *instance* rather than in context because `prefetch` runs outside
-  React — a router loader, an RSC, a link's `onMouseEnter` — and defaults that only
-  reached `LaneProvider` would leave exactly the path that cannot see context on
-  the bare built-ins, making "app-wide" a claim about the component tree instead of
-  about the app. The instance is what every path already holds, and where `gcTime`
-  already lives. `prefetch` still pins `whenStale: "revalidate"` and ignores
-  `staleTime`, so a lane-wide `"refetch"` cannot turn a repeated warm-up into a
-  refetch; `retry` / `retryDelay` do reach it.
+  Two questions with different answers. *Where do the defaults live?* On the lane
+  instance — `prefetch` runs outside React (a router loader, an RSC, a link's
+  `onMouseEnter`), so defaults published through context would leave exactly the
+  path that cannot see context on the bare built-ins, making "app-wide" a claim
+  about the component tree instead of about the app. The instance is what every path
+  already holds, and where `gcTime` lives. *Where do you write them?* On the
+  provider, because that is where an app holds its lane: a module-level
+  `createLane()` is shared by every request on the server, while `LaneProvider`'s
+  lane is born with the render and is request-scoped by construction. So the prop
+  forwards into the `createLane()` the provider already does — not a second home for
+  the setting, the setting written where the lane is made. `createLane({ defaults })`
+  stays for when you deliberately own the instance.
+
+  `lane` and `defaults` together **throw**. It is the one combination with no honest
+  meaning: a lane you created carries its own defaults, and a provider could only add
+  to them by mutating an instance others may share, or by publishing a subtree-local
+  override through context — the arrangement that would make the subtree disagree
+  with the instance every non-React path reads.
+
+  `prefetch` still pins `whenStale: "revalidate"` and ignores `staleTime`, so a
+  lane-wide `"refetch"` cannot turn a repeated warm-up into a refetch; `retry` /
+  `retryDelay` do reach it.
 
   Nothing is merged. Options are never normalized into a copy in Lane — a read
   *is* its options bag — so each default is resolved with `??` where that option is
   already read: four on the read path in core, three at fire time in the hooks, for
-  the triggers the store never sees. A cache hit allocates nothing, and the tier
-  cost **29 B** (core 2169 → 2198 B; `LaneProvider + useLane` 3328 → 3390 B). Per
-  *option* rather than per bag, which is what makes it useful: a read that only
-  turns `refetchOnFocus` on still judges freshness against the lane's `staleTime`
-  instead of having to restate it.
+  the triggers the store never sees. A cache hit allocates nothing, and the whole
+  resolution tier cost **29 B** in the core (2169 → 2198 B); the provider's prop and
+  its `lane`-and-`defaults` error bring the typical
+  `LaneProvider + useLane` import to 3460 B from 3328 B. Per *option* rather than
+  per bag, which is what makes it useful: a read that only turns `refetchOnFocus` on
+  still judges freshness against the lane's `staleTime` instead of having to restate
+  it.
 
   Two things to know. `undefined` means *unspecified*, so a read opts out by
   writing the built-in (`staleTime: 0`, `refetchOnFocus: false`) rather than by
   writing nothing — distinguishing absent from present-and-`undefined` would mean
   `in` checks on every option and would give the shape a hook happens to pass a
-  meaning it was never designed to carry. And they are fixed at construction: a
-  default is read when a load starts and when a trigger fires, so a mutable one
-  would be an external mutable source read during render, and could never reach a
-  promise the lane had already cached.
+  meaning it was never designed to carry. And they are fixed when the lane is
+  created — including the provider's, which is created once, so a changed
+  `defaults` prop is ignored: a default is read when a load starts and when a
+  trigger fires, so a mutable one would be an external mutable source read during
+  render, and could never reach a promise the lane had already cached.
 
   There is no per-key tier — react-query's `setQueryDefaults(key, …)` has no Lane
   equivalent, because `laneRead` already gives one read's options one home and a
@@ -261,10 +279,12 @@ All notable changes to `use-lane` are documented here. The format is based on
   affects apps that `remove` a key a mounted reader still holds and then fail or
   re-read it.
 
-- Raised the `createLane (core only)` size budget from 2 kB to 2.1 kB. It sat at
-  1.98 kB beforehand, with no room left for a feature. Deliberately tight — the
-  budget is what kept `{ after }` down to a gate on the notification instead of
-  state on the entry.
+- Raised the size budgets over this cycle: `createLane (core only)` from 2 kB to
+  2.3 kB (1.98 kB before any of the work, 2198 B after it) and
+  `LaneProvider + useLane` from 3.5 kB to 3.6 kB (3328 → 3460 B). Each step left the
+  next feature no room. Deliberately tight: the budget is what kept `{ after }` down
+  to a gate on the notification instead of state on the entry, and read defaults
+  down to a `??` at each option's existing read site instead of a merged options bag.
 
 - Reframed the public documentation around Lane's core model:
   **Promise-first. Transition-native.** Lane keeps each keyed read's promise in

@@ -336,22 +336,42 @@ Two boundaries keep it from becoming a second way to describe everything:
   the core is byte-for-byte the store it was before, apart from `prefetch`
   learning to accept a read.
 
-## Defaults belong to the instance
+## Defaults live on the instance, and are written on the provider
 
 A read being one value says where its options live; it does not say what they are
 when the read does not care. Most reads in an app want the same freshness, and
 writing it on each one is not organization — it is a fact repeated at N sites,
-free to drift at any of them. So `createLane({ defaults })` puts a floor under
-`LaneUseOptions`, and a read only writes what it means to say differently.
+free to drift at any of them. So `defaults` puts a floor under `LaneUseOptions`,
+and a read only writes what it means to say differently.
 
-**The floor is on the instance rather than in context**, and `prefetch` is the
-reason. It runs outside React — a router loader, an RSC, a link's `onMouseEnter` —
-so defaults that only reached `LaneProvider` would leave exactly the path that
-cannot see context reading with the bare built-ins, and "app-wide" would be a
-claim about the component tree instead of about the app. The instance is the one
-thing every path already holds, which is where `gcTime` already lives. It also
-removes a question a provider prop would have to answer: what `defaults` means
-when a `lane` is passed too.
+Two questions get confused here, and they have different answers. *Where do the
+defaults live?* On the lane instance. *Where do you write them?* On
+`LaneProvider`, usually.
+
+**They live on the instance** because `prefetch` runs outside React — a router
+loader, an RSC, a link's `onMouseEnter` — so defaults published through context
+would leave exactly the path that cannot see context reading with the bare
+built-ins, and "app-wide" would be a claim about the component tree rather than
+about the app. The instance is the one thing every path already holds, which is
+where `gcTime` lives.
+
+**They are written on the provider** because that is where an app holds its lane.
+Owning the instance yourself is the exception, and on the server it is a hazard:
+a module-level `createLane()` is shared by every request in the process, so one
+user's entries are served to the next. `LaneProvider`'s lane is born with the
+render, which is per request by construction. A tier you can only reach by taking
+on that ownership is a tier most apps would reach for wrongly.
+
+So `<LaneProvider defaults={…}>` forwards its prop into the `createLane()` it
+already does. The prop is not a second home for the setting — it is the setting,
+written where the lane is made.
+
+`lane` and `defaults` together throw. It is the one combination with no honest
+meaning: a lane you created carries its own defaults, and a provider could only
+add to them by mutating an instance others may share, or by publishing a
+subtree-local override through context — which is the arrangement that would make
+the subtree disagree with the instance every non-React path reads. An error beats
+a precedence rule nobody would remember.
 
 **Nothing is merged.** Options are not normalized into a copy anywhere in Lane —
 a read *is* its options bag, read fresh at each render and each fire time — so the
@@ -374,11 +394,12 @@ Two consequences worth stating plainly:
   would mean `in` checks on every option, and would make the shape a hook happens
   to pass — an object whose unset options are present and `undefined` — carry
   meaning it was never designed to carry.
-- **They are fixed at construction.** A default is read when a load starts and
-  when a trigger fires, so a mutable one would be an external mutable source read
-  during render, and it could never reach a promise the lane already cached. Policy
-  that varies at runtime belongs at the read, or on a different instance —
-  `useLane` already switches lanes during render.
+- **They are fixed when the lane is created** — including the provider's, which is
+  created once, so a changed `defaults` prop is ignored. A default is read when a
+  load starts and when a trigger fires, so a mutable one would be an external
+  mutable source read during render, and it could never reach a promise the lane
+  already cached. Policy that varies at runtime belongs at the read, or on a
+  different instance — `useLane` already switches lanes during render.
 
 **There is no per-key tier.** react-query pairs global defaults with
 `setQueryDefaults(key, …)`; Lane's answer to "these options belong to this key" is
@@ -416,8 +437,9 @@ adapter option -> conditional cache invalidation -> mounted readers re-read thro
 - polling — userland: a self-scheduled `invalidate(key, { onlyIf: "settled", background: true })` (no core timer)
 - retry / backoff (`retry`, `retryDelay`)
 - inactive-entry garbage collection (`gcTime`, a per-lane policy on `createLane`)
-- app-wide read defaults (`createLane({ defaults })`) — held as given on the lane
-  and resolved where each option is already read, never stored per entry
+- app-wide read defaults (`LaneProvider`'s `defaults`, or `createLane`'s) — held as
+  given on the lane and resolved where each option is already read, never stored
+  per entry
 
 Splitting the durable key slot from its optional cached promise is what makes
 this work: invalidation clears the cache and notifies readers; the first reader

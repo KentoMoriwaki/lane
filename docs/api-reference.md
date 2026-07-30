@@ -33,14 +33,20 @@ Provides a `Lane` instance to the tree and wires focus / reconnect revalidation
 from a pluggable event source.
 
 ```tsx
-<LaneProvider lane?={Lane} focusThrottleInterval?={number} eventSource?={LaneEventSource}>
+<LaneProvider
+  lane?={Lane}
+  defaults?={LaneUseOptions}
+  focusThrottleInterval?={number}
+  eventSource?={LaneEventSource}
+>
   {children}
 </LaneProvider>
 ```
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `lane` | `Lane` | a fresh `createLane()` | The Lane instance to provide. Omit to let the provider create and own one — pass [`createLane({ … })`](#createlaneoptions) to set `gcTime` or app-wide [read defaults](#read-option-defaults). |
+| `lane` | `Lane` | a fresh `createLane()` | The Lane instance to provide. Omit to let the provider create and own one — the usual arrangement, since a provider-owned lane is request-scoped on the server for free. |
+| `defaults` | `LaneUseOptions` | `{}` | App-wide fallbacks for every read option — see [Read-option defaults](#read-option-defaults). Forwarded into the lane the provider creates, so it is **mutually exclusive with `lane`**: passing both throws, because a lane you created carries its own. |
 | `focusThrottleInterval` | `number` | `5000` | Focus and `visibilitychange` both fire on a tab switch; focus revalidations within this window are coalesced into one. Reconnect is not throttled. |
 | `eventSource` | `LaneEventSource` | `domEventSource` | Where focus / reconnect signals originate. Defaults to browser DOM events. Pass `noopEventSource` (CLI), `createReactNativeEventSource(...)` (React Native), or your own — see [Event sources](#event-sources) and [Environments](./environments.md). Use a stable reference. |
 
@@ -88,10 +94,10 @@ lane.invalidate(["user", id]);
 
 ### `createLane(options?)`
 
-Creates a `Lane` instance directly. `LaneProvider` creates one for you, so reach
-for this to set instance-wide policy — [`gcTime`](#laneoptions) or app-wide
-[read defaults](#read-option-defaults) — to share a single instance across
-multiple providers, or to construct one outside React.
+Creates a `Lane` instance directly. Most apps never call this — `LaneProvider`
+creates one for you, and takes [`defaults`](#read-option-defaults) itself. Reach
+for this when you hold the instance yourself: to set [`gcTime`](#laneoptions), to
+share one lane across multiple providers, or to construct one outside React.
 
 ```ts
 const lane = createLane({
@@ -99,6 +105,11 @@ const lane = createLane({
   defaults: { staleTime: 30_000, retry: 2 },
 });
 ```
+
+> **On the server, keep the instance per request.** A module-level `createLane()`
+> is shared by every request in the process, so one user's entries are served to
+> the next. Create it inside the request (or let `LaneProvider` create it — its
+> lane is born with the render, which is per request by construction).
 
 #### `LaneOptions`
 
@@ -120,16 +131,32 @@ back from, while `defaults` is the floor a read's own options stand on.
 
 #### Read-option defaults
 
-`createLane({ defaults })` sets what every read falls back to — Lane's answer to
-react-query's `defaultOptions.queries`. It takes the same
-[`LaneUseOptions`](#laneuseoptions) a read is written with, so anything you can
-put on a read you can put here.
+`defaults` sets what every read falls back to — Lane's answer to react-query's
+`defaultOptions.queries`. It takes the same [`LaneUseOptions`](#laneuseoptions) a
+read is written with, so anything you can put on a read you can put here.
+
+Write them on the provider, which is where an app usually holds its lane:
+
+```tsx
+<LaneProvider defaults={{ staleTime: 30_000, retry: 2, refetchOnFocus: true }}>
+  {children}
+</LaneProvider>
+```
+
+Or on the lane, when you create it yourself — a server-side warm-up, or one lane
+shared across providers. It is the same setting; the provider forwards its prop
+into exactly this call:
 
 ```ts
 const lane = createLane({
   defaults: { staleTime: 30_000, retry: 2, refetchOnFocus: true },
 });
 ```
+
+Pass one or the other. `<LaneProvider lane={…} defaults={…}>` throws: the lane you
+created already carries its own defaults, and a provider cannot add to them
+without either mutating an instance others share or making one subtree disagree
+with the instance every non-React path reads.
 
 Precedence is one line:
 
@@ -150,20 +177,20 @@ useLane({ ...taskLanes.detail(id), refetchOnFocus: false });
 - **`undefined` means *unspecified*.** A read cannot un-set a default by passing
   `undefined` — write the built-in value explicitly (`staleTime: 0`,
   `refetchOnFocus: false`) to opt one read out.
-- **They belong to the instance, not to the provider.** `prefetch` runs outside
-  React (a router loader, an RSC, a link's `onMouseEnter`), and defaults that only
-  reached `LaneProvider` would leave that path on the bare built-ins. If you were
-  using `<LaneProvider>` without a lane, create one to set defaults:
-  `<LaneProvider lane={createLane({ defaults })}>`.
-- **Fixed at construction.** There is no `setDefaults`: a default is read when a
-  load starts and when a trigger fires, and it could never reach a promise the
-  lane has already cached. For policy that varies at runtime, pass options at the
-  read.
+- **They live on the instance, even when written on the provider.** The prop is
+  forwarded into `createLane`, not published through context — which is what keeps
+  a `lane.prefetch` from an event handler or a router loader on the app's policy
+  instead of the bare built-ins.
+- **Fixed when the lane is created.** There is no `setDefaults`, and a changed
+  `defaults` prop is ignored (the provider's lane is created once): a default is
+  read when a load starts and when a trigger fires, and it could never reach a
+  promise the lane has already cached. For policy that varies at runtime, pass
+  options at the read.
 - **There is no per-key tier.** react-query's `setQueryDefaults(key, …)` has no
   Lane equivalent — [`laneRead`](#lanereadspec--key--loader-colocation) already
   gives one read's options one home, and keeping key-level policy out of the store
   is what lets Lane core hold no loaders and no options. See
-  [design notes](./design-notes.md#defaults-belong-to-the-instance).
+  [design notes](./design-notes.md#defaults-live-on-the-instance-and-are-written-on-the-provider).
 
 ## Reading data
 

@@ -362,6 +362,38 @@ to re-read creates the next promise and the rest dedupe onto it. No low-level
 reload API, version field, or separate invalidated flag is needed, and stale
 promises that settle late are ignored by comparing cache-object identity.
 
+### What each feature costs
+
+`dist/` is one file per source module, so a feature you do not import is dropped
+whole rather than shaken statement-by-statement out of a shared bundle. That
+makes the marginal cost of each feature a stable number worth knowing. Measured
+by `size-limit` — minified, Brotli-compressed, `react` / `react-dom` external —
+against the typical `LaneProvider` + `useLane` import:
+
+| import | size | vs. typical |
+| --- | --- | --- |
+| `{ createLane }` — the store, no React | 2024 B | — |
+| `{ LaneProvider, useLane }` — **typical** | 3327 B | — |
+| `+ laneRead`, `laneKey` | 3334 B | **+7 B** |
+| `+ LaneHydration` — the RSC-seeded minimum | 3485 B | +158 B |
+| `+ infiniteLaneRead`, `useInfiniteLane` | 3659 B | +332 B |
+| `+ useLanesAll` | 3867 B | +540 B |
+| `*` — everything | 4569 B | +1242 B |
+
+Two of these are worth stating outright. **The form the docs recommend
+everywhere is free**: moving from loose `key` / `loader` arguments to a
+`laneRead` definition with typed keys costs 7 B, so colocating a read carries no
+size argument against it. And **the whole package is 4569 B** — importing every
+export costs 1242 B over the typical pair, which bounds what Lane can cost you
+at all.
+
+The three numbers CI enforces are the store on its own, the typical pair, and
+that ceiling; the per-feature rows above are documentation, not budgets. A check
+would pin each row against regression, but no consumer imports `useLanesAll`
+*instead of* the typical path — they import it as well, so the ceiling already
+covers the growth. What a reader actually wants from these rows is whether a
+feature is worth its bytes, and that is a question for prose.
+
 ## Design bias
 
 When more than one approach is possible, Lane prefers:

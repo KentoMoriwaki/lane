@@ -50,7 +50,8 @@ designed to own.
   optimistic UI lives next to the action that triggered it instead of in a
   global cache that needs rollback semantics.
 - **Minimal on purpose.** A typical `LaneProvider` + `useLane` import is about
-  **3.1 kB** minified and Brotli-compressed. Lane stays small because it does not
+  **3.3 kB** minified and Brotli-compressed, and importing *every* export costs
+  **4.6 kB** — that is the whole ceiling. Lane stays small because it does not
   reimplement the UI state machine React already ships.
 
 ## Requirements

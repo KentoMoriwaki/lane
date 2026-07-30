@@ -89,7 +89,12 @@ describe("laneRead", () => {
         lane,
         // The freshness policy travels with the definition — no call site has to
         // remember to pass it.
-        laneRead({ key: ["task", "t1"], loader, refetchOnMount: "always" }),
+        laneRead({
+          key: ["task", "t1"],
+          loader,
+          refetchOnMount: true,
+          staleTime: 0,
+        }),
       ),
     );
 
@@ -320,7 +325,12 @@ describe("useLanesAll with specs", () => {
 
     const app = await render(
       batchApp(lane, [
-        laneRead({ key: ["a"], loader: loaderA, refetchOnMount: "always" }),
+        laneRead({
+          key: ["a"],
+          loader: loaderA,
+          refetchOnMount: true,
+          staleTime: 0,
+        }),
         laneRead({ key: ["b"], loader: loaderB }),
       ]),
     );
@@ -341,7 +351,8 @@ describe("useLanesAll with specs", () => {
 
     const app = await render(
       batchApp(lane, [laneRead({ key: ["a"], loader })], {
-        refetchOnMount: "always",
+        refetchOnMount: true,
+        staleTime: 0,
       }),
     );
 
@@ -402,7 +413,7 @@ describe("useLanesAll with specs", () => {
           laneRead({ key: ["a"], loader: loaderA, refetchOnMount: false }),
           laneRead({ key: ["b"], loader: loaderB }),
         ],
-        { refetchOnMount: "always" },
+        { refetchOnMount: true, staleTime: 0 },
       ),
     );
 

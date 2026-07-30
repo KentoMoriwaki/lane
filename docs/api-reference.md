@@ -980,9 +980,9 @@ type LaneUseOptions = {
   whenStale?: "revalidate" | "refetch";
   retry?: number;
   retryDelay?: (attempt: number, error: unknown) => number;
-  refetchOnFocus?: boolean | "always";
-  refetchOnMount?: boolean | "always";
-  refetchOnReconnect?: boolean | "always";
+  refetchOnFocus?: boolean;
+  refetchOnMount?: boolean;
+  refetchOnReconnect?: boolean;
 };
 ```
 
@@ -992,12 +992,12 @@ type LaneUseOptions = {
 | Option | Default | Description |
 | --- | --- | --- |
 | `loaderMeta` | the lane's | Read this entry with a different `meta` than the lane carries — see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key). Not part of the key. In a batch, a member's own value wins over the batch's. |
-| `staleTime` | `Infinity` | How long (ms) a fulfilled value is considered fresh. Once stale, a read's behavior is decided by `whenStale`, and the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. The default means **nothing is ever stale until you say what stale means** — so `whenStale: "refetch"` and the `true` form of every trigger do nothing without a `staleTime`, and warn in development. `staleTime` is also the rate limit on the triggers it gates: a value refreshed within it is not refreshed again however many times they fire. `staleTime: 0` asks for "always stale", which includes a mount refetching the value that same mount just loaded — the read runs during render and the trigger fires from an effect, so the two stack. |
+| `staleTime` | `Infinity` | How long (ms) a fulfilled value is considered fresh. Once stale, a read's behavior is decided by `whenStale`, and the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. The default means **nothing is ever stale until you say what stale means** — so `whenStale: "refetch"` and all three revalidation triggers do nothing without a `staleTime`, and warn in development. `staleTime` is also the rate limit on the triggers it gates: a value refreshed within it is not refreshed again however many times they fire. `staleTime: 0` asks for "always stale", which includes a mount refetching the value that same mount just loaded — the read runs during render and the trigger fires from an effect, so the two stack. |
 | `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value (or a prior error) and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. |
 | `retry` | `0` | Number of automatic retries for a failed load. Aborts stop the retry loop. |
 | `retryDelay` | exponential backoff, `min(1000 · 2^attempt, 30000)` | Delay (ms) before retry `attempt`. |
-| `refetchOnFocus` | `false` | `true` reloads stale entries on window focus — needs a `staleTime` to fire at all; `"always"` reloads settled entries regardless of `staleTime`. |
-| `refetchOnMount` | `false` | `true` reloads stale entries when a reader mounts — needs a `staleTime` to fire at all; `"always"` reloads settled entries on mount, including one this mount just loaded. |
+| `refetchOnFocus` | `false` | Reloads stale entries on window focus. Needs a `staleTime` to fire at all — with the `Infinity` default nothing is stale, and Lane warns in development. |
+| `refetchOnMount` | `false` | Reloads stale entries when a reader mounts. Needs a `staleTime` to fire at all. `staleTime: 0` makes it fire on every mount — including the mount that just loaded the value, since the read runs during render and this fires from an effect. |
 | `refetchOnReconnect` | `false` | Same as `refetchOnFocus`, driven by the browser `online` event. |
 
 ## Keys

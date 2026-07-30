@@ -145,6 +145,38 @@ describe("hydrateMany", () => {
       readOrCreate(lane, ["tasks"], async () => "after-stale"),
     ).resolves.toEqual({ data: "after-stale" });
   });
+
+  // `staleTime` defaults to Infinity: nothing is stale until an app says what
+  // stale means. Every revalidation trigger set to `true` funnels into this
+  // invalidation, so the default is what decides whether it can ever fire.
+  it("treats a missing staleTime as never stale, and 0 as always stale", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+
+    const lane = createLane();
+    const listener = vi.fn();
+
+    lane.set(["tasks"], "value");
+    subscribeInvalidate(lane, ["tasks"], listener);
+
+    // A century later, still not stale.
+    vi.setSystemTime(10_000 + 100 * 365 * 24 * 60 * 60_000);
+    lane.invalidate(["tasks"], { onlyIf: "stale" });
+
+    expect(listener).not.toHaveBeenCalled();
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "refetched"),
+    ).resolves.toEqual({ data: "value" });
+
+    // `staleTime: 0` is how an app asks for "always stale" — and owns the
+    // consequences, including a mount that refetches what it just loaded.
+    lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 0 });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "refetched"),
+    ).resolves.toEqual({ data: "refetched" });
+  });
 });
 
 describe("invalidate", () => {

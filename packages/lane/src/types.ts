@@ -417,6 +417,22 @@ export type LaneUseOptions = {
    * way every other read option does.
    */
   loaderMeta?: LaneLoaderMeta;
+  /**
+   * How long (ms) a fulfilled value counts as fresh. Defaults to `Infinity`:
+   * nothing is stale until an app says what stale means.
+   *
+   * That default is what makes the revalidation triggers safe to leave on their
+   * own terms. `staleTime` is the rate limit on the trigger it gates — a value
+   * refreshed within it is not refreshed again, however many times focus /
+   * reconnect / mount fire — so a `0` default would ship every app the version
+   * with no limit. It also stacks badly with the read/trigger split: a read runs
+   * during render and its trigger fires from an effect, so under `0` a mount
+   * refetches the value that same mount just loaded.
+   *
+   * The cost of the default is silence: `whenStale: "refetch"` and the `true` form
+   * of every trigger do nothing without a `staleTime`. Both warn in development.
+   * `staleTime: 0` is how to ask for "always stale" deliberately.
+   */
   staleTime?: number;
   /**
    * What a read does when the cached value is stale (older than `staleTime`):

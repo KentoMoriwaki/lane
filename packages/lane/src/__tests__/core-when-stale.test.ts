@@ -150,6 +150,29 @@ describe("whenStale", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
+  it("'refetch' with no staleTime never discards, since nothing is stale", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "loaded");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // No `staleTime`, so the default (Infinity) applies and "refetch" has nothing
+    // to act on — the read behaves exactly like the default "revalidate". The
+    // option was accepted and then did nothing, which is what the warning is for.
+    await readOrCreate(lane, ["k"], loader, { whenStale: "refetch" });
+    subscribe(lane, ["k"])();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(
+      readOrCreate(lane, ["k"], loader, { whenStale: "refetch" }),
+    ).resolves.toEqual({ data: "loaded" });
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    vi.restoreAllMocks();
+  });
+
   it("'refetch' always retries a prior error, even within staleTime", async () => {
     vi.useFakeTimers();
 

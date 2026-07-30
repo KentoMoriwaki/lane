@@ -46,7 +46,9 @@ export function LaneCacheControls({
     >
       <ControlRow
         label="refetchOnMount"
-        note="Whether mounting a reader over a cached value triggers a background re-read."
+        note={
+          "Whether mounting a reader over a cached value triggers a background re-read. “when stale” is gated on the read's staleTime (5s here); “always” ignores it."
+        }
       >
         <NumberSelect
           value={refetchOnMount === "always" ? 2 : refetchOnMount ? 1 : 0}

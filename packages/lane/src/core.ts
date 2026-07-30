@@ -304,6 +304,19 @@ function reuseCache(
     return cache;
   }
 
+  if (
+    typeof process !== "undefined" &&
+    process.env.NODE_ENV !== "production" &&
+    options?.staleTime === undefined
+  ) {
+    warnDev(
+      '`whenStale: "refetch"` discards a stale value on an idle remount, but ' +
+        "`staleTime` defaults to Infinity, so nothing is ever stale and the read " +
+        'always reuses the cache — the same as the default "revalidate". Set a ' +
+        "`staleTime` to say how long a value stays fresh.",
+    );
+  }
+
   if (cache.settlement === undefined || entry.subscribers.size > 0) {
     return cache;
   }
@@ -322,7 +335,7 @@ function reuseCache(
     return cache;
   }
 
-  return isStale(cache, options?.staleTime ?? 0) ? undefined : cache;
+  return isStale(cache, options?.staleTime) ? undefined : cache;
 }
 
 export function invalidateEntry(
@@ -949,16 +962,64 @@ function shouldInvalidateEntry(
     return false;
   }
 
-  return isStale(cache, options.staleTime ?? 0);
+  return isStale(cache, options.staleTime);
 }
 
-function isStale(cache: LanePromiseCache, staleTime: number): boolean {
+/**
+ * `staleTime`'s default, and the one place it lives — every staleness decision
+ * goes through `isStale`.
+ *
+ * Nothing is stale until an app says what stale means. Lane's revalidation
+ * triggers are all off by default, so "how long a value stays fresh" has nothing
+ * to answer to until one is turned on — and `staleTime` doubles as the rate limit
+ * on the trigger it gates, so a `0` default would ship every app the version with
+ * no limit. It also stacks badly with the read/trigger split: a read runs during
+ * render and the trigger fires from an effect, so under a `0` default a mount
+ * refetches the value that same mount just loaded.
+ *
+ * `Infinity` inverts both: the limit is on unless an app removes it, and
+ * `staleTime: 0` is how you ask for "always stale" and take responsibility for it.
+ */
+const DEFAULT_STALE_TIME = Number.POSITIVE_INFINITY;
+
+const warned = new Set<string>();
+
+/**
+ * Warns once per message.
+ *
+ * It exists because the `Infinity` default turns a missing `staleTime` into
+ * silence rather than waste: the option is accepted, and then nothing happens.
+ * That is the failure mode worth a word at the moment it is configured.
+ *
+ * Every call site guards with the literal
+ * `typeof process !== "undefined" && process.env.NODE_ENV !== "production"`,
+ * written out rather than factored into a helper or a module constant. That exact
+ * expression is what bundlers substitute (and what esbuild folds on its own when
+ * minifying), so the branch is dropped, this function is left unreferenced, and
+ * the whole thing tree-shakes out of a production build. A `?.` on `process.env`,
+ * or hiding the check behind an imported boolean, defeats the substitution and
+ * ships the strings.
+ */
+export function warnDev(message: string): void {
+  if (warned.has(message)) {
+    return;
+  }
+
+  warned.add(message);
+  console.warn(`[lane] ${message}`);
+}
+
+function isStale(
+  cache: LanePromiseCache,
+  staleTime: number | undefined,
+): boolean {
   if (cache.settlement?.kind !== "fulfilled") {
     return false;
   }
 
-  // `at` is a past timestamp, so `now - at >= 0`: any staleTime <= 0 is stale.
-  return Date.now() - cache.settlement.at >= staleTime;
+  // `at` is a past timestamp, so `now - at >= 0`: any staleTime <= 0 is stale,
+  // and the `Infinity` default is never stale.
+  return Date.now() - cache.settlement.at >= (staleTime ?? DEFAULT_STALE_TIME);
 }
 
 function isPromiseLike<T>(value: LaneValue<T>): value is Promise<T> {

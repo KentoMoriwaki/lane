@@ -357,6 +357,48 @@ describe("React integration", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
+  it("applies one snapshots instance at most once, however often it re-renders", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "reloaded");
+    // The one value the server render produced. Idempotency is keyed on this
+    // object's identity, which is what makes hydration safe to render repeatedly
+    // — and what a caller breaks by *building* snapshots during a client render:
+    // a fresh object per render is a fresh hydration promise to suspend on, so the
+    // boundary never commits. Snapshots must survive a re-render.
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server" }],
+    };
+
+    const app = await render(hydrationApp(lane, snapshots, loader));
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    await waitForText(app.container, "server|background:0|transition:0|refresh:none");
+
+    // A client-side publication after hydration.
+    await act(async () => {
+      lane.set(["tasks"], "client");
+      await settlePromiseHandlers();
+    });
+    await waitForText(app.container, "client|background:0|transition:0|refresh:none");
+
+    // Re-rendering the same instance must not re-publish the server value over it.
+    await act(async () => {
+      app.root.render(hydrationApp(lane, snapshots, loader));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(app.container, "client|background:0|transition:0|refresh:none");
+    expect(loader).not.toHaveBeenCalled();
+  });
+
   it("converges after an invalidation lands while the initial read is suspended", async () => {
     const lane = createLane();
     const first = deferred<string>();

@@ -260,6 +260,19 @@ instance is applied to a given lane at most once, so repeated renders and Strict
 Mode do not re-publish. A new snapshots instance from a new server render is
 intentionally authoritative.
 
+Keying that on object *identity* is a deliberate bet on where snapshots come
+from. Crossing the server → client boundary gives exactly the granularity the
+rule wants — one object per server render, stable across the client re-renders of
+that payload — without hashing content or diffing entries, and without a
+"seeded already" flag that would have to be reset on navigation. The bet has a
+cost, and it is not a silent one: a caller who *builds* snapshots during a client
+render gets a new object each time, so the boundary suspends on a fresh hydration
+promise every render and never commits. That is the same shape as an inline
+`Promise.all` in a suspending component, and it is documented next to the prop
+rather than guarded at runtime, because the guard would have to be either a
+content hash (which breaks authoritative re-seeding of unchanged data) or a
+dev-only warning in a core measured in bytes.
+
 ## Key matching: exact vs scoped
 
 Lane supports two matching modes, and the **caller** chooses which — Lane never

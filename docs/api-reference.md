@@ -1264,8 +1264,21 @@ type LaneHydrationSnapshots = { entries: readonly LaneSnapshot[] };
 ```
 
 A given snapshots instance is applied to a given lane **at most once**, so
-repeated provider renders and Strict Mode do not re-seed. Build the snapshots on
-the server from the same keys your hooks use:
+repeated provider renders and Strict Mode do not re-seed. Identity is what that
+promise is keyed on, which has a corollary worth stating plainly:
+
+> **`snapshots` must be a value that survives a re-render.** Building it *during*
+> a client render — `<LaneHydration snapshots={buildSnapshots(seeds)}>` — hands a
+> new object to every render, so every render suspends on a fresh hydration
+> promise and the boundary never commits: the subtree stays on its Suspense
+> fallback indefinitely. (Same failure as an inline
+> [`Promise.all`](#uselanesallreads-options--a-batch-read), for the same reason.)
+> Passing snapshots built by a Server Component satisfies this for free — one
+> object per server render, stable across client re-renders, and a new one when
+> the server renders again, which is exactly when re-seeding is wanted. If you
+> must assemble them on the client, `useMemo` on the source data.
+
+Build the snapshots on the server from the same keys your hooks use:
 
 ```ts
 const snapshots: LaneHydrationSnapshots = {

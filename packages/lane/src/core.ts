@@ -429,6 +429,32 @@ export function latestNotifySource(
   return getLaneState(lane).entries.get(keyId)?.lastNotifySource;
 }
 
+/**
+ * The promises that were a key's value at the moment it was removed.
+ *
+ * A subscribed reader hears `onRemove` and converges *urgently*: a removal is not
+ * a refresh, so the value it drops must leave the screen rather than stay there
+ * through a transition. A reader that was not subscribed when the removal landed —
+ * a hidden `<Activity>`, or a mount whose effect has not run — gets no
+ * notification and still holds that promise in state, so its catch-up on
+ * subscribe is where it has to make the same call. By then the entry is gone and
+ * the promise it is holding is the only trace of the removal left, which is what
+ * this records.
+ *
+ * A `WeakSet` rather than a per-key tombstone: it is exactly as large as the
+ * removed promises something still references — the readers that can still be
+ * showing removed data — and it needs no eviction of its own. It records only a
+ * value the key actually held when it was removed. A reader holding a promise
+ * that was already displaced (invalidated first, removed second) is not covered;
+ * by then the store has nothing left to tag, and that reader is converging on the
+ * invalidation it was told about first.
+ */
+const removedReads = new WeakSet<Promise<unknown>>();
+
+export function isRemovedRead(promise: Promise<unknown>): boolean {
+  return removedReads.has(promise);
+}
+
 export function onInvalidate(
   lane: Lane,
   key: LaneKey,
@@ -488,6 +514,12 @@ function invalidateLaneEntry(
 }
 
 function removeLaneEntry(state: LaneState, entry: LaneEntry): void {
+  if (entry.cache) {
+    // Tag the value on its way out, so a reader still holding it can tell a
+    // removal from an invalidation once it subscribes (see `removedReads`).
+    removedReads.add(entry.cache.promise);
+  }
+
   removeEntryCache(entry);
   // Drop the last fulfilled value too. `remove` means the entry no longer
   // belongs in client state — sign out, team switch, a deleted entity — and

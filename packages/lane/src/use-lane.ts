@@ -10,6 +10,7 @@ import {
 import {
   invalidateEntry,
   invalidationSource,
+  isRemovedRead,
   latestNotifySource,
   readOrCreate,
   subscribeLane,
@@ -150,6 +151,18 @@ export function useLane<T, C = T>(
     const apply = () => {
       setPromise(nextPromise);
     };
+
+    // What it holds was *removed* while it was not subscribed to hear about it.
+    // A removal is urgent by definition — the value no longer belongs in client
+    // state — so this converges the way `onRemove` does, outside any transition.
+    // Through one, React would keep the last committed render on screen for as
+    // long as the re-read takes, which is the removed data still being shown: a
+    // hidden `<Activity>` would reveal displaying it, and a signed-out user would
+    // watch their own list until the next request came back.
+    if (promise !== undefined && isRemovedRead(promise)) {
+      apply();
+      return;
+    }
 
     // Converge through the same kind of transition as the notification this
     // reader was not subscribed in time to receive, so siblings of one key agree

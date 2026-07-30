@@ -1286,7 +1286,11 @@ lane.update(taskKeys.detail(id), (task) => ({ ...task, done: true }));
 
 Drop entries that no longer belong in client state — sign out, team switch, a
 deleted selected entity. Removal is **urgent**: subscribed readers stop
-rendering the removed promise immediately (no transition).
+rendering the removed promise immediately (no transition). A reader that was
+*not* subscribed when the removal landed — a hidden
+[`<Activity>`](#hidden-subtrees), or a mount whose effect has not run yet — makes
+the same call when it subscribes, so nothing can reveal still showing the removed
+value while its re-read runs.
 
 ```ts
 lane.remove(["task", id]);
@@ -1482,6 +1486,19 @@ Once the client owns the read, converge with `invalidate` / `set` / `update`.
   an in-flight read or a value a live subscriber is showing. This is orthogonal to `refetchOnMount`
   / `refetchOnFocus` / `refetchOnReconnect`, which decide *when* a background
   revalidation is triggered, not what a read shows.
+- **Hidden subtrees.** <a id="hidden-subtrees"></a> `<Activity mode="hidden">`
+  keeps a subtree's state and tears its effects down, so a hidden reader is
+  unsubscribed while still holding the value it last committed — and it stops
+  anchoring its entry against garbage collection. Whatever lands in that window
+  reaches no subscriber, and the reveal's re-subscribe is where the reader catches
+  up: an [invalidation](#invalidate--invalidateall) converges through the
+  background transition, so the held value stays on screen while the re-read runs,
+  and a [removal](#remove--removeall) converges urgently, so the subtree reveals
+  suspended rather than showing data the lane no longer has. `refetchOnMount`
+  fires on a reveal, because a reveal re-runs effects. What a reveal does *not* do
+  is re-read: `<Activity>` preserves state precisely so nothing re-runs, so
+  `whenStale: "refetch"` has no read to discard a stale value on. Ask for a
+  refresh-on-return with `refetchOnMount` (plus a `staleTime` to rate-limit it).
 - **Abort.** Loaders receive an `AbortSignal` that fires when the read is
   discarded by invalidation, removal, an authoritative `set` over a pending read,
   or GC.

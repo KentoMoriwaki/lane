@@ -8,7 +8,12 @@ import {
   useState,
   useTransition,
 } from "react";
-import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
+import {
+  invalidateEntry,
+  isRemovedRead,
+  readOrCreate,
+  subscribeLane,
+} from "./core";
 import { serializeKey } from "./keys";
 import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
@@ -122,6 +127,15 @@ export function useLanesAll<T, C = T>(
     startTransition(apply);
   });
 
+  // Catch up on what landed while a newly-added key was unsubscribed. A removal
+  // among them is urgent, exactly as `onRemove` is below: the batch is holding a
+  // value the lane no longer has, and a transition would keep it on screen until
+  // the re-read lands. An effect event so it can read the aggregate the last
+  // render committed, which is where that value is.
+  const catchUpAfterSubscribe = useEffectEvent(() => {
+    refresh(holdsRemovedRead(promise));
+  });
+
   // Mount / focus / reconnect derive their conditional invalidation from the
   // trigger + latest options at fire time (`revalidateOptions` returns
   // `undefined` when the trigger is off), so toggling a flag never re-subscribes.
@@ -195,10 +209,11 @@ export function useLanesAll<T, C = T>(
       }
     }
 
-    // Catch up on invalidations that landed before a newly-added key subscribed
-    // (common while an initial read keeps the batch suspended).
+    // Catch up on what landed before a newly-added key subscribed (common while
+    // an initial read keeps the batch suspended, and on every reveal of a hidden
+    // `<Activity>`, which drops the subscriptions with its effects).
     if (added.size > 0) {
-      refresh(false);
+      catchUpAfterSubscribe();
     }
   }, [descriptors, lane]);
 
@@ -342,6 +357,15 @@ type AggregateNode = {
 
 const aggregateRoot: AggregateNode = { children: new WeakMap(), value: undefined };
 
+// The members an aggregate was built from. A `Promise.all` hides them, and the
+// catch-up has to look through it: what a removal tags is the member promise,
+// not the aggregate wrapping it. Weak on the aggregate, which is the only thing
+// keeping the members alive anyway.
+const aggregateMembers = new WeakMap<
+  Promise<unknown>,
+  readonly Promise<unknown>[]
+>();
+
 function aggregateOf<T>(ordered: Promise<LaneRead<T>>[]): Promise<LaneRead<T>[]> {
   let node = aggregateRoot;
   for (const member of ordered) {
@@ -357,7 +381,14 @@ function aggregateOf<T>(ordered: Promise<LaneRead<T>>[]): Promise<LaneRead<T>[]>
     const value = Promise.all(ordered);
     value.catch(noop);
     node.value = value;
+    aggregateMembers.set(value, ordered);
   }
 
   return node.value as Promise<LaneRead<T>[]>;
+}
+
+// Whether an aggregate is still holding a member that was removed from the lane —
+// the batch's form of `isRemovedRead`, which the store tags per member.
+function holdsRemovedRead(aggregate: Promise<unknown>): boolean {
+  return aggregateMembers.get(aggregate)?.some(isRemovedRead) ?? false;
 }

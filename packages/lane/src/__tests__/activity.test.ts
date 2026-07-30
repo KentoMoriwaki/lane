@@ -14,6 +14,13 @@
  * That is the same render-then-subscribe gap `syncAfterSubscribe` already exists
  * for (see `use-lane.ts`), just wider. These tests pin that the reveal converges
  * through that catch-up path, with no Activity-specific code.
+ *
+ * Wider in one way that matters to what the catch-up does rather than whether it
+ * runs: a hidden reader holds a committed value for as long as it stays hidden,
+ * so an invalidation and a removal have to part ways there exactly as they do for
+ * a subscribed one. The first keeps that value on screen while the re-read runs;
+ * the second must not, because a removal says the value no longer belongs in
+ * client state at all.
  */
 
 import * as React from "react";
@@ -21,8 +28,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readOrCreate } from "../core";
-import { createLane, LaneProvider, useLane } from "../index";
-import type { Lane, LaneLoader } from "../types";
+import { createLane, LaneProvider, useLane, useLanesAll } from "../index";
+import type { Lane, LaneLoader, LaneUseOptions } from "../types";
 import {
   deferred,
   resetVitest,
@@ -32,11 +39,17 @@ import {
 
 type Mode = "hidden" | "visible";
 
+type ProbeProps = { loader: LaneLoader<string>; options: LaneUseOptions };
+
+type ProbeComponent = (props: ProbeProps) => React.ReactNode;
+
 type RenderedApp = {
   container: HTMLDivElement;
   root: Root;
   rerender: (mode: Mode) => Promise<void>;
 };
+
+const EMPTY_OPTIONS: LaneUseOptions = {};
 
 const roots: Root[] = [];
 
@@ -115,6 +128,128 @@ describe("Activity", () => {
     expect(app.container.textContent).toBe("v2|background:0|transition:0");
   });
 
+  it("reveals behind the fallback when the key was removed while hidden", async () => {
+    const lane = createLane();
+    const loads = controllableLoader();
+
+    const app = await renderActivityApp({
+      lane,
+      loader: loads.loader,
+      mode: "visible",
+    });
+    loads.resolveLast("v1");
+    await flushReact();
+    await app.rerender("hidden");
+
+    // Same missed notification as the invalidation above, and deliberately not
+    // the same catch-up: a removal says the value no longer belongs in client
+    // state, so converging through a transition — which keeps the last committed
+    // render on screen while the re-read runs — would reveal the subtree still
+    // showing the removed data. This is the sign-out case: the list is gone from
+    // the lane, and the user must not go on watching their own for as long as the
+    // next request takes.
+    await act(async () => {
+      lane.remove(["tasks"]);
+      await settlePromiseHandlers();
+    });
+
+    await app.rerender("visible");
+
+    expect(loads.calls).toBe(2);
+    expect(app.container.textContent).toContain("loading");
+    expect(valueElement(app).style.display).toBe("none");
+
+    loads.resolveLast("v2");
+    await flushReact();
+
+    expect(app.container.textContent).toBe("v2|background:0|transition:0");
+  });
+
+  it("reveals a batch behind the fallback when a member was removed while hidden", async () => {
+    const lane = createLane();
+    const loads = controllableLoader();
+
+    const app = await renderActivityApp({
+      lane,
+      loader: loads.loader,
+      mode: "visible",
+      probe: BatchProbe,
+    });
+    loads.resolveLast("v1");
+    await flushReact();
+    await app.rerender("hidden");
+
+    await act(async () => {
+      lane.remove(["tasks"]);
+      await settlePromiseHandlers();
+    });
+
+    await app.rerender("visible");
+
+    expect(loads.calls).toBe(2);
+    expect(app.container.textContent).toContain("loading");
+    expect(valueElement(app).style.display).toBe("none");
+
+    loads.resolveLast("v2");
+    await flushReact();
+
+    expect(app.container.textContent).toBe("v2|background:0|transition:0");
+  });
+
+  it("re-reads on a reveal only where a trigger asks for it", async () => {
+    const lane = createLane();
+    const loads = controllableLoader();
+
+    // A reveal restores the effects, not the render: `<Activity>` keeps the
+    // subtree's state precisely so nothing re-runs, and the reader holds the
+    // promise it committed on. So the reveal is not a read, and `whenStale`
+    // — which decides what a *read* does with a stale value — has nothing to
+    // decide. Only the catch-up runs, and it reuses what the key holds.
+    const stale = await renderActivityApp({
+      lane,
+      loader: loads.loader,
+      mode: "visible",
+      options: { staleTime: 0, whenStale: "refetch" },
+    });
+    loads.resolveLast("v1");
+    await flushReact();
+    expect(loads.calls).toBe(1);
+
+    await stale.rerender("hidden");
+    await stale.rerender("visible");
+
+    expect(loads.calls).toBe(1);
+    expect(stale.container.textContent).toBe("v1|background:0|transition:0");
+
+    // `refetchOnMount` is the trigger that does fire, because a reveal re-runs
+    // effects — which is how an app asks for "refresh when this comes back".
+    const refreshes = controllableLoader();
+    const remount = await renderActivityApp({
+      lane: createLane(),
+      loader: refreshes.loader,
+      mode: "visible",
+      options: { refetchOnMount: "always" },
+    });
+    // Two, before the subtree is ever hidden: a suspended mount commits only
+    // once its read settles, so the trigger fires on the real mount with a
+    // settled value to refresh. Settle that refresh too, or the reveal's trigger
+    // finds a read in flight and `"always"` skips it (`onlyIf: "settled"`).
+    refreshes.resolveLast("mounted");
+    await flushReact();
+    refreshes.resolveLast("mounted");
+    await flushReact();
+
+    expect(refreshes.calls).toBe(2);
+
+    await remount.rerender("hidden");
+    await remount.rerender("visible");
+
+    expect(refreshes.calls).toBe(3);
+    // In the background, so the reveal shows the value it already had rather
+    // than dropping to a fallback.
+    expect(remount.container.textContent).toBe("mounted|background:1|transition:0");
+  });
+
   it("releases the store subscription while hidden", async () => {
     vi.useFakeTimers();
 
@@ -163,8 +298,8 @@ function controllableLoader() {
   };
 }
 
-function Probe({ loader }: { loader: LaneLoader<string> }) {
-  const result = useLane({ key: ["tasks"], loader });
+function Probe({ loader, options }: ProbeProps) {
+  const result = useLane({ ...options, key: ["tasks"], loader });
   const read = React.use(result.promise);
 
   return React.createElement(
@@ -176,10 +311,30 @@ function Probe({ loader }: { loader: LaneLoader<string> }) {
   );
 }
 
+// The same read through `useLanesAll`, which subscribes its members from an
+// effect exactly as `useLane` does — and so loses them to a hidden subtree in
+// exactly the same way. It renders the shape `Probe` does, minus the flags a
+// batch does not expose, so both read against the same expected text.
+function BatchProbe({ loader, options }: ProbeProps) {
+  const reads = React.useMemo(() => [{ key: ["tasks"], loader }], [loader]);
+  const [read] = React.use(useLanesAll(reads, options));
+
+  if (!read) {
+    throw new Error("Missing the batch's only member");
+  }
+
+  return React.createElement(
+    "div",
+    { "data-testid": "value" },
+    `${read.data}|background:0|transition:0`,
+  );
+}
+
 function activityApp(
   lane: Lane,
-  loader: LaneLoader<string>,
   mode: Mode,
+  probe: ProbeComponent,
+  props: ProbeProps,
 ): React.ReactElement {
   return React.createElement(LaneProvider, {
     lane,
@@ -187,7 +342,7 @@ function activityApp(
       children: React.createElement(
         React.Suspense,
         { fallback: React.createElement("span", null, "loading") },
-        React.createElement(Probe, { loader }),
+        React.createElement(probe, props),
       ),
       mode,
     }),
@@ -198,26 +353,31 @@ async function renderActivityApp({
   lane,
   loader,
   mode,
+  options = EMPTY_OPTIONS,
+  probe = Probe,
 }: {
   lane: Lane;
   loader: LaneLoader<string>;
   mode: Mode;
+  options?: LaneUseOptions;
+  probe?: ProbeComponent;
 }): Promise<RenderedApp> {
   const container = document.createElement("div");
   const root = createRoot(container);
+  const props: ProbeProps = { loader, options };
 
   document.body.append(container);
   roots.push(root);
 
   const rerender = async (nextMode: Mode) => {
     await act(async () => {
-      root.render(activityApp(lane, loader, nextMode));
+      root.render(activityApp(lane, nextMode, probe, props));
       await settlePromiseHandlers();
     });
   };
 
   await act(async () => {
-    root.render(activityApp(lane, loader, mode));
+    root.render(activityApp(lane, mode, probe, props));
     await settlePromiseHandlers();
   });
 

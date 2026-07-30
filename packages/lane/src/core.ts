@@ -201,37 +201,23 @@ export function createLane(options: LaneOptions = {}): Lane {
 }
 
 /**
- * Applies server snapshots as authoritative values, and hands back the
- * announcement as a separate step.
- *
- * The split is what lets seeding happen *during* render, which is the only place
- * it can happen if the first read is to find a fulfilled promise instead of
- * starting a fetch. Publishing is safe there: it mutates the key slot, and the
- * reads that consult it are created during render too. Announcing is not — a
- * subscriber's `setState` dispatched from another component's render pass is
- * dropped by React, so mounted readers would never converge on a re-hydration.
- * The caller runs the returned notifier from an effect instead.
+ * Applies server snapshots as authoritative values. Existing entries are
+ * overwritten and their subscribers notified so that mounted readers converge
+ * to the new data when a navigation re-hydrates the same keys.
  */
 export function hydrateMany(
   lane: Lane,
   snapshots: LaneHydrationSnapshots,
-): () => void {
+): void {
   const state = getLaneState(lane);
-  const seeded: LaneEntry[] = [];
 
   for (const snapshot of snapshots.entries) {
     const keyId = serializeKey(snapshot.key);
     const entry = getOrCreateEntry(state, snapshot.key, keyId);
 
     publishEntryValue(state, entry, snapshot.data);
-    seeded.push(entry);
+    notifyInvalidate(entry, "transition");
   }
-
-  return () => {
-    for (const entry of seeded) {
-      notifyInvalidate(entry, "transition");
-    }
-  };
 }
 
 export function readOrCreate<T, C = T>(

@@ -8,22 +8,6 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
-- **`LaneHydration` no longer suspends.** Seeding ran inside a promise resolved on
-  a `setTimeout(0)`, which the boundary then `use()`d — so every seeded route paid
-  a macrotask and a suspend/commit cycle before its first paint, server-side
-  rendering included. Publishing does not need to be deferred at all: it is a
-  write to the key slot, and reads are created during render too, so the seed can
-  land before `children` render and the first read finds a fulfilled promise. What
-  genuinely cannot happen during render is the *announcement* — a subscriber's
-  `setState` dispatched from another component's render pass is dropped by React,
-  which is why a synchronous version stopped converging mounted readers on
-  re-hydration. So the two halves are split: `hydrateMany` publishes and returns
-  the notifier, and `LaneHydration` runs it from an effect. First paint of a seeded
-  route is now synchronous; re-hydration converges through the effect instead of a
-  timer. The failure mode for snapshots built *during* a render changes with it —
-  formerly a boundary that never committed, now a re-publish on every render — and
-  the docs say so next to the prop.
-
 - **Breaking: every read hook takes one value.** `useLane({ key, loader, ...options })`
   replaces `useLane(key, loader, options)`, and the same for `useLanePromise`,
   `useLanesAll` (whose members were `[key, loader]` tuples), `useInfiniteLane`

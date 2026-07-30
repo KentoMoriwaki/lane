@@ -189,7 +189,7 @@ createBrowserRouter([
   loader re-runs, which is exactly what
   [`LaneHydration`](./api-reference.md#lanehydration) keys on. Don't move the
   `{ entries: … }` assembly into the component — built during render it is a new
-  object every time, so every render re-seeds over what the client has written.
+  object every time, and the boundary never commits.
 - React Router **re-runs loaders on back/forward** by default (unlike Next, which
   restores from cache). To make back instant, return `false` from `shouldRevalidate`
   for POP, or have the loader read through Lane's cache.

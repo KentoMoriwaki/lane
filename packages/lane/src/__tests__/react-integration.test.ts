@@ -297,7 +297,7 @@ describe("React integration", () => {
     await waitForText(app.container, "mounted|background:0|transition:0|refresh:none");
   });
 
-  it("seeds without suspending, and does not refetch the fresh data on mount", async () => {
+  it("does not immediately refetch freshly hydrated data on mount", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
 
@@ -313,12 +313,7 @@ describe("React integration", () => {
       }),
     );
 
-    // Seeded during render, so the first paint is the server value — the
-    // boundary never suspends and no fallback is shown.
-    expect(app.container.textContent).toBe(
-      "server|background:0|transition:0|refresh:none",
-    );
-    expect(loader).not.toHaveBeenCalled();
+    await waitForText(app.container, "loading");
 
     await act(async () => {
       vi.runOnlyPendingTimers();

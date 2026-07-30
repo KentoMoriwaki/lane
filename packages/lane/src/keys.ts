@@ -1,7 +1,36 @@
-import type { LaneKey } from "./types";
+import type { LaneKey, LaneKeyOf } from "./types";
 
 export function serializeKey(key: LaneKey): string {
   return stableStringify(key);
+}
+
+/**
+ * Declare what a key holds: the same array, typed as a {@link LaneKeyOf} so
+ * `set` and `update` through it are checked.
+ *
+ * `laneRead` already tags the key of the read it describes, and that is the
+ * usual source of a typed key. This is for the other half of the codebase — the
+ * one that writes. A mutation path addresses entries; it has no business
+ * importing fetchers (or the request context a fetcher needs) just to name one,
+ * so a key factory can carry the types on its own:
+ *
+ * ```ts
+ * export const taskKeys = {
+ *   detail: (id: string) => laneKey<Task>(["task", id]),
+ * };
+ *
+ * lane.set(taskKeys.detail(task.id), task);          // checked, no loader in sight
+ * laneRead({ key: taskKeys.detail(id), loader: … }); // and the read reuses it
+ * ```
+ *
+ * The type argument is required and unverified: `laneKey<Task>(["task", id])`
+ * asserts that this key's entry holds a `Task`, and nothing checks it. It is the
+ * one place in Lane where you state a type by hand instead of inferring one —
+ * which is why the loaded type belongs on the read wherever a read exists, where
+ * `laneRead` infers the same tag from the loader.
+ */
+export function laneKey<T>(key: LaneKey): LaneKeyOf<T> {
+  return key as LaneKeyOf<T>;
 }
 
 export function isPrefixKey(prefix: LaneKey, key: LaneKey): boolean {

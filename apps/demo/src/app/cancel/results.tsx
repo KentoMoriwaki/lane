@@ -24,11 +24,11 @@ export function SearchResults({
   topic: string;
   whenStale: "revalidate" | "refetch";
 }) {
-  const { promise, isTransitionPending } = useLane(
-    searchKey(topic),
-    searchLoader(topic),
-    { whenStale },
-  );
+  const { promise, isTransitionPending } = useLane({
+    key: searchKey(topic),
+    loader: searchLoader(topic),
+    whenStale,
+  });
   const { data, refreshError } = use(promise);
 
   return (

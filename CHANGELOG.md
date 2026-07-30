@@ -6,7 +6,77 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: every read hook takes one value.** `useLane({ key, loader, ...options })`
+  replaces `useLane(key, loader, options)`, and the same for `useLanePromise`,
+  `useLanesAll` (whose members were `[key, loader]` tuples), `useInfiniteLane`
+  (whose pagination was a second argument), and `Lane.prefetch`. This is the move
+  react-query made in v5 for the same reasons: options had two homes, the
+  spread-override that makes a shared definition adjustable
+  (`useLane({ ...taskLanes.detail(id), refetchOnFocus: true })`) only worked in
+  one of them, and every consumer needed an overload pair to accept both. One
+  shape means one signature to document, one to infer through, and one to read.
+  Nothing about a read changed but where its parts sit, so migration is
+  mechanical: `useLane(key, loader, opts)` → `useLane({ ...opts, key, loader })`.
+  `LanePrefetchOptions` is gone with the positional `prefetch`; a read carries its
+  own `retry` / `retryDelay`.
+
+  It also paid for itself in bytes: dropping the normalization branches left the
+  core at **2169 B** against 2167 B before any of this work, and the typical
+  `LaneProvider + useLane` import unchanged at **3328 B**. Typechecking a read
+  costs about 20% more instantiations than the positional form did (measured over
+  40 reads: 4540 → 5505), which is the price of the whole read being one inferred
+  object.
+
 ### Added
+
+- **`laneRead({ key, loader, ...options })`** — a read's key, its loader, and the
+  options it is read with, colocated in one value; react-query's `queryOptions()`
+  for Lane. A key factory shares only half of a read: the loader and the options
+  stay at each call site, where nothing checks that they belong to that key.
+  `useLane({ key: taskKeys.detail(id), loader: () => fetchTasks(filters) })`
+  type-checks and is wrong, and two components can read one key with different
+  freshness. `laneRead` gives the whole read one place to live, and every consumer
+  of a read takes it: `useLane`, `useLanePromise`, `useLanesAll`,
+  `useInfiniteLane` (via `infiniteLaneRead`), and `prefetch`. At runtime the factory is identity and there is no registry behind a spec —
+  Lane still addresses entries by serialized key, so specs can be rebuilt per
+  render, in a handler, or on the server, and nothing needs memoizing for
+  identity. A gated read is a spec whose `loader` is `undefined`, unchanged in
+  meaning.
+
+- **`laneKey<T>(key)` and `LaneKeyOf<T>`** — a key that carries what its entry
+  holds, so `set` and `update` through it are type-checked. This is the same trick
+  as react-query's `DataTag`, and it is what keeps the *write* side out of the
+  colocation business: publishing, invalidating, and removing address an entry,
+  and none of them needs a loader, so requiring the whole read would make every
+  mutation path import fetchers — and whatever request context those fetchers
+  close over — to name a key it already knows. `laneRead` stamps the tag from its
+  loader's return type (`spec.key`), and `laneKey<Task>(["task", id])` declares one
+  for the half of a codebase that only writes. A read may be built on an
+  already-typed key, though the two are deliberately not checked against each
+  other — constraining a read's `key` to `LaneKeyOf<T>` measured at ~65% more type
+  instantiations per read, which is a poor trade for catching a mismatch you have
+  to construct on purpose. A tagged key is an ordinary
+  array at runtime and is accepted anywhere `LaneKey` is; only `set` / `update`
+  read the tag, and a plain key still lets the value decide its own type exactly
+  as before.
+
+- **`prefetch(read)`** — the one instance method that takes a whole read rather
+  than a key, because it is the one that *performs* one. Its `retry` /
+  `retryDelay` come from the read; `staleTime` / `whenStale` stay the eventual
+  reader's call.
+
+- **`infiniteLaneRead({ key, initialCursor, fetchPage, nextCursor, ...options })`**
+  — the same, for `useInfiniteLane`, whose loader is a cursor walk rather than a
+  single fetch. `P` and `C` are inferred and checked where the list is defined
+  (`nextCursor` must return the cursor `fetchPage` takes) instead of at each call
+  site.
+
+- **Per-member options in `useLanesAll`.** A batch is usually derived from a list
+  — `ids.map(taskLanes.detail)` — so each member now carries its own options and
+  the batch's `options` argument became the fallback for what a member does not
+  set. A read behaves in a batch exactly as it would through `useLane`.
 
 - **`current` on the loader context** — the entry's last fulfilled value, or
   `undefined` on a first load, snapshotted when the read is created so every
@@ -24,12 +94,12 @@ All notable changes to `use-lane` are documented here. The format is based on
   on stale data. Typed by the read's new second type parameter, `useLane<T, C = T>`,
   which is what keeps `T` in the return position: putting the loaded type in the
   loader's *parameter* position would make TypeScript fix it before checking the
-  loader body, and `useLane(key, ({ signal }) => fetchTask(id, signal))` would
-  have silently inferred `LaneRead<unknown>`. Annotating the read (`useLane<Feed>(…)`)
+  loader body, and a loader written inline would have silently inferred
+  `LaneRead<unknown>`. Annotating the read (`useLane<Feed>({ … })`)
   types `current`; reading it without an annotation is a type error asking for
   one, never a silent `any`.
 
-- **`useInfiniteLane(key, options, readOptions?)`** — a cursor-paginated list as
+- **`useInfiniteLane(read)`** — a cursor-paginated list as
   one key holding the whole accumulated list, with the page depth read back out
   of the cached value. `{ initialCursor, fetchPage, nextCursor }` in, `{ promise,
   loadMore, isTransitionPending, isBackgroundPending, invalidate }` out, and

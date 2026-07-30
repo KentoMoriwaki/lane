@@ -16,6 +16,9 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | --- | --- |
 | `queryKey` | the read **key** (`["user", id]`) — a structural array |
 | `queryFn` / fetcher | the **loader** — forward `({ signal })` to `fetch` |
+| `queryOptions({ … })` | `laneRead({ key, loader, …options })` ([step 0](#step-0--keep-your-options-factories)) |
+| `infiniteQueryOptions({ … })` | `infiniteLaneRead({ key, initialCursor, fetchPage, nextCursor })` |
+| `DataTag` on `queryKey` | `LaneKeyOf<T>` — `spec.key`, or `laneKey<T>(…)` |
 | `useQuery().data` | `use(promise).data`, read under a `Suspense` boundary |
 | `useInfiniteQuery` | `useInfiniteLane` — one key holds the accumulated list ([step 6](#step-6--infinite-lists)) |
 | `isLoading` (no data yet) | a **`Suspense` fallback** — there is no flag |
@@ -31,6 +34,67 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `staleTime` / `gcTime` | `staleTime` (read option) / `gcTime` (`createLane`) |
 | `QueryClientProvider` | `LaneProvider` |
 
+## Step 0 — keep your options factories
+
+If the codebase is organised around `queryOptions()` factories, that organisation
+survives the migration intact: `laneRead` is the same idea — one value carrying a
+read's key, its loader, and the options it is read with — and Lane accepts it
+everywhere a key or a `(key, loader)` pair is accepted.
+
+```ts
+// Before (React Query)
+export const taskQueries = {
+  detail: (id: string) =>
+    queryOptions({
+      queryKey: ["task", id],
+      queryFn: ({ signal }) => fetchTask(id, signal),
+      staleTime: 60_000,
+    }),
+};
+
+// After (Lane)
+export const taskLanes = {
+  detail: (id: string) =>
+    laneRead({
+      key: ["task", id],
+      loader: ({ signal }) => fetchTask(id, signal),
+      staleTime: 60_000,
+    }),
+};
+```
+
+The call sites map one for one:
+
+| React Query | Lane |
+| --- | --- |
+| `useQuery(taskQueries.detail(id))` | `useLane(taskLanes.detail(id))` |
+| `useSuspenseQuery(taskQueries.detail(id))` | `useLane(taskLanes.detail(id))` — every read suspends |
+| `queryClient.prefetchQuery(taskQueries.detail(id))` | `lane.prefetch(taskLanes.detail(id))` |
+| `queryClient.invalidateQueries(taskQueries.detail(id))` | `lane.invalidate(taskLanes.detail(id).key)` |
+| `queryClient.setQueryData(taskQueries.detail(id).queryKey, task)` | `lane.set(taskLanes.detail(id).key, task)` |
+| `useQueries({ queries: ids.map(taskQueries.detail) })` | `useLanesAll(ids.map(taskLanes.detail))` |
+
+The shape of that table is the same as react-query's, and for the same reason.
+`queryOptions` tags its `queryKey` with the data type (`DataTag`), which is what
+makes `getQueryData` / `setQueryData` typed from the key alone; Lane's
+[`LaneKeyOf`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds) is
+that idea, so anything addressing an entry takes `spec.key` and the loader stays
+out of it.
+
+Two differences worth knowing:
+
+- **`invalidateQueries` takes filters; `invalidate` takes one key.** For a family,
+  use a prefix or predicate scope: `lane.invalidateAll(["tasks"])`.
+- **A write-only module needs no options factory.** Where react-query gets its tag
+  only from `queryOptions` (which requires a `queryFn`), Lane also has
+  `laneKey<T>(["task", id])` — a typed key with no loader, so a mutation module
+  imports keys and nothing else.
+
+Colocating is not required — `useLane(key, loader, options)` is the same read
+written out — but it is the shape that keeps a key from drifting away from the
+loader and options it belongs to. See
+[`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation).
+
 ## Step 1 — read with `use()`, delete the status object
 
 The core move: stop returning `{ data, isLoading, error }` and start returning a
@@ -45,7 +109,10 @@ if (error) return <ErrorView />;
 return <Profile user={data} />;
 
 // After (Lane)
-const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
+const { promise } = useLane({
+  key: ["user", id],
+  loader: ({ signal }) => fetchUser(id, signal),
+});
 const { data } = use(promise);
 return <Profile user={data} />;
 ```
@@ -105,7 +172,10 @@ on screen while the next one loads:
 ```tsx
 const deferred = useDeferredValue(filters);
 const isStale = deferred !== filters; // drive a pending affordance off this
-const { promise } = useLane(["rows", deferred], ({ signal }) => fetchRows(deferred, signal));
+const { promise } = useLane({
+  key: ["rows", deferred],
+  loader: ({ signal }) => fetchRows(deferred, signal),
+});
 ```
 
 See [key changes that flash](./common-mistakes.md#key-changes-that-flash-filters-navigation-props).
@@ -143,7 +213,7 @@ See [polling](./api-reference.md#polling).
 
 ## Step 6 — infinite lists
 
-`useInfiniteQuery` becomes [`useInfiniteLane`](./api-reference.md#useinfinitelanekey-options-readoptions--a-cursor-paginated-list).
+`useInfiniteQuery` becomes [`useInfiniteLane`](./api-reference.md#useinfinitelaneread--a-cursor-paginated-list).
 The shapes line up almost one for one, and the two caches hold the same thing —
 one entry per list, holding every page:
 
@@ -167,7 +237,8 @@ const { data, fetchNextPage, hasNextPage } = useInfiniteQuery({
 const items = data?.pages.flatMap((page) => page.items) ?? [];
 
 // After (Lane)
-const { promise, loadMore } = useInfiniteLane(["feed", filters], {
+const { promise, loadMore } = useInfiniteLane({
+  key: ["feed", filters],
   initialCursor: null as string | null,
   fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
   nextCursor: (page) => page.nextCursor,
@@ -197,6 +268,9 @@ Three things to carry across:
 
 ## Migration checklist
 
+- [ ] `queryOptions()` factories ported to `laneRead` — key, loader, and options
+      still in one place; reads take the definition, `invalidate` / `set` take
+      its `key`.
 - [ ] Replaced `useQuery` reads with `useLane` + `use(promise)`; deleted the
       `isLoading` / `error` / `status` branches.
 - [ ] `Suspense` and Error Boundaries placed at the right granularity — including

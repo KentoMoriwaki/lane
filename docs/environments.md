@@ -76,9 +76,12 @@ import { render, Text } from "ink";
 import { LaneProvider, useLane, noopEventSource } from "use-lane";
 
 function User() {
-  const { promise } = useLane(["user", 1], async ({ signal }) => {
-    const res = await fetch("https://api.example.com/users/1", { signal });
-    return res.json();
+  const { promise } = useLane({
+    key: ["user", 1],
+    loader: async ({ signal }) => {
+      const res = await fetch("https://api.example.com/users/1", { signal });
+      return res.json();
+    },
   });
   return <Text>{use(promise).name}</Text>;
 }

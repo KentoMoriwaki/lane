@@ -12,16 +12,28 @@ import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneInstance, useLaneRevalidation } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
-import type { Lane, LaneKey, LaneLoader, LaneRead, LaneUseOptions } from "./types";
+import type {
+  Lane,
+  LaneKey,
+  LaneLoader,
+  LaneRead,
+  LaneReadSpec,
+  LaneUseOptions,
+} from "./types";
 
 const EMPTY_OPTIONS: LaneUseOptions = {};
 
 function noop(): void {}
 
-type Descriptor<T> = {
+type Descriptor<T, C> = {
   key: LaneKey;
   keyId: string;
-  loader: LaneLoader<T>;
+  loader: LaneLoader<T, C>;
+  // The member's own read, which is also its options. Kept separate from the
+  // batch's shared ones rather than merged here: the shared `options` is usually
+  // a fresh object literal every render, and every consumer already reads it at
+  // render or fire time so a changed value takes effect without re-subscribing.
+  options: LaneUseOptions;
 };
 
 /**
@@ -47,9 +59,16 @@ type Descriptor<T> = {
  *
  * `use(promise)` resolves to every read positionally, stays pending until all
  * resolve, and rejects to the Error Boundary if any *initial* load fails.
+ *
+ * A batch can also be given as specs from `laneRead` — `ids.map(taskLanes.detail)`
+ * — which is the shape this hook is most often built from, since the members are
+ * derived from a list. A spec carries its own options, so "shared by every read"
+ * becomes "the shared `options` is the fallback": a member reads with its own
+ * `staleTime` / `refetchOn*` where it defines them, exactly as it would through
+ * `useLane`, and inherits the rest from the batch.
  */
-export function useLanesAll<T>(
-  reads: readonly (readonly [LaneKey, LaneLoader<T>])[],
+export function useLanesAll<T, C = T>(
+  reads: readonly LaneReadSpec<T, C>[],
   options: LaneUseOptions = EMPTY_OPTIONS,
 ): Promise<LaneRead<T>[]> {
   const lane = useLaneInstance();
@@ -57,12 +76,7 @@ export function useLanesAll<T>(
 
   // Serialized once per (stable) `reads`, not every render.
   const descriptors = useMemo(
-    () =>
-      reads.map<Descriptor<T>>(([key, loader]) => ({
-        key,
-        keyId: serializeKey(key),
-        loader,
-      })),
+    () => reads.map<Descriptor<T, C>>(toDescriptor),
     [reads],
   );
 
@@ -109,27 +123,23 @@ export function useLanesAll<T>(
   // `undefined` when the trigger is off), so toggling a flag never re-subscribes.
   // Each fans the invalidation across the current keys; overlaps coalesce in the
   // store, so the smallest effective `staleTime` wins.
-  const mountRefetch = useEffectEvent((keyId: string) => {
+  const mountRefetch = useEffectEvent((descriptor: Descriptor<T, C>) => {
+    const own = optionsFor(options, descriptor);
     const invalidateOptions = revalidateOptions(
-      options.refetchOnMount,
-      options.staleTime,
+      own.refetchOnMount,
+      own.staleTime,
     );
     if (invalidateOptions) {
-      invalidateEntry(lane, keyId, invalidateOptions, "background");
+      invalidateEntry(lane, descriptor.keyId, invalidateOptions, "background");
     }
   });
 
   const revalidateOnFocus = useEffectEvent(() => {
-    revalidateAll(lane, descriptors, options.refetchOnFocus, options.staleTime);
+    revalidateAll(lane, descriptors, options, "refetchOnFocus");
   });
 
   const revalidateOnReconnect = useEffectEvent(() => {
-    revalidateAll(
-      lane,
-      descriptors,
-      options.refetchOnReconnect,
-      options.staleTime,
-    );
+    revalidateAll(lane, descriptors, options, "refetchOnReconnect");
   });
 
   // The one imperative bit: keyId → unsubscribe. The effect reconciles the live
@@ -154,12 +164,12 @@ export function useLanesAll<T>(
       }
     }
 
-    let added = false;
+    const added = new Set<string>();
     for (const [keyId, key] of wanted) {
       if (active.has(keyId)) {
         continue;
       }
-      added = true;
+      added.add(keyId);
       active.set(
         keyId,
         subscribeLane(lane, key, {
@@ -167,12 +177,21 @@ export function useLanesAll<T>(
           onRemove: () => refresh(true),
         }),
       );
-      mountRefetch(keyId);
+    }
+
+    // The mount refetch is fired per *member* of a newly subscribed key rather
+    // than per key, because with specs the trigger is a member's own option and
+    // duplicate keys share one subscription. Overlapping invalidations coalesce
+    // in the store, so the smallest effective staleTime still wins.
+    for (const descriptor of descriptors) {
+      if (added.has(descriptor.keyId)) {
+        mountRefetch(descriptor);
+      }
     }
 
     // Catch up on invalidations that landed before a newly-added key subscribed
     // (common while an initial read keeps the batch suspended).
-    if (added) {
+    if (added.size > 0) {
       refresh(false);
     }
   }, [descriptors, lane]);
@@ -203,34 +222,67 @@ export function useLanesAll<T>(
   return promise;
 }
 
-function computeAggregate<T>(
+function toDescriptor<T, C>(read: LaneReadSpec<T, C>): Descriptor<T, C> {
+  return {
+    key: read.key,
+    keyId: serializeKey(read.key),
+    loader: read.loader,
+    options: read,
+  };
+}
+
+/**
+ * The options one member is read with: its own where it defines them, the
+ * batch's shared ones for the rest. With no shared options — the common case,
+ * since a member usually carries its own — the member's read *is* the answer, so
+ * the merge is skipped rather than allocating a copy per member per recompute.
+ */
+function optionsFor<T, C>(
+  shared: LaneUseOptions,
+  descriptor: Descriptor<T, C>,
+): LaneUseOptions {
+  return shared === EMPTY_OPTIONS
+    ? descriptor.options
+    : { ...shared, ...descriptor.options };
+}
+
+function computeAggregate<T, C>(
   lane: Lane,
-  descriptors: Descriptor<T>[],
+  descriptors: Descriptor<T, C>[],
   options: LaneUseOptions,
   gate?: Promise<void>,
 ): Promise<LaneRead<T>[]> {
-  const readOptions = toReadOptions(options);
   return aggregateOf(
-    descriptors.map((d) => readOrCreate(lane, d.key, d.loader, readOptions, gate)),
+    descriptors.map((d) =>
+      readOrCreate(
+        lane,
+        d.key,
+        d.loader,
+        toReadOptions(optionsFor(options, d)),
+        gate,
+      ),
+    ),
   );
 }
 
 // Fire a background revalidation across every current member for a focus /
-// reconnect trigger, or nothing when the trigger is off.
-function revalidateAll<T>(
+// reconnect trigger, skipping the members whose own trigger is off.
+function revalidateAll<T, C>(
   lane: Lane,
-  descriptors: Descriptor<T>[],
-  trigger: boolean | "always" | undefined,
-  staleTime: number | undefined,
+  descriptors: Descriptor<T, C>[],
+  shared: LaneUseOptions,
+  trigger: "refetchOnFocus" | "refetchOnReconnect",
 ): void {
-  const invalidateOptions = revalidateOptions(trigger, staleTime);
+  for (const descriptor of descriptors) {
+    const options = optionsFor(shared, descriptor);
+    const invalidateOptions = revalidateOptions(
+      options[trigger],
+      options.staleTime,
+    );
 
-  if (!invalidateOptions) {
-    return;
-  }
-
-  for (const { keyId } of descriptors) {
-    invalidateEntry(lane, keyId, invalidateOptions, "background");
+    if (invalidateOptions) {
+      invalidateEntry(lane, descriptor.keyId, invalidateOptions, "background");
+    }
   }
 }
 

@@ -7,6 +7,7 @@ import { useLaneInstance } from "./provider";
 import type {
   LaneInvalidateOptions,
   LaneKey,
+  LaneKeyOf,
   LaneRead,
   LaneUseOptions,
 } from "./types";
@@ -47,6 +48,18 @@ export type InfiniteLaneOptions<P, C> = {
   /** The cursor for the page after this one, or `null` at the end of the list. */
   nextCursor: (page: P, cursor: C) => C | null;
 };
+
+/**
+ * An infinite read described in one place — the colocated form of
+ * `useInfiniteLane`, and the same idea as {@link LaneReadSpec} for a list whose
+ * loader is a cursor walk rather than a single fetch. The pagination options,
+ * the key, and the read options travel together; build one with
+ * {@link infiniteLaneRead}.
+ */
+export type InfiniteLaneReadSpec<P, C> = LaneUseOptions &
+  InfiniteLaneOptions<P, C> & {
+    key: LaneKey;
+  };
 
 export type InfiniteLaneResult<P, C> = {
   promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
@@ -97,33 +110,31 @@ export type InfiniteLaneResult<P, C> = {
  * deliberately not papered over.
  *
  * ```tsx
- * const { promise, loadMore, isTransitionPending } = useInfiniteLane(
- *   ["feed", filters],
- *   {
- *     initialCursor: null as string | null,
- *     fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
- *     nextCursor: (page) => page.nextCursor,
- *   },
- * );
+ * const { promise, loadMore, isTransitionPending } = useInfiniteLane({
+ *   key: ["feed", filters],
+ *   initialCursor: null as string | null,
+ *   fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+ *   nextCursor: (page) => page.nextCursor,
+ * });
  *
  * const { data, refreshError } = use(promise);
  * // data.pages / data.hasNext — never a status object.
  * ```
  */
 export function useInfiniteLane<P, C>(
-  key: LaneKey,
-  options: InfiniteLaneOptions<P, C>,
-  readOptions?: LaneUseOptions,
+  read: InfiniteLaneReadSpec<P, C>,
 ): InfiniteLaneResult<P, C> {
+  const { key, initialCursor, fetchPage, nextCursor } = read;
+
   const lane = useLaneInstance();
   const keyId = serializeKey(key);
 
-  const { initialCursor, fetchPage, nextCursor } = options;
-
   const { invalidate, isBackgroundPending, isTransitionPending, promise } =
-    useLane<InfiniteLaneValue<P, C>>(
-      key,
-      async ({ current, signal }) => {
+    // The read options pass straight through; the pagination fields ride along
+    // inert (a read only ever looks at the four it knows).
+    useLane<InfiniteLaneValue<P, C>>({
+      ...read,
+      loader: async ({ current, signal }) => {
         // `current` is typed by the explicit type argument above, so this reads
         // the accumulated value directly — no narrowing, no cast.
         // How deep this key already is. A first load is one page.
@@ -158,8 +169,7 @@ export function useInfiniteLane<P, C>(
 
         return { hasNext: next !== null, pages, params };
       },
-      readOptions,
-    );
+    });
 
   // `useCallback` with its real dependencies — no more, and nothing suppressed.
   // Addressing the entry by `keyId` rather than `key` is what keeps the list
@@ -215,5 +225,41 @@ export function useInfiniteLane<P, C>(
     isTransitionPending,
     loadMore,
     promise,
+  };
+}
+
+/**
+ * Colocate an infinite list's key, pagination, and read options — `laneRead` for
+ * `useInfiniteLane`.
+ *
+ * ```ts
+ * export const feedLanes = {
+ *   list: (filters: Filters) =>
+ *     infiniteLaneRead({
+ *       key: ["feed", filters],
+ *       initialCursor: null as string | null,
+ *       fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+ *       nextCursor: (page) => page.nextCursor,
+ *       staleTime: 30_000,
+ *     }),
+ * };
+ *
+ * const { promise, loadMore } = useInfiniteLane(feedLanes.list(filters));
+ * lane.invalidate(feedLanes.list(filters).key); // the key travels with it
+ * ```
+ *
+ * Identity at runtime, like `laneRead`: what it buys is that `P` and `C` are
+ * inferred and checked where the list is defined — `nextCursor` must return the
+ * cursor `fetchPage` takes — instead of at each call site. Its `key` is tagged
+ * with the accumulated `InfiniteLaneValue`, so `lane.set` / `lane.update`
+ * through it are checked against the whole list rather than one page.
+ */
+export function infiniteLaneRead<P, C>(
+  spec: InfiniteLaneReadSpec<P, C>,
+): InfiniteLaneReadSpec<P, C> & { key: LaneKeyOf<InfiniteLaneValue<P, C>> } {
+  // The key is tagged with what the *entry* holds — the accumulated list, not
+  // one page — so a write through it is checked against the whole value.
+  return spec as InfiniteLaneReadSpec<P, C> & {
+    key: LaneKeyOf<InfiniteLaneValue<P, C>>;
   };
 }

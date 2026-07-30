@@ -8,8 +8,8 @@ import type {
   LaneKey,
   LaneLoader,
   LaneOptions,
-  LanePrefetchOptions,
   LaneRead,
+  LaneReadSpec,
   LaneRetryDelay,
   LaneScope,
   LaneUpdater,
@@ -114,20 +114,19 @@ export function createLane(options: LaneOptions = {}): Lane {
   };
 
   const lane: Lane = {
-    prefetch<T, C = T>(
-      key: LaneKey,
-      loader: LaneLoader<T, C>,
-      options: LanePrefetchOptions = {},
-    ) {
+    prefetch<T, C = T>(read: LaneReadSpec<T, C>) {
       // Warm the cache without subscribing or suspending: start the load and
       // hand back the promise for a later reader to adopt. Pin "revalidate" so a
       // re-fired prefetch (e.g. repeated link hover) dedupes onto the in-flight
       // or settled cache instead of refetching. Like any read it arms no GC
       // timer — an unadopted prefetch is an orphan, reclaimed by the lane-wide
       // sweep on whatever cycle a later unsubscribe triggers.
-      return readOrCreate<T, C>(lane, key, loader, {
-        retry: options.retry,
-        retryDelay: options.retryDelay,
+      //
+      // A read's `staleTime` / `whenStale` are deliberately ignored here: those
+      // are read-time decisions and this is not the read.
+      return readOrCreate<T, C>(lane, read.key, read.loader, {
+        retry: read.retry,
+        retryDelay: read.retryDelay,
         whenStale: "revalidate",
       });
     },

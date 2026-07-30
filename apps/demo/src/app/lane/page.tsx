@@ -15,7 +15,7 @@ import {
   getterFromRecord,
   parseWorkspaceState,
 } from "@/app/lane/api/url-state";
-import { workspaceSnapshots } from "@/app/lane/api/query-options";
+import { workspaceSnapshots } from "@/app/lane/api/keys";
 import { Workspace } from "@/app/lane/workspace/workspace";
 import { WorkspaceProvider } from "@/app/lane/workspace/workspace-provider";
 

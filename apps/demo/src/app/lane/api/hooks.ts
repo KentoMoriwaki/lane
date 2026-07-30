@@ -21,71 +21,57 @@ import {
   updateTask,
 } from "./endpoints";
 import type { TaskFilters } from "./endpoints";
-import {
-  queryKeys,
-  TEAM_SCOPED_KEYS,
-} from "./query-options";
+import { TEAM_SCOPED_KEYS } from "./keys";
+import { laneKeys, workspaceReads } from "./lane-reads";
 import {
   replaceTaskInList,
   type TaskCacheStrategy,
   taskCacheStrategies,
   taskFiltersFromEntry,
 } from "./task-cache-sync";
-import {
-  fetchCurrentUser,
-  fetchInsights,
-  fetchLabels,
-  fetchMembers,
-  fetchProjects,
-  fetchTask,
-  fetchTasks,
-  fetchTeams,
-} from "./endpoints";
 
 /* -------------------------------- Reads -------------------------------- */
 
-export function useCurrentUser() {
+/**
+ * The workspace's reads, bound to the current session + team. `workspaceReads`
+ * takes the context once so each factory below it takes only what decides its
+ * key.
+ */
+function useWorkspaceReads() {
   const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.currentUser, () => fetchCurrentUser(ctx));
+  return React.useMemo(() => workspaceReads(ctx), [ctx]);
+}
+
+export function useCurrentUser() {
+  return useLane(useWorkspaceReads().currentUser());
 }
 
 export function useTeams() {
-  const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.teams, () => fetchTeams(ctx));
+  return useLane(useWorkspaceReads().teams());
 }
 
 export function useTasks(filters: TaskFilters) {
-  const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.tasks(filters), () => fetchTasks(ctx, filters), {
-    refetchOnFocus: true,
-    refetchOnMount: true,
-    staleTime: 1_000,
-  });
+  return useLane(useWorkspaceReads().tasks(filters));
 }
 
 export function useTask(taskId: string) {
-  const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.task(taskId), () => fetchTask(ctx, taskId));
+  return useLane(useWorkspaceReads().task(taskId));
 }
 
 export function useProjects() {
-  const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.projects, () => fetchProjects(ctx));
+  return useLane(useWorkspaceReads().projects());
 }
 
 export function useLabels() {
-  const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.labels, () => fetchLabels(ctx));
+  return useLane(useWorkspaceReads().labels());
 }
 
 export function useMembers() {
-  const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.members, () => fetchMembers(ctx));
+  return useLane(useWorkspaceReads().members());
 }
 
 export function useInsights() {
-  const ctx = useWorkspaceCtx();
-  return useLane(queryKeys.insights, () => fetchInsights(ctx));
+  return useLane(useWorkspaceReads().insights());
 }
 
 /* ------------------------------ Mutations ------------------------------ */
@@ -96,7 +82,9 @@ export function useCreateTask() {
 
   return React.useCallback(async (input: CreateTaskInput): Promise<Task> => {
     const task = await createTask(ctx, input);
-    lane.set(queryKeys.task(task.id), task);
+    // The key carries what its entry holds, so the publication is checked
+    // against `Task` — and needs nothing but the key.
+    lane.set(laneKeys.task(task.id), task);
     lane.invalidateAll(["tasks"]);
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
@@ -126,7 +114,7 @@ export function useDeleteTask() {
 
   return React.useCallback(async (taskId: string): Promise<void> => {
     await deleteTask(ctx, taskId);
-    lane.remove(queryKeys.task(taskId));
+    lane.remove(laneKeys.task(taskId));
     removeTaskFromTaskLists(lane, taskId);
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
@@ -165,7 +153,7 @@ export function useCreateLabel() {
     input: CreateLabelInput,
   ): Promise<TeamLabel> => {
     const label = await createLabel(ctx, input);
-    lane.invalidate(queryKeys.labels);
+    lane.invalidate(laneKeys.labels());
     return label;
   }, [ctx, lane]);
 }
@@ -178,7 +166,7 @@ export function useCreateProject() {
     input: CreateProjectInput,
   ) => {
     const project = await createProject(ctx, input);
-    lane.invalidate(queryKeys.projects);
+    lane.invalidate(laneKeys.projects());
     return project;
   }, [ctx, lane]);
 }
@@ -192,10 +180,10 @@ export function useWorkspaceRefresh() {
   const refresh = React.useCallback(() => {
     startRefresh(() => {
       lane.invalidateAll(["tasks"]);
-      lane.invalidate(queryKeys.insights);
-      lane.invalidate(queryKeys.projects);
-      lane.invalidate(queryKeys.labels);
-      lane.invalidate(queryKeys.members);
+      lane.invalidate(laneKeys.insights());
+      lane.invalidate(laneKeys.projects());
+      lane.invalidate(laneKeys.labels());
+      lane.invalidate(laneKeys.members());
     });
   }, [lane]);
 
@@ -207,7 +195,7 @@ function publishTask(
   task: Task,
   strategy: TaskCacheStrategy,
 ) {
-  lane.set(queryKeys.task(task.id), task);
+  lane.set(laneKeys.task(task.id), task);
   lane.updateAll<Task[]>(
     (entry) => {
       const filters = taskFiltersFromEntry(entry);
@@ -244,11 +232,11 @@ function scheduleDerivedWorkspaceRefresh(
 
   React.startTransition(() => {
     if (refresh.insights) {
-      lane.invalidate(queryKeys.insights);
+      lane.invalidate(laneKeys.insights());
     }
 
     if (refresh.projects) {
-      lane.invalidate(queryKeys.projects);
+      lane.invalidate(laneKeys.projects());
     }
   });
 }

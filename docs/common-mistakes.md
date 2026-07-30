@@ -22,7 +22,10 @@ How you read a Lane promise — and where loading and errors actually live.
 
 ```tsx
 function Profile({ id }: { id: string }) {
-  const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
+  const { promise } = useLane({
+    key: ["user", id],
+    loader: ({ signal }) => fetchUser(id, signal),
+  });
   const [user, setUser] = useState<User>();
   const [error, setError] = useState<unknown>();
 
@@ -46,7 +49,10 @@ lose transitions, so the screen flashes on every refetch.
 
 ```tsx
 function Profile({ id }: { id: string }) {
-  const { promise } = useLane(["user", id], ({ signal }) => fetchUser(id, signal));
+  const { promise } = useLane({
+    key: ["user", id],
+    loader: ({ signal }) => fetchUser(id, signal),
+  });
   const { data: user } = use(promise);
   return <h1>{user.name}</h1>;
 }
@@ -94,7 +100,10 @@ get to choose *whether* to load (gate the loader), *when* to reveal (gate the
 
 ```tsx
 if (id) {
-  const { promise } = useLane(["user", id], loader); // conditional hook call
+  const { promise } = useLane({
+    key: ["user", id],
+    loader,
+  }); // conditional hook call
 }
 ```
 
@@ -121,7 +130,10 @@ screen now, fill that one region in when it resolves, and never flash a fallback
 the *loader* to "hold it back":
 
 ```tsx
-const { promise } = useLane(["graph", id], reveal ? loader : undefined);
+const { promise } = useLane({
+  key: ["graph", id],
+  loader: reveal ? loader : undefined,
+});
 // Gating the loader delays the FETCH — the data lands late, not early.
 ```
 
@@ -142,7 +154,10 @@ useEffect(() => {
 }, []);
 
 // Loader always set → the fetch starts on the first render, not when revealed.
-const { promise } = useLane(["graph", id], ({ signal }) => fetchGraph(id, signal));
+const { promise } = useLane({
+  key: ["graph", id],
+  loader: ({ signal }) => fetchGraph(id, signal),
+});
 
 if (!reveal) return <GraphSkeleton busy={isPending} />; // first render: no use(), no suspend
 const { data } = use(promise); // now suspends — the transition keeps the placeholder
@@ -186,9 +201,10 @@ and the loader** from the deferred value:
 function Detail({ id }: { id: string }) {
   const deferredId = useDeferredValue(id);
   const isStale = deferredId !== id; // drive a pending affordance off this
-  const { promise } = useLane(["user", deferredId], ({ signal }) =>
-    fetchUser(deferredId, signal),
-  );
+  const { promise } = useLane({
+    key: ["user", deferredId],
+    loader: ({ signal }) => fetchUser(deferredId, signal),
+  });
   return <Profile user={use(promise).data} stale={isStale} />;
 }
 ```
@@ -257,18 +273,83 @@ The two inputs to `useLane`: the **key** that identifies a read, and the
 render:
 
 ```tsx
-useLane(["search", { q, ts: Date.now() }], loader); // new key each render → fetch storm
+useLane({
+  key: ["search", { q, ts: Date.now() }],
+  loader,
+}); // new key each render → fetch storm
 ```
 
 **Do** derive the key deterministically from its inputs:
 
 ```tsx
-useLane(["search", q], loader); // same q → same key → one shared, cached request
+useLane({
+  key: ["search", q],
+  loader,
+}); // same q → same key → one shared, cached request
 ```
 
 The loader is the opposite: Lane dedupes by **key**, not by loader identity, so
 the loader can be an inline arrow — you do **not** need `useCallback` on it. Just
 let it close over the current inputs.
+
+### Sharing the key but not the loader
+
+A key factory is the usual first step in organising reads, and on its own it
+solves half the problem: the key is shared, while the loader and the options stay
+at each call site.
+
+**Don't** let the halves drift apart:
+
+```tsx
+// keys.ts
+export const taskKeys = { detail: (id: string) => ["task", id] as const };
+
+// One component
+useLane(taskKeys.detail(id), ({ signal }) => fetchTask(id, signal), {
+  staleTime: 60_000,
+});
+
+// Another — same key, different freshness, and (here) the wrong loader entirely.
+useLane(taskKeys.detail(id), ({ signal }) => fetchTaskSummary(id, signal));
+```
+
+Both compile. Both write to the *same entry*, so whichever mounts first decides
+what the key holds, and the second reader shows data it did not ask for.
+
+**Do** define the read once and pass it around:
+
+```tsx
+// lanes/tasks.ts
+export const taskLanes = {
+  detail: (id: string) =>
+    laneRead({
+      key: ["task", id],
+      loader: ({ signal }) => fetchTask(id, signal),
+      staleTime: 60_000,
+    }),
+};
+
+// Reads take the definition; entry operations take its key.
+useLane(taskLanes.detail(id));
+lane.prefetch(taskLanes.detail(id));
+lane.invalidate(taskLanes.detail(id).key);
+lane.set(taskLanes.detail(task.id).key, task); // checked against what it holds
+```
+
+A module that only writes does not have to import the read at all — `laneKey<Task>`
+gives it a typed key with no loader attached:
+
+```ts
+export const taskKeys = { detail: (id: string) => laneKey<Task>(["task", id]) };
+
+lane.set(taskKeys.detail(saved.id), saved); // still checked
+```
+
+Two reads that genuinely differ should differ in their **key** — `["task", id]`
+and `["task-summary", id]` are different data and belong in different entries.
+[`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation) is what
+makes that visible: one definition per entry, so a second loader for the same key
+has nowhere to hide.
 
 ### Read a key once, then pass the value down
 
@@ -280,12 +361,18 @@ just read it wherever it is needed. Don't — the cost isn't the fetch.
 
 ```tsx
 function TaskPage({ id }: { id: string }) {
-  const { data: task } = use(useLanePromise(["task", id], loader));
+  const { data: task } = use(useLanePromise({
+    key: ["task", id],
+    loader,
+  }));
   return <><TaskHeader id={id} /><TaskBody id={id} /></>;
 }
 
 function TaskHeader({ id }: { id: string }) {
-  const { data: task } = use(useLanePromise(["task", id], loader)); // same data, third reader
+  const { data: task } = use(useLanePromise({
+    key: ["task", id],
+    loader,
+  })); // same data, third reader
   return <h1>{task.title}</h1>;
 }
 ```
@@ -294,7 +381,10 @@ function TaskHeader({ id }: { id: string }) {
 
 ```tsx
 function TaskPage({ id }: { id: string }) {
-  const { data: task } = use(useLanePromise(["task", id], loader));
+  const { data: task } = use(useLanePromise({
+    key: ["task", id],
+    loader,
+  }));
   return <><TaskHeader task={task} /><TaskBody task={task} /></>;
 }
 
@@ -327,14 +417,14 @@ key — `["task", row.id]` — is the right shape; see
 running:
 
 ```tsx
-useLane(["user", id], () => fetchUser(id));
+useLane({ key: ["user", id], loader: () => fetchUser(id) };
 ```
 
 **Do** forward it to `fetch`, so a stale request aborts when the key changes or
 the entry refreshes:
 
 ```tsx
-useLane(["user", id], ({ signal }) => fetchUser(id, signal));
+useLane({ key: ["user", id], loader: ({ signal }) => fetchUser(id, signal) };
 ```
 
 ### Holding an infinite list's depth in component state
@@ -348,9 +438,11 @@ it isn't.
 
 ```tsx
 const pagesRef = useRef(1);
-const { promise } = useLane(["feed", filters], ({ signal }) =>
-  fetchPages(filters, pagesRef.current, signal), // "as deep as I think I am"
-);
+const { promise } = useLane({
+  key: ["feed", filters],
+  // "as deep as I think I am"
+  loader: ({ signal }) => fetchPages(filters, pagesRef.current, signal),
+});
 ```
 
 The ref and the cache have different lifetimes, so they drift apart the moment
@@ -363,12 +455,13 @@ back does it too, because the previous key's value is still cached while the
 component's ref has moved on.
 
 **Do** derive the depth from the value itself, which is what
-[`current`](./api-reference.md#uselanekey-loader-options) is for — or reach for
-[`useInfiniteLane`](./api-reference.md#useinfinitelanekey-options-readoptions--a-cursor-paginated-list),
+[`current`](./api-reference.md#uselaneread) is for — or reach for
+[`useInfiniteLane`](./api-reference.md#useinfinitelaneread--a-cursor-paginated-list),
 which is that pattern packaged:
 
 ```tsx
-const { promise, loadMore } = useInfiniteLane(["feed", filters], {
+const { promise, loadMore } = useInfiniteLane({
+  key: ["feed", filters],
   initialCursor: null as string | null,
   fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
   nextCursor: (page) => page.nextCursor,

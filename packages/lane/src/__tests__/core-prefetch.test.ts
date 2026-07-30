@@ -23,8 +23,8 @@ describe("prefetch", () => {
 
     // Re-fired (e.g. hover re-enter): the second call reuses the cache the first
     // created, so the loader runs once.
-    lane.prefetch(["tasks"], loader);
-    lane.prefetch(["tasks"], loader);
+    lane.prefetch({ key: ["tasks"], loader });
+    lane.prefetch({ key: ["tasks"], loader });
     await settlePromiseHandlers();
 
     expect(loader).toHaveBeenCalledTimes(1);
@@ -34,7 +34,7 @@ describe("prefetch", () => {
     const lane = createLane();
     const loader = vi.fn(async () => "warm");
 
-    await expect(lane.prefetch(["tasks"], loader)).resolves.toEqual({
+    await expect(lane.prefetch({ key: ["tasks"], loader })).resolves.toEqual({
       data: "warm",
     });
     expect(loader).toHaveBeenCalledTimes(1);
@@ -53,7 +53,7 @@ describe("prefetch", () => {
     const loader = vi.fn(async () => "warm");
 
     // Prefetched but never adopted: an orphan, and like any read it arms no timer.
-    await lane.prefetch(["tasks"], loader);
+    await lane.prefetch({ key: ["tasks"], loader });
     expect(loader).toHaveBeenCalledTimes(1);
 
     // A real unsubscribe elsewhere arms the sweep, which reclaims the orphan too.
@@ -73,7 +73,7 @@ describe("prefetch", () => {
     const lane = createLane({ gcTime: 1_000 });
     const loader = vi.fn(async () => "warm");
 
-    await lane.prefetch(["tasks"], loader);
+    await lane.prefetch({ key: ["tasks"], loader });
     const unsubscribe = subscribe(lane, ["tasks"]);
 
     // Sweeps run (armed by churn), yet the adopted entry survives every cycle.
@@ -96,7 +96,7 @@ describe("prefetch", () => {
       .mockResolvedValueOnce("warm");
 
     await expect(
-      lane.prefetch(["tasks"], loader, { retry: 1, retryDelay: () => 0 }),
+      lane.prefetch({ key: ["tasks"], loader, retry: 1, retryDelay: () => 0 }),
     ).resolves.toEqual({ data: "warm" });
     expect(loader).toHaveBeenCalledTimes(2);
   });

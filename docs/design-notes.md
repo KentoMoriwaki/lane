@@ -260,6 +260,20 @@ instance is applied to a given lane at most once, so repeated renders and Strict
 Mode do not re-publish. A new snapshots instance from a new server render is
 intentionally authoritative.
 
+Keying that on object *identity* is a deliberate bet on how snapshots reach the
+boundary: produced outside render, once per data payload. A Server Component's
+props satisfy that, and so does a router loader's data — both give exactly the
+granularity the rule wants, one object per load and stable across the re-renders
+of it, without hashing content or diffing entries, and without a "seeded already"
+flag that would have to be reset on navigation. The bet has a cost, and it is not
+a silent one: a caller who *builds* snapshots inside a render gets a new object
+each time, so the boundary suspends on a fresh hydration promise every render and
+never commits. That is the same shape as an inline
+`Promise.all` in a suspending component, and it is documented next to the prop
+rather than guarded at runtime, because the guard would have to be either a
+content hash (which breaks authoritative re-seeding of unchanged data) or a
+dev-only warning in a core measured in bytes.
+
 ## Key matching: exact vs scoped
 
 Lane supports two matching modes, and the **caller** chooses which — Lane never
@@ -277,6 +291,50 @@ scoped matching.
 `remove` is distinct from invalidation: it means the entry no longer belongs in
 client state (sign out, team switch, deleted entity), so its notification is
 urgent rather than transition-preserving.
+
+## A read is a value, not three arguments
+
+`useLane(key, loader, options)` spreads one fact across three arguments, and the
+argument list is the only thing holding them together. A shared key factory —
+the usual first move — makes that worse before it makes it better: the key is now
+defined once and the loader and options are still written at each call site, so
+the halves can drift and nothing complains. `useLane(taskKeys.detail(id), () =>
+fetchTasks(filters))` type-checks; two components can read one key with different
+freshness; and the loader that actually fills the entry is whichever one mounted
+first.
+
+`laneRead({ key, loader, ...options })` makes the read itself the value that
+travels. It is identity at runtime; the whole feature is where the types live.
+
+**What travels is decided by what an operation needs.** A read needs the loader,
+so `useLane`, `useLanesAll`, and `prefetch` take the whole definition. Publishing,
+invalidating, and removing address an *entry* — the loader has nothing to do with
+them, and requiring one would make every mutation path import fetchers, and
+whatever request context those fetchers close over, to name a key it already
+knows. So they take the key, and the loaded type rides along on it: a
+`LaneKeyOf<T>` is the same array with the type in a phantom property, which is
+what makes `set` and `update` checkable at all. (A key is otherwise where type
+information goes to die: `["task", id]` says nothing about `Task`.) It is the same
+mechanism as react-query's `DataTag`, and it is why the store needed no new
+runtime to gain checked writes.
+
+That split has a consequence worth stating: the type can be declared *without* a
+read. `laneKey<T>(key)` exists for the write-only half of a codebase, and a read
+built on such a key must load what the key claims — the colocation guarantee
+running in the other direction.
+
+Two boundaries keep it from becoming a second way to describe everything:
+
+- **Scoped operations still take a scope.** `invalidateAll` answers a different
+  question ("every entry under this prefix") and one read's full key is not an
+  answer to it. Colocation does not change what
+  [exact vs scoped](#key-matching-exact-vs-scoped) means.
+- **There is no registry behind either helper.** Lane still addresses entries by
+  serialized key, so two objects from the same factory name the same read and
+  nothing has to be memoized, deduplicated, or registered at startup. Both
+  helpers are worth nothing at runtime — which is exactly why they cost nothing:
+  the core is byte-for-byte the store it was before, apart from `prefetch`
+  learning to accept a read.
 
 ## A deliberately small core
 
@@ -309,6 +367,8 @@ promises that settle late are ignored by comparing cache-object identity.
 When more than one approach is possible, Lane prefers:
 
 - invalidating source data over patching cache entries
+- one definition per read over a key factory the loader has to be paired with
+- the loaded type on the key, so addressing an entry never needs a loader
 - exact-key operations for single reads, scoped operations for key families
 - exact-key publication only for authoritative values already in hand
 - local React state for optimistic UI, not shared cache writes

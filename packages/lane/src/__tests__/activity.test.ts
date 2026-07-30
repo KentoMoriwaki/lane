@@ -309,10 +309,9 @@ describe("Activity", () => {
 
     // New server data for a subtree that is hidden, so unsubscribed: the
     // notification `hydrateMany` fans out reaches nobody here. The reader takes
-    // it anyway — `LaneHydration` hands what it published to the readers under it
-    // through the lane context, and a context value is a render-time input, so it
-    // arrives while the subtree is still hidden rather than one commit after it
-    // comes back.
+    // it anyway — `LaneHydration` hands what it published to the readers under
+    // it, and a context value is a render-time input, so it arrives while the
+    // subtree is still hidden rather than one commit after it comes back.
     await hydrated.rerender(SECOND_SNAPSHOTS, "hidden");
 
     const value = valueElement(hydrated.container);

@@ -17,6 +17,7 @@ import {
 } from "./core";
 import type { LaneInvalidationSource } from "./core";
 import { serializeKey } from "./keys";
+import { usePublished } from "./published";
 import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
@@ -47,7 +48,8 @@ export function useLane<T, C = T>(
   // read's arguments stay exactly what decides its key. Read here so the
   // render-path read below carries it, and closed over by the `useEffectEvent`
   // callbacks so a re-read carries the latest.
-  const { lane, revalidation, loaderMeta, published } = useLaneContext("useLane");
+  const { lane, revalidation, loaderMeta } = useLaneContext("useLane");
+  const published = usePublished();
   // A read is "enabled" exactly when a loader is supplied. Lane only loads
   // external data, so an absent loader has no other meaning and is the single,
   // unambiguous disable signal: no fetch, no subscription, no stored entry.

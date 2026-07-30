@@ -369,9 +369,9 @@ All notable changes to `use-lane` are documented here. The format is based on
   App Router does — that is every navigation back to a cached route that the
   server answered with new data.
 
-  What it publishes is now also **handed down** to the readers under it, on the
-  lane context: a reader takes the published value on its next render, which
-  happens while it is still hidden. No reveal is involved and nothing has to know
+  What it publishes is now also **handed down** to the readers under it: a reader
+  takes the published value on its next render, which happens while it is still
+  hidden. No reveal is involved and nothing has to know
   whether it is hidden — there is no API for a child to ask, and effects, the only
   signal there is, run after the commit that would already have shown the stale
   value.
@@ -388,16 +388,23 @@ All notable changes to `use-lane` are documented here. The format is based on
   Hydration boundaries nest — a layout seeds some keys, a page seeds others — and
   a reader is under all of them at once, so an inner boundary hands down the outer
   one's seeding along with its own; on a key both carry, the inner one wins,
-  because it published last. `LaneHydration` re-provides the lane context to carry
-  this, with the lane, the revalidation registry and the loader meta all passed on
-  by identity, so no reader below re-subscribes or re-reads over it.
+  because it published last.
+
+  The handoff has a context of its own — `LaneHydration` provides it *beside* the
+  provider's rather than re-providing that one with a field added. Folding it in
+  would have saved a lookup per read, and cost the property every reader depends
+  on: the lane and the revalidation registry would then be carried through a
+  spread on every publish, one memo dependency away from re-subscribing an entire
+  subtree. Left separate, that cannot happen. It also lives in its own module, so
+  a read hook consumes it without importing `LaneHydration` — an app that never
+  hydrates pays for a `createContext` and nothing else.
 
   **This raises two size budgets**: `typical: LaneProvider + useLane` from 3.5 kB
-  to 3.6 kB (3431 → 3472 B) and `everything (ceiling)` from 4.9 kB to 5 kB
-  (4846 → 4914 B). The read path pays for the handoff whether or not an app
-  hydrates, which is the honest cost of the branch living in `useLane`; carrying
-  it on the existing lane context rather than one of its own is what keeps it to a
-  property read instead of a second `useContext` for every reader.
+  to 3.6 kB (3431 → 3493 B) and `everything (ceiling)` from 4.9 kB to 5 kB
+  (4846 → 4961 B). The read path pays for the handoff whether or not an app
+  hydrates — the branch lives in `useLane`, and the second context read is what
+  keeping it out of the provider's value costs. Both limits keep about 100 B of
+  headroom, so the next feature still trips them.
 
 - **An explicit `undefined` on a `useLanesAll` member no longer shadows the
   batch's option.** A member's options are resolved against the batch's option by

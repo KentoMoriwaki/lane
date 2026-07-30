@@ -15,6 +15,7 @@ import {
   subscribeLane,
 } from "./core";
 import { serializeKey } from "./keys";
+import { usePublished } from "./published";
 import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
@@ -81,7 +82,8 @@ export function useLanesAll<T, C = T>(
 ): Promise<LaneRead<T>[]> {
   // One context read; `loaderMeta` comes from the lane, not from a member — see
   // `useLane`.
-  const { lane, revalidation, loaderMeta, published } = useLaneContext("useLanesAll");
+  const { lane, revalidation, loaderMeta } = useLaneContext("useLanesAll");
+  const published = usePublished();
 
   // Serialized once per (stable) `reads`, not every render.
   const descriptors = useMemo(

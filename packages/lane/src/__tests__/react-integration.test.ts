@@ -374,11 +374,12 @@ describe("React integration", () => {
       entries: [{ key: ["tasks"], data: "server-2" }],
     };
 
-    // `LaneHydration` re-provides the lane context, to hand what it published to
-    // the readers below. The value is new every time it publishes; the lane and
-    // the revalidation registry inside it are the same objects, which is what
-    // keeps a reader's effects from re-running over it. `refetchOnMount:
-    // "always"` is the probe — it fires whenever the subscription effect does.
+    // `LaneHydration` provides what it published on a context of its own, beside
+    // the one the provider owns rather than in place of it — so the lane and the
+    // revalidation registry a reader depends on never change identity, and its
+    // effects have no reason to re-run. Publishing re-renders every reader below;
+    // this pins that a re-render is all it is. `refetchOnMount: "always"` is the
+    // probe — it fires whenever the subscription effect does.
     const app = await render(
       hydrationApp(lane, first, loader, { refetchOnMount: "always" }),
     );

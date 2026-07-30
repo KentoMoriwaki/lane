@@ -149,7 +149,9 @@ export function useLanesAll<T, C = T>(
   // The one imperative bit: keyId → unsubscribe. The effect reconciles the live
   // subscriptions to the current keys — dropping departed keys and subscribing
   // newly present ones (firing their mount refetch). Subscriptions are pure
-  // notify hooks, so option changes never touch this.
+  // notify hooks, so option changes never touch this. Passive, not layout, for
+  // the reason spelled out in `use-lane.ts`: a hidden-for-fallback batch has to
+  // stay subscribed.
   const subsRef = useRef(new Map<string, () => void>());
   useEffect(() => {
     const active = subsRef.current;

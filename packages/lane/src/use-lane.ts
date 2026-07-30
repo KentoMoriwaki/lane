@@ -194,6 +194,14 @@ export function useLane<T, C = T>(
     invalidateEntry(lane, keyId, invalidateOptions, "background");
   });
 
+  // Deliberately a *passive* effect. A boundary that re-suspends hides the
+  // subtree it had already committed and tears down its layout effects while
+  // leaving passive ones mounted, so a passive subscription keeps receiving
+  // notifications for as long as the fallback is up. Re-hydration is built on
+  // exactly that: `LaneHydration` suspends and publishes from a macrotask rather
+  // than from an effect (see `hydration.ts`), which reaches already-mounted
+  // readers only because hiding them did not unsubscribe them. Moving this to
+  // `useLayoutEffect` would silently sever that.
   useEffect(() => {
     // A disabled read owns no entry: no subscription, no GC anchor, no
     // revalidation. The effect re-runs when `enabled` flips and subscribes then.

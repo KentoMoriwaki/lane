@@ -2,11 +2,18 @@
 
 /**
  * `<Activity>` (stable in React 19.2) preserves a hidden subtree's state while
- * cleaning up its effects — both layout and passive, measured on 19.2. Lane's
- * subscription lives in a passive effect, so a hidden reader keeps its promise in
- * state with nothing subscribed to the store — the exact shape
- * `syncAfterSubscribe` exists for. These tests pin that the reveal converges
- * through the existing catch-up path, with no Activity-specific code.
+ * cleaning up its effects — both layout and passive, measured on 19.2.
+ *
+ * Lane's subscription is a *passive* effect, and passive effects are scheduled
+ * rather than run in the commit: hiding tears down layout effects in the hide's
+ * commit and the passive ones a tick later, and revealing mounts them a tick
+ * after the subtree is already on screen. So the subscribed window never lines up
+ * exactly with the visible one in either direction — a hidden reader stays
+ * subscribed briefly, and a revealed one renders before it re-subscribes.
+ *
+ * That is the same render-then-subscribe gap `syncAfterSubscribe` already exists
+ * for (see `use-lane.ts`), just wider. These tests pin that the reveal converges
+ * through that catch-up path, with no Activity-specific code.
  */
 
 import * as React from "react";

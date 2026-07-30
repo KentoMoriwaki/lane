@@ -362,7 +362,14 @@ describe("useLanesAll with specs", () => {
 
     const app = await render(
       batchApp(lane, [
-        laneRead({ key: ["a"], loader: loaderA, refetchOnFocus: true }),
+        // `staleTime: 0` is what makes `true` fire at all: the default is
+        // Infinity, so a value is never stale and the trigger has nothing to do.
+        laneRead({
+          key: ["a"],
+          loader: loaderA,
+          refetchOnFocus: true,
+          staleTime: 0,
+        }),
         laneRead({ key: ["b"], loader: loaderB }),
       ]),
     );

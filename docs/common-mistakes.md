@@ -662,6 +662,32 @@ refetch status into `useState` / `useEffect`.
 `whenStale`, and `gcTime`. See
 [lifecycle behavior](./api-reference.md#lifecycle-behavior).
 
+### Turning a trigger on without a `staleTime`
+
+`refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` set to `true` refresh
+only **stale** values, and `staleTime` defaults to `Infinity` — so on their own
+they never fire. Lane warns once in development when it sees that pairing.
+
+```tsx
+// Don't — accepted, and then nothing happens.
+useLane({ ...taskLanes.detail(id), refetchOnFocus: true });
+
+// Do — say how long a value stays fresh.
+useLane({ ...taskLanes.detail(id), refetchOnFocus: true, staleTime: 30_000 });
+
+// Or ask for it unconditionally, staleTime ignored.
+useLane({ ...taskLanes.detail(id), refetchOnFocus: "always" });
+```
+
+The `staleTime` is not just a gate, it is the **rate limit**: a value refreshed
+within it is not refreshed again, however many times the trigger fires. Which is
+why `staleTime: 0` deserves a thought rather than a reflex — it is the setting
+with no limit, and on a fresh mount it makes `refetchOnMount: true` fetch twice
+(the read starts during render, the trigger fires from an effect, and the second
+request refreshes what the first just loaded). Coming from react-query, where `0`
+is the default and mount-fetch and refetch are one mechanism, this is the one
+number worth restating deliberately.
+
 **Polling is userland** — there is no `refetchInterval` in core. A poll is a
 self-scheduled invalidation, written with primitives (the same stance Lane takes
 on mutations): `lane.invalidate(key, { onlyIf: "settled", background: true })` on

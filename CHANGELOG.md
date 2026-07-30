@@ -8,6 +8,23 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
+- **Breaking: `staleTime` defaults to `Infinity`, not `0`.** Nothing is stale until
+  an app says what stale means. The old `0` was inherited from react-query, where
+  it is safe because a mount fetch and a stale refetch are one mechanism; in Lane
+  they are two — the read runs during render, the trigger fires from an effect — so
+  `0` made a fresh mount with `refetchOnMount: true` fetch twice, the second
+  request refreshing the value the first had just loaded. `staleTime` is also the
+  rate limit on the trigger it gates, so the old default shipped every app the
+  version with no limit.
+
+  What this costs is silence: `whenStale: "refetch"` and the `true` form of
+  `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` now do nothing until a
+  `staleTime` is set. Both warn once in development (stripped from production
+  builds), because an accepted option that does nothing is the failure mode worth a
+  word. To keep the previous behaviour, state it: `staleTime: 0`. `"always"` is
+  unchanged — it ignores `staleTime` by definition, including on a mount that just
+  loaded the value.
+
 - **Breaking: every read hook takes one value.** `useLane({ key, loader, ...options })`
   replaces `useLane(key, loader, options)`, and the same for `useLanePromise`,
   `useLanesAll` (whose members were `[key, loader]` tuples), `useInfiniteLane`

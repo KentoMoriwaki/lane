@@ -17,6 +17,10 @@ import {
 import type { FeedParams } from "../_lab/types";
 import { feedKey, itemsOf, type FeedCursor } from "./feed-lane";
 
+// How long a fetched page set stays fresh, and so what the `refetchOnMount`
+// control's "when stale" position is gated on.
+const FEED_STALE_TIME = 5_000;
+
 /**
  * The list, the way a lane reads a list.
  *
@@ -68,6 +72,11 @@ export function FeedList({
       initialCursor: null,
       nextCursor: (page) => page.nextCursor,
       refetchOnMount,
+      // What makes the control's middle position mean anything: `true` refreshes
+      // only stale values, and `staleTime` defaults to Infinity, so without one
+      // "when stale" would never fire. A few seconds also keeps the three
+      // positions distinguishable — off / stale-gated / every mount.
+      staleTime: FEED_STALE_TIME,
     });
 
   const { data, refreshError } = use(promise);

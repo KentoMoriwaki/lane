@@ -322,7 +322,10 @@ describe("useLanesAll", () => {
     // Turn `refetchOnFocus` on: the batch re-subscribes with the new option.
     await act(async () => {
       app.root.render(
-        batchApp(lane, [{ key: ["a"], loader: loaderA }], { refetchOnFocus: true }),
+        batchApp(lane, [{ key: ["a"], loader: loaderA }], {
+          refetchOnFocus: true,
+          staleTime: 0,
+        }),
       );
       await settlePromiseHandlers();
     });

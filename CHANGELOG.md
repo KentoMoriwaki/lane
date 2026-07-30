@@ -225,7 +225,7 @@ All notable changes to `use-lane` are documented here. The format is based on
 
   Both size budgets are unchanged, and files a consumer does not reach are now
   droppable per file rather than per bundle: `createLane (core only)` measures
-  **2024 B**, down from 2169 B, and `LaneProvider + useLane` **3322 B**, down from
+  **2024 B**, down from 2169 B, and `LaneProvider + useLane` **3327 B**, down from
   3328 B.
 
 - **`remove` / `removeAll` now drop the entry's last fulfilled value**, not just

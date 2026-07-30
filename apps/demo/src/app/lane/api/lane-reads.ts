@@ -1,6 +1,5 @@
-"use client";
-
 import { laneKey, laneRead } from "use-lane";
+import type { LaneHydrationSnapshots, LaneKeyOf, LaneSnapshot } from "use-lane";
 import type { WorkspaceCtx } from "./client";
 import type {
   CurrentUser,
@@ -22,31 +21,49 @@ import {
   fetchTeams,
   type TaskFilters,
 } from "./endpoints";
-import { entryKeys } from "./keys";
 
 /**
- * The same keys as `keys.ts`, carrying what each entry holds.
+ * Every key this workspace addresses, carrying what its entry holds.
  *
- * This layer exists because of one constraint, not by preference: `laneKey` is a
- * runtime export of a `"use client"` package, so it cannot be called in the
- * server-safe module the RSC seed path imports (see `keys.ts`). The literals stay
- * there; the types are attached here, which is what makes a write checked —
- * `lane.set` cannot put a `Project` under a task key.
+ * `laneKey<T>` is what makes a write checked — `lane.set` here cannot put a
+ * `Project` under a task key — and this layer deliberately holds **no loaders**,
+ * because addressing an entry never needs one. That is what lets `publishTask`
+ * (in `hooks.ts`) take no request context at all.
  *
- * It deliberately holds **no loaders**, because addressing an entry never needs
- * one. That is what lets `publishTask` (in `hooks.ts`) take no request context at
- * all.
+ * Note there is no `"use client"` on this module, and it is imported by both
+ * graphs: the hooks below run in the browser, while `page.tsx` — a Server
+ * Component — calls `workspaceSnapshots` to seed the very same keys. `laneKey`
+ * and `laneRead` are isomorphic and `use-lane` marks its React modules
+ * individually, so the key literals live in exactly one place for both.
+ *
+ * Team-owned keys omit `teamId`: the active team travels in request headers, and
+ * the workspace provider removes these keys when it changes (see
+ * `TEAM_SCOPED_KEYS`). Session-level keys are kept separate.
  */
 export const laneKeys = {
-  currentUser: () => laneKey<CurrentUser>(entryKeys.currentUser),
-  teams: () => laneKey<TeamSummary[]>(entryKeys.teams),
-  tasks: (filters: TaskFilters) => laneKey<Task[]>(entryKeys.tasks(filters)),
-  task: (taskId: string) => laneKey<Task>(entryKeys.task(taskId)),
-  projects: () => laneKey<Project[]>(entryKeys.projects),
-  labels: () => laneKey<TeamLabel[]>(entryKeys.labels),
-  members: () => laneKey<TeamMember[]>(entryKeys.members),
-  insights: () => laneKey<Insights>(entryKeys.insights),
+  currentUser: () => laneKey<CurrentUser>(["current-user"]),
+  teams: () => laneKey<TeamSummary[]>(["teams"]),
+  tasks: (filters: TaskFilters) => laneKey<Task[]>(["tasks", filters]),
+  task: (taskId: string) => laneKey<Task>(["task", taskId]),
+  projects: () => laneKey<Project[]>(["projects"]),
+  labels: () => laneKey<TeamLabel[]>(["labels"]),
+  members: () => laneKey<TeamMember[]>(["members"]),
+  insights: () => laneKey<Insights>(["insights"]),
 };
+
+/**
+ * The key families that belong to the active team and are removed when it
+ * changes. Prefix *scopes*, not keys — they name a family of entries rather than
+ * one, so they carry no type.
+ */
+export const TEAM_SCOPED_KEYS = [
+  ["tasks"],
+  ["task"],
+  ["projects"],
+  ["labels"],
+  ["members"],
+  ["insights"],
+] as const;
 
 /**
  * Every read the workspace performs, defined once — `laneRead` colocates a
@@ -101,4 +118,57 @@ export function workspaceReads(ctx: WorkspaceCtx) {
     insights: () =>
       laneRead({ key: laneKeys.insights(), loader: () => fetchInsights(ctx) }),
   };
+}
+
+export type WorkspaceSeeds = {
+  currentUser: CurrentUser;
+  teams: TeamSummary[];
+  tasks: {
+    filters: TaskFilters;
+    data: Task[];
+  };
+  selectedTask: Task | null;
+  projects: Project[];
+  labels: TeamLabel[];
+  members: TeamMember[];
+  insights: Insights;
+};
+
+/**
+ * Pairs a typed key with the value seeded under it. `LaneSnapshot.key` is a
+ * plain `LaneKey`, so a bare object literal would let any `data` through; taking
+ * the key as `LaneKeyOf<T>` infers `T` from the key and checks `data` against
+ * it. Worth the three lines here specifically, because a mismatched pair on this
+ * path hydrates a reader with the wrong shape rather than failing a fetch.
+ */
+const snapshot = <T>(key: LaneKeyOf<T>, data: T): LaneSnapshot<T> => ({
+  key,
+  data,
+});
+
+/**
+ * The per-request seed the RSC route hands to `<LaneHydration>`, built from the
+ * same `laneKeys` the browser reads with — which is the point of there being one
+ * key module rather than a server-safe list plus a typed copy of it.
+ */
+export function workspaceSnapshots(
+  seeds: WorkspaceSeeds,
+): LaneHydrationSnapshots {
+  const entries: LaneSnapshot[] = [
+    snapshot(laneKeys.currentUser(), seeds.currentUser),
+    snapshot(laneKeys.teams(), seeds.teams),
+    snapshot(laneKeys.tasks(seeds.tasks.filters), seeds.tasks.data),
+    snapshot(laneKeys.projects(), seeds.projects),
+    snapshot(laneKeys.labels(), seeds.labels),
+    snapshot(laneKeys.members(), seeds.members),
+    snapshot(laneKeys.insights(), seeds.insights),
+  ];
+
+  if (seeds.selectedTask) {
+    entries.push(
+      snapshot(laneKeys.task(seeds.selectedTask.id), seeds.selectedTask),
+    );
+  }
+
+  return { entries };
 }

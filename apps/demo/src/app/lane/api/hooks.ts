@@ -21,8 +21,7 @@ import {
   updateTask,
 } from "./endpoints";
 import type { TaskFilters } from "./endpoints";
-import { TEAM_SCOPED_KEYS } from "./keys";
-import { laneKeys, workspaceReads } from "./lane-reads";
+import { laneKeys, TEAM_SCOPED_KEYS, workspaceReads } from "./lane-reads";
 import {
   replaceTaskInList,
   type TaskCacheStrategy,

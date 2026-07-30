@@ -10,12 +10,12 @@ import {
   fetchTasks,
   fetchTeams,
 } from "@/app/lane/api/endpoints";
+import { workspaceSnapshots } from "@/app/lane/api/lane-reads";
 import {
   buildWorkspaceSearch,
   getterFromRecord,
   parseWorkspaceState,
 } from "@/app/lane/api/url-state";
-import { workspaceSnapshots } from "@/app/lane/api/keys";
 import { Workspace } from "@/app/lane/workspace/workspace";
 import { WorkspaceProvider } from "@/app/lane/workspace/workspace-provider";
 

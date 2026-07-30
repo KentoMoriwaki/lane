@@ -14,9 +14,11 @@ function makeQueryClient() {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        // Hydrated data is fresh enough for the first render; we refetch on
-        // demand (refresh control, mutations, team switches) rather than
-        // aggressively on mount/focus.
+        // Hydrated data is fresh enough for the first render, and most of the
+        // cache is catalogue data (teams, projects, labels, members) that only
+        // changes when someone edits it — so the default is to refetch on demand
+        // (refresh control, mutations, team switches) rather than on mount or
+        // focus. The board's own reads opt back in; see `query-options.ts`.
         staleTime: 30_000,
         gcTime: 5 * 60_000,
         retry: 1,

@@ -66,6 +66,29 @@ export const TEAM_SCOPED_KEYS = [
 ] as const;
 
 /**
+ * The board's own reads — the task list and the two views derived from it —
+ * revalidate when the tab comes back to the foreground.
+ *
+ * They are the reads a teammate's edit invalidates, so coming back to a stale
+ * board is the case worth handling; the catalogue reads around them (teams,
+ * labels, members, the current user) only change when someone edits them and are
+ * left to load once. `staleTime` is short enough that a refocus after a moment
+ * away actually fetches, and long enough that flicking between two windows does
+ * not.
+ *
+ * The react-query variant sets exactly this policy, on the same three reads, in
+ * `react-query/api/query-options.ts`. Both libraries spell it the same way, and
+ * keeping them matched is what makes the two variants comparable when you switch
+ * away and come back — the notable part is not that they both refetch, it is how
+ * many separate steps the screen takes to apply what comes back.
+ */
+const BOARD_REVALIDATION = {
+  refetchOnFocus: true,
+  refetchOnMount: true,
+  staleTime: 1_000,
+} as const;
+
+/**
  * Every read the workspace performs, defined once — `laneRead` colocates a
  * read's key, its loader, and the options it is read with, the way
  * react-query's `queryOptions()` does.
@@ -100,9 +123,7 @@ export function workspaceReads(ctx: WorkspaceCtx) {
       laneRead({
         key: laneKeys.tasks(filters),
         loader: () => fetchTasks(ctx, filters),
-        refetchOnFocus: true,
-        refetchOnMount: true,
-        staleTime: 1_000,
+        ...BOARD_REVALIDATION,
       }),
     task: (taskId: string) =>
       laneRead({
@@ -110,13 +131,22 @@ export function workspaceReads(ctx: WorkspaceCtx) {
         loader: () => fetchTask(ctx, taskId),
       }),
     projects: () =>
-      laneRead({ key: laneKeys.projects(), loader: () => fetchProjects(ctx) }),
+      laneRead({
+        key: laneKeys.projects(),
+        loader: () => fetchProjects(ctx),
+        // Carries per-project task counts, so it moves whenever the board does.
+        ...BOARD_REVALIDATION,
+      }),
     labels: () =>
       laneRead({ key: laneKeys.labels(), loader: () => fetchLabels(ctx) }),
     members: () =>
       laneRead({ key: laneKeys.members(), loader: () => fetchMembers(ctx) }),
     insights: () =>
-      laneRead({ key: laneKeys.insights(), loader: () => fetchInsights(ctx) }),
+      laneRead({
+        key: laneKeys.insights(),
+        loader: () => fetchInsights(ctx),
+        ...BOARD_REVALIDATION,
+      }),
   };
 }
 

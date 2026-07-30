@@ -39,11 +39,14 @@ All notable changes to `use-lane` are documented here. The format is based on
   also retried a *first* load that had failed. A failed **refresh** keeps the
   previous value, whose freshness timestamp is left untouched, so `true` still picks
   it up; a first load that never succeeded is retried by an error boundary reset or
-  `whenStale: "refetch"` instead — and in that state there is no reader for a
-  trigger to fire from either way: the read threw during render, so it never
-  committed and none of its effects ran (pinned by a test). The unconditional form
-  was the only one that could act on a rejected entry, over a reader that cannot
-  exist.
+  `whenStale: "refetch"` instead. Where that retry belongs is the point. When the
+  reader unwraps its own promise it never committed, so no trigger of any kind has a
+  subscriber to fire from. When the owner passes the promise down and holds the
+  boundary itself it does stay subscribed, and there the unconditional form really
+  could have re-read on focus — but the boundary has latched its failed state, so a
+  refetch that does not go through a reset cannot put anything back on screen. Both
+  shapes are pinned by tests. The retry lives at the boundary reset either way,
+  which is the state that has to change.
 
 - **Breaking: every read hook takes one value.** `useLane({ key, loader, ...options })`
   replaces `useLane(key, loader, options)`, and the same for `useLanePromise`,

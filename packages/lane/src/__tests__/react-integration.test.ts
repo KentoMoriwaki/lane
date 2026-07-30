@@ -18,6 +18,7 @@ import type {
   LaneKey,
   LaneLoader,
   LaneLoaderContext,
+  LaneRead,
   LaneUseOptions,
 } from "../types";
 import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";
@@ -549,15 +550,14 @@ describe("React integration", () => {
     await waitForText(app.container, "caught:boom");
   });
 
-  // Why a load that never once succeeded is out of reach of every revalidation
-  // trigger — not by policy, but because there is nobody left to fire one. The
-  // reader threw during render, so it never committed and none of its effects ran:
-  // no store subscription, no focus / reconnect handlers, no mount trigger. Getting
-  // back from here is an error boundary reset (or `whenStale: "refetch"`, which
-  // always retries a prior error), and that is the whole reason dropping the
-  // triggers' unconditional form cost nothing: it was the only form that could act
-  // on a rejected entry, over a reader that cannot exist.
-  it("leaves no reader for a trigger to fire from after a first load fails", async () => {
+  // Two tests about a load that never once succeeded, because a rejected cache is
+  // never stale and so no stale-gated trigger touches it. What is left is who is
+  // even there to fire one, and that depends on where the promise is unwrapped.
+  //
+  // Here the reader unwraps its own promise, so it threw during render, never
+  // committed, and none of its effects ran: no subscription, no focus / reconnect
+  // handlers, no mount trigger. Nothing to fire from at all.
+  it("leaves no reader for a trigger to fire from when it unwraps its own promise", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const lane = createLane();
@@ -599,6 +599,101 @@ describe("React integration", () => {
 
     expect(effects).toEqual([]);
     expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  // The other shape: the owner passes the promise down and holds the boundary
+  // itself, so a rejection cannot take it down. It commits, stays subscribed, and
+  // its triggers stay live — which is the one place the removed unconditional
+  // trigger form had a reach that `true` does not: it would have re-read this on
+  // focus, and `true` never will, because rejected is never stale.
+  //
+  // It is not a reach worth an option, and the second half of the test is why. The
+  // subscriber really is there — an unconditional `invalidate` reaches it and
+  // refetches — and the screen still says `caught`, because the boundary latched
+  // its failed state and only a reset renders the child again. A retry that does not
+  // go through the boundary cannot restore the UI, so the retry belongs to the
+  // boundary's reset, where the state that has to change actually lives.
+  it("keeps the owner's subscription when the child's unwrap throws", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const lane = createLane();
+    let attempt = 0;
+    const loader = vi.fn(async () => {
+      attempt += 1;
+
+      if (attempt === 1) {
+        throw new Error("boom");
+      }
+
+      return "recovered";
+    });
+    const effects: string[] = [];
+
+    function Child({ promise }: { promise: Promise<LaneRead<string>> }) {
+      return React.createElement("span", null, React.use(promise).data);
+    }
+
+    function Owner() {
+      React.useEffect(() => {
+        effects.push("mounted");
+
+        return () => {
+          effects.push("unmounted");
+        };
+      });
+
+      const { promise } = useLane({
+        key: ["tasks"],
+        loader,
+        refetchOnFocus: true,
+        staleTime: 0,
+      });
+
+      return React.createElement(
+        CatchBoundary,
+        null,
+        React.createElement(
+          React.Suspense,
+          { fallback: "loading" },
+          React.createElement(Child, { promise }),
+        ),
+      );
+    }
+
+    const app = await render(
+      React.createElement(LaneProvider, {
+        lane,
+        children: React.createElement(Owner, null),
+      }),
+    );
+
+    await waitForText(app.container, "caught:boom");
+    expect(effects).toEqual(["mounted"]);
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // Stale-gated, and a rejected cache is never stale.
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await settlePromiseHandlers();
+    });
+    for (let i = 0; i < 5; i += 1) {
+      await flushReact();
+    }
+
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // Unconditional: the subscriber is live and re-reads. The boundary is not,
+    // so what is on screen does not change.
+    await act(async () => {
+      lane.invalidate(["tasks"]);
+      await settlePromiseHandlers();
+    });
+    for (let i = 0; i < 5; i += 1) {
+      await flushReact();
+    }
+
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(app.container.textContent).toBe("caught:boom");
   });
 
   it("collects the cache after unmount once gcTime elapses", async () => {

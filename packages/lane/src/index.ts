@@ -1,5 +1,8 @@
-"use client";
-
+// No `"use client"` here on purpose. The directive belongs on the five modules
+// that touch React (`provider`, `hydration`, and the three hooks), so that a
+// Server Component can import `laneKey` / `laneRead` / `createLane` through this
+// barrel without pulling a client reference. Adding it back would re-make the
+// whole package client-only.
 export { createLane } from "./core";
 export {
   createReactNativeEventSource,

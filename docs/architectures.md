@@ -69,6 +69,15 @@ workspace, loads enough for a meaningful first render, canonicalizes invalid URL
 state, and passes serializable initial data to the client tree. Seed it with
 [`LaneHydration`](./api-reference.md#hydration-rsc-seeding).
 
+Both layers can share one key module. `use-lane` puts `"use client"` on its React
+modules individually rather than on the package, so
+[`laneKey`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds) and
+[`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation) are callable
+in the Server Component that builds the snapshots, from the same `"use-lane"`
+import the client hooks use. Keys and read definitions therefore live in one
+place for both halves of the route, instead of a server-safe list of literals plus
+a typed copy of it on the client.
+
 After hydration, the client tree owns live data through Lane: filters and search
 update durable URL state without forcing an RSC reload, Lane reads the hydrated
 promises, and interaction-time changes invalidate and re-read them. Mutations

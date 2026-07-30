@@ -6,7 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as React from "react";
 import { useTeams } from "@/app/lane/api/hooks";
-import { TEAM_SCOPED_KEYS } from "@/app/lane/api/keys";
+import { TEAM_SCOPED_KEYS } from "@/app/lane/api/lane-reads";
 import { buildWorkspaceHref, EMPTY_VIEW_STATE } from "@/app/lane/api/url-state";
 import {
   DropdownMenu,

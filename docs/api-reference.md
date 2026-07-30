@@ -404,6 +404,12 @@ Two things to know:
   entry, serializes the same way, and is accepted anywhere `LaneKey` is —
   `invalidate`, `remove`, `cancel`, scopes, hydration snapshots. Only `set` and
   `update` read the tag.
+- **`laneKey` runs on the server too.** `use-lane` marks its React modules
+  `"use client"` individually rather than marking the package, so `laneKey`,
+  `laneRead`, and `createLane` are importable from a Server Component — the
+  key module above really is importable from anywhere, including the RSC route
+  that builds your [hydration snapshots](#hydration-rsc-seeding). The import path
+  is the same `"use-lane"` in both graphs; there is no `/server` subpath to learn.
 
 ### `LaneResult<T>`
 
@@ -1291,6 +1297,22 @@ const snapshots: LaneHydrationSnapshots = {
     { key: ["tasks", filters], data: tasks },
   ],
 };
+```
+
+The *same keys* can be the same code. [`laneKey`](#lanekeyoft--a-key-that-knows-what-it-holds)
+and [`laneRead`](#lanereadspec--key--loader-colocation) are importable from a
+Server Component — only the modules that touch React carry `"use client"` — so a
+key module shared with your hooks can be imported here directly, and the seed path
+does not need a duplicate list of key literals to stay server-safe:
+
+```ts
+// keys.ts — imported by both the RSC seed path and the client hooks.
+export const taskKeys = {
+  list: (filters: TaskFilters) => laneKey<Task[]>(["tasks", filters]),
+};
+
+// page.tsx — a Server Component
+const snapshots = { entries: [{ key: taskKeys.list(filters), data: tasks }] };
 ```
 
 Hydration is for initial seeding and navigation, not post-mutation patching.

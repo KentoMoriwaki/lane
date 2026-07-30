@@ -113,6 +113,13 @@ const snapshots = { entries: [{ key: ["tasks", filters], data: tasks }] };
   overwrites and mounted readers converge.
 - **Client-only** surfaces (no server seed) just call `useLane` and fetch on first
   read — that is `/lane-spa`.
+- **"the same keys" can be the same module.** `use-lane` marks only its React
+  modules `"use client"`, so
+  [`laneKey`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds) and
+  [`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation) are
+  callable in the Server Component above. The key factory your hooks import serves
+  the seed too — no server-safe copy of the literals, and the same `"use-lane"`
+  import path in both graphs. `/lane` does exactly this.
 
 You do not add React Router here — Next already owns navigation, route data, and the
 back/forward cache.

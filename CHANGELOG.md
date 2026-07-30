@@ -202,6 +202,32 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
+- **`"use client"` is now a per-file boundary, so keys and read definitions work
+  in Server Components.** The build emitted one bundle per format, so the single
+  directive on `src/index.ts` made the *entire* package client-only: a Server
+  Component that imported any value got a client reference, and calling
+  `laneKey(...)` there failed with "Attempted to call laneKey() from the server."
+  The RSC seed path felt it directly — the module building hydration snapshots had
+  to stay server-safe, which meant writing key literals in one module and
+  attaching their types in another, duplicating the list.
+
+  `dist/` now holds one output file per source module, the way react-query's
+  `build/modern/` does, and the directive sits on the five modules that touch
+  React (`provider`, `hydration`, and the three hooks) instead of on the barrel.
+  `laneKey`, `laneRead`, and `createLane` are importable from a Server Component,
+  and one key module can serve both halves of an RSC-seeded route.
+
+  Nothing moved in the public API: the entry is still a single `"."` export with
+  no `/server` or `/client` subpaths, imports stay `from "use-lane"`, and with
+  `sideEffects: false` a server-graph import of `laneKey` tree-shakes every
+  client-marked file away — verified as pulling `keys`, `structural`, `core`, and
+  `read-spec`, none of them client-marked.
+
+  Both size budgets are unchanged, and files a consumer does not reach are now
+  droppable per file rather than per bundle: `createLane (core only)` measures
+  **2024 B**, down from 2169 B, and `LaneProvider + useLane` **3327 B**, down from
+  3328 B.
+
 - **`remove` / `removeAll` now drop the entry's last fulfilled value**, not just
   its cached promise. Removal means the entry no longer belongs in client state —
   sign out, team switch, a deleted entity — and it could not rely on deleting the

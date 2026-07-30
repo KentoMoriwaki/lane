@@ -664,9 +664,12 @@ refetch status into `useState` / `useEffect`.
 
 ### Turning a trigger on without a `staleTime`
 
-`refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` set to `true` refresh
-only **stale** values, and `staleTime` defaults to `Infinity` — so on their own
-they never fire. Lane warns once in development when it sees that pairing.
+`refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` refresh only **stale**
+values, and `staleTime` defaults to `Infinity` — so on their own they never fire.
+Lane warns once in development when it sees that pairing. There is no
+"refresh regardless of freshness" form of these options; `staleTime: 0` is how you
+say it, and `lane.invalidate(key, { onlyIf: "settled" })` is where an unconditional
+refresh on your own schedule lives.
 
 ```tsx
 // Don't — accepted, and then nothing happens.
@@ -675,8 +678,8 @@ useLane({ ...taskLanes.detail(id), refetchOnFocus: true });
 // Do — say how long a value stays fresh.
 useLane({ ...taskLanes.detail(id), refetchOnFocus: true, staleTime: 30_000 });
 
-// Or ask for it unconditionally, staleTime ignored.
-useLane({ ...taskLanes.detail(id), refetchOnFocus: "always" });
+// Every focus, if that is what you mean.
+useLane({ ...taskLanes.detail(id), refetchOnFocus: true, staleTime: 0 });
 ```
 
 The `staleTime` is not just a gate, it is the **rate limit**: a value refreshed

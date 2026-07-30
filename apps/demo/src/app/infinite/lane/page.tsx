@@ -46,9 +46,7 @@ function LaneInfiniteLab() {
   const { settings, update } = useLabSettings();
   const mutations = useDatasetMutations();
   const lane = useLaneInstance();
-  const [refetchOnMount, setRefetchOnMount] = useState<boolean | "always">(
-    false,
-  );
+  const [refetchOnMount, setRefetchOnMount] = useState(false);
 
   const feed = useMemo(
     () => feedParamsOf(settings),

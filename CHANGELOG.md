@@ -21,9 +21,25 @@ All notable changes to `use-lane` are documented here. The format is based on
   `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` now do nothing until a
   `staleTime` is set. Both warn once in development (stripped from production
   builds), because an accepted option that does nothing is the failure mode worth a
-  word. To keep the previous behaviour, state it: `staleTime: 0`. `"always"` is
-  unchanged — it ignores `staleTime` by definition, including on a mount that just
-  loaded the value.
+  word. To keep the previous behaviour, state it: `staleTime: 0`.
+
+- **Breaking: the `"always"` form of `refetchOnMount` / `refetchOnFocus` /
+  `refetchOnReconnect` is gone.** All three are `boolean` now. It was inherited from
+  react-query, where the same spelling costs nothing on a fresh mount because a
+  mount fetch and a stale refetch are one mechanism. Here they are two — the read
+  runs during render, the trigger fires from an effect — so `"always"` also
+  refetched the value that same mount had just loaded, which is not what anyone
+  reaching for it is asking for. Carrying a familiar name with unfamiliar behaviour
+  is worse than not carrying it.
+
+  `refetchOnMount: true, staleTime: 0` is the direct replacement, and it states the
+  cost instead of hiding it. For an unconditional refresh on your own schedule,
+  `lane.invalidate(key, { onlyIf: "settled" })` is unchanged — the primitive stays,
+  only the trigger sugar is gone. Note the one behaviour the sugar had to itself: it
+  also retried a *first* load that had failed. A failed **refresh** keeps the
+  previous value, whose freshness timestamp is left untouched, so `true` still picks
+  it up; a first load that never succeeded is retried by an error boundary reset or
+  `whenStale: "refetch"` instead.
 
 - **Breaking: every read hook takes one value.** `useLane({ key, loader, ...options })`
   replaces `useLane(key, loader, options)`, and the same for `useLanePromise`,

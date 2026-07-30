@@ -18,7 +18,7 @@ import type { FeedParams } from "../_lab/types";
 import { feedKey, itemsOf, type FeedCursor } from "./feed-lane";
 
 // How long a fetched page set stays fresh, and so what the `refetchOnMount`
-// control's "when stale" position is gated on.
+// control is gated on.
 const FEED_STALE_TIME = 5_000;
 
 /**
@@ -53,7 +53,7 @@ export function FeedList({
   feed: FeedParams;
   autoLoad: boolean;
   loadMoreBurst: number;
-  refetchOnMount: boolean | "always";
+  refetchOnMount: boolean;
   mutations: ReturnType<typeof useDatasetMutations>;
 }) {
   // The lab's settings are plain state in a component we do not own, so a sort
@@ -72,10 +72,10 @@ export function FeedList({
       initialCursor: null,
       nextCursor: (page) => page.nextCursor,
       refetchOnMount,
-      // What makes the control's middle position mean anything: `true` refreshes
-      // only stale values, and `staleTime` defaults to Infinity, so without one
-      // "when stale" would never fire. A few seconds also keeps the three
-      // positions distinguishable — off / stale-gated / every mount.
+      // What makes the control mean anything: a trigger refreshes only stale
+      // values, and `staleTime` defaults to Infinity, so without one it would
+      // never fire. A few seconds also makes the gate observable — remount inside
+      // the window and no request goes out, remount after it and one does.
       staleTime: FEED_STALE_TIME,
     });
 

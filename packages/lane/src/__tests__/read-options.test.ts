@@ -21,10 +21,14 @@ describe("revalidateOptions", () => {
     });
   });
 
-  it('maps `"always"` to a settled-only invalidation, ignoring staleTime', () => {
-    expect(revalidateOptions("always", 60_000)).toEqual({ onlyIf: "settled" });
-    expect(revalidateOptions("always", undefined)).toEqual({
-      onlyIf: "settled",
+  // A trigger has one meaning: refresh what is stale. The unconditional form is
+  // deliberately absent — `staleTime: 0` says the same thing, and
+  // `lane.invalidate(key, { onlyIf: "settled" })` is where an app goes to refresh
+  // regardless of freshness on its own schedule.
+  it("has no form that ignores staleTime", () => {
+    expect(revalidateOptions(true, 0)).toEqual({
+      onlyIf: "stale",
+      staleTime: 0,
     });
   });
 });
@@ -68,14 +72,14 @@ describe("revalidateOptions warning", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it("stays quiet for a stated staleTime, for `always`, and for off", async () => {
+  it("stays quiet for a stated staleTime, and for a trigger that is off", async () => {
     const revalidate = await freshRevalidateOptions();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     revalidate(true, 0);
     revalidate(true, 60_000);
-    revalidate("always", undefined);
     revalidate(false, undefined);
+    revalidate(undefined, undefined);
 
     expect(warn).not.toHaveBeenCalled();
   });

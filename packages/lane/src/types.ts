@@ -122,12 +122,14 @@ export type LanePlainKey = LaneKey & { readonly [laneDataTag]?: undefined };
  * also what lets `laneRead` hand back a {@link LaneKeyOf} — the type reaching
  * the *write* side without the loader having to come along.
  *
- * `key` accepts a plain array — a hand-written literal, or a spread of another
- * spec — and also a {@link LaneKeyOf} from `laneKey`, in which case the key's
- * type and the loader's result must agree for the read to compile.
+ * `key` is a plain `LaneKey` here, whatever it was built from: a literal, another
+ * read's tagged key, or `laneKey`. Constraining it to {@link LaneKeyOf}`<T>` would
+ * check a typed key against the loader, and was measured at ~65% more type
+ * instantiations per read — paid by every call site, to catch a mismatch you have
+ * to construct on purpose. Only what `laneRead` *returns* is tagged.
  */
 export type LaneReadSpec<T, C = T> = LaneUseOptions & {
-  key: LaneKeyOf<T> | LanePlainKey;
+  key: LaneKey;
   loader: LaneLoader<T, C>;
 };
 
@@ -143,7 +145,7 @@ export type LaneReadSpec<T, C = T> = LaneUseOptions & {
  * read still knows what it would load, so its `.key` is tagged too.
  */
 export type LaneGatedReadSpec<T, C = T> = LaneUseOptions & {
-  key: LaneKeyOf<T> | LanePlainKey;
+  key: LaneKey;
   loader: LaneLoader<T, C> | undefined;
 };
 

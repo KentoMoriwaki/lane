@@ -520,15 +520,13 @@ function typeExpectations(lane: Lane): void {
   // @ts-expect-error — the key says Task.
   lane.set(taskKeys.detail(task.id), { title: "no id" });
 
-  // A read built on a typed key must load what that key claims to hold: the two
-  // halves are checked against each other, in both directions.
+  // A read can be built on an already-typed key; what it hands back is tagged
+  // from its own loader either way.
   const fromTypedKey = laneRead({
     key: taskKeys.detail(task.id),
     loader: async () => task,
   });
   expectTypeOf(fromTypedKey.key).toEqualTypeOf<LaneKeyOf<Task>>();
-  // @ts-expect-error — the loader must produce what the key claims to hold.
-  laneRead({ key: taskKeys.detail(task.id), loader: async () => 42 });
 
   // A plain key carries no type, so the value still decides it, exactly as
   // before tagging existed.

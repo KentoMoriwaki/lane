@@ -22,10 +22,12 @@ All notable changes to `use-lane` are documented here. The format is based on
   `LanePrefetchOptions` is gone with the positional `prefetch`; a read carries its
   own `retry` / `retryDelay`.
 
-  It also paid for itself in bytes. Dropping the normalization branches took the
-  core to **2169 B** and the typical `LaneProvider + useLane` import to **3328 B**,
-  both below where they sat before any of this work — a feature that is entirely
-  types, at negative runtime cost.
+  It also paid for itself in bytes: dropping the normalization branches left the
+  core at **2169 B** against 2167 B before any of this work, and the typical
+  `LaneProvider + useLane` import unchanged at **3328 B**. Typechecking a read
+  costs about 20% more instantiations than the positional form did (measured over
+  40 reads: 4540 → 5505), which is the price of the whole read being one inferred
+  object.
 
 ### Added
 
@@ -51,9 +53,11 @@ All notable changes to `use-lane` are documented here. The format is based on
   mutation path import fetchers — and whatever request context those fetchers
   close over — to name a key it already knows. `laneRead` stamps the tag from its
   loader's return type (`spec.key`), and `laneKey<Task>(["task", id])` declares one
-  for the half of a codebase that only writes. Handing a typed key back to
-  `laneRead` checks the two against each other: a loader that does not produce
-  what the key claims to hold no longer compiles. A tagged key is an ordinary
+  for the half of a codebase that only writes. A read may be built on an
+  already-typed key, though the two are deliberately not checked against each
+  other — constraining a read's `key` to `LaneKeyOf<T>` measured at ~65% more type
+  instantiations per read, which is a poor trade for catching a mismatch you have
+  to construct on purpose. A tagged key is an ordinary
   array at runtime and is accepted anywhere `LaneKey` is; only `set` / `update`
   read the tag, and a plain key still lets the value decide its own type exactly
   as before.

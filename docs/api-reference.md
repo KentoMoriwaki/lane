@@ -387,21 +387,19 @@ export const taskKeys = {
 lane.set(taskKeys.detail(saved.id), saved); // checked, and nothing else imported
 ```
 
-Handing a typed key to `laneRead` ties the two together: the key's type and the
-loader's result must agree, or the read does not compile.
-
-```ts
-laneRead({ key: taskKeys.detail(id), loader: ({ signal }) => fetchTask(id, signal) }); // ✓
-laneRead({ key: taskKeys.detail(id), loader: ({ signal }) => fetchProject(id, signal) }); // ✗
-```
+A read can be built on an already-typed key — `laneRead({ key: taskKeys.detail(id),
+loader })` — and what it hands back is tagged from its own loader either way. The
+two are deliberately *not* checked against each other: constraining a read's `key`
+to `LaneKeyOf<T>` costs about 65% more type instantiations on every read, which is
+a poor trade for catching a mismatch you have to construct on purpose.
 
 Two things to know:
 
 - **The tag is an assertion, not a proof.** `laneKey<Task>(…)` states what the
-  entry holds; nothing verifies it unless a `laneRead` brings a loader alongside.
-  That is why the loaded type belongs on the read wherever a read exists — a
-  `laneKey` type argument is the one place in Lane where you state a type instead
-  of inferring one.
+  entry holds and nothing verifies it. That is why the loaded type belongs on the
+  read wherever a read exists — `laneRead` *infers* the tag from the loader, while
+  a `laneKey` type argument is the one place in Lane where you state a type by
+  hand.
 - **A tagged key is a key.** It is the same array at runtime, matches the same
   entry, serializes the same way, and is accepted anywhere `LaneKey` is —
   `invalidate`, `remove`, `cancel`, scopes, hydration snapshots. Only `set` and

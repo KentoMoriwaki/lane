@@ -233,13 +233,17 @@ function toDescriptor<T, C>(read: LaneReadSpec<T, C>): Descriptor<T, C> {
 
 /**
  * The options one member is read with: its own where it defines them, the
- * batch's shared ones for the rest.
+ * batch's shared ones for the rest. With no shared options — the common case,
+ * since a member usually carries its own — the member's read *is* the answer, so
+ * the merge is skipped rather than allocating a copy per member per recompute.
  */
 function optionsFor<T, C>(
   shared: LaneUseOptions,
   descriptor: Descriptor<T, C>,
 ): LaneUseOptions {
-  return { ...shared, ...descriptor.options };
+  return shared === EMPTY_OPTIONS
+    ? descriptor.options
+    : { ...shared, ...descriptor.options };
 }
 
 function computeAggregate<T, C>(

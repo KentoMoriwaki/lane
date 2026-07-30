@@ -64,9 +64,8 @@ export const laneKeys = {
  * leaves each factory taking exactly its identity — `tasks(filters)`,
  * `task(taskId)` — which is also what the keys in `laneKeys` take.
  *
- * The reads are built on those keys, so a read and the entry it writes to are
- * checked against each other: a loader returning the wrong shape for its key
- * does not compile.
+ * The reads are built on those keys, so one array literal per entry serves both
+ * the read and the writes to it.
  */
 export function workspaceReads(ctx: WorkspaceCtx) {
   return {

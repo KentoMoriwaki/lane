@@ -23,16 +23,11 @@ export function serializeKey(key: LaneKey): string {
  * laneRead({ key: taskKeys.detail(id), loader: … }); // and the read reuses it
  * ```
  *
- * Passing a typed key to `laneRead` is not just reuse: the key's type and the
- * loader's result have to agree, or the read does not compile. That is the
- * colocation guarantee running in the other direction — a factory of keys and a
- * factory of reads can no longer drift apart.
- *
- * The type argument is required and unverified. `laneKey<Task>(["task", id])`
- * asserts that this key's entry holds a `Task`; nothing checks it against a
- * loader unless a `laneRead` brings them together. It is the one place in Lane
- * where you state a type instead of inferring one — which is why the loaded type
- * belongs on the read wherever a read exists.
+ * The type argument is required and unverified: `laneKey<Task>(["task", id])`
+ * asserts that this key's entry holds a `Task`, and nothing checks it. It is the
+ * one place in Lane where you state a type by hand instead of inferring one —
+ * which is why the loaded type belongs on the read wherever a read exists, where
+ * `laneRead` infers the same tag from the loader.
  */
 export function laneKey<T>(key: LaneKey): LaneKeyOf<T> {
   return key as LaneKeyOf<T>;

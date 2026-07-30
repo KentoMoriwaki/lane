@@ -10,6 +10,7 @@ import {
 import {
   invalidateEntry,
   invalidationSource,
+  laneDefaults,
   latestNotifySource,
   readOrCreate,
   subscribeLane,
@@ -17,7 +18,7 @@ import {
 import type { LaneInvalidationSource } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneInstance, useLaneRevalidation } from "./provider";
-import { revalidateOptions, toReadOptions } from "./read-options";
+import { toReadOptions, triggerOptions } from "./read-options";
 import type {
   Lane,
   LaneGatedReadSpec,
@@ -148,9 +149,10 @@ export function useLane<T, C = T>(
 
   const refetchOnMount = useEffectEvent(
     (targetLane: Lane, targetKeyId: string) => {
-      const invalidateOptions = revalidateOptions(
-        read.refetchOnMount,
-        read.staleTime,
+      const invalidateOptions = triggerOptions(
+        laneDefaults(targetLane),
+        read,
+        "refetchOnMount",
       );
 
       if (!invalidateOptions) {
@@ -162,12 +164,14 @@ export function useLane<T, C = T>(
   );
 
   // Focus / reconnect are lane-level events the provider fans out; each reader
-  // refreshes its own key with the trigger's policy. Read latest options at
-  // fire time, so toggling the flag never re-subscribes.
+  // refreshes its own key with the trigger's policy. Read latest options — and
+  // the lane's defaults under them — at fire time, so toggling the flag never
+  // re-subscribes.
   const revalidateOnFocus = useEffectEvent(() => {
-    const invalidateOptions = revalidateOptions(
-      read.refetchOnFocus,
-      read.staleTime,
+    const invalidateOptions = triggerOptions(
+      laneDefaults(lane),
+      read,
+      "refetchOnFocus",
     );
 
     if (!invalidateOptions) {
@@ -178,9 +182,10 @@ export function useLane<T, C = T>(
   });
 
   const revalidateOnReconnect = useEffectEvent(() => {
-    const invalidateOptions = revalidateOptions(
-      read.refetchOnReconnect,
-      read.staleTime,
+    const invalidateOptions = triggerOptions(
+      laneDefaults(lane),
+      read,
+      "refetchOnReconnect",
     );
 
     if (!invalidateOptions) {

@@ -13,6 +13,7 @@ import type {
   LaneRetryDelay,
   LaneScope,
   LaneUpdater,
+  LaneUseOptions,
   LaneValue,
   LaneWhenStale,
 } from "./types";
@@ -46,6 +47,11 @@ type LaneSubscriber = {
 };
 
 type LaneState = {
+  // The instance-wide floor under every read's options, held exactly as it was
+  // given. It is deliberately not merged into a normalized copy anywhere: each
+  // option is resolved with `??` where it is already read, so a cache hit — the
+  // common case, once per render — allocates nothing.
+  defaults: LaneUseOptions | undefined;
   entries: Map<string, LaneEntry>;
   gcTime: number;
   sweepTimer: ReturnType<typeof setInterval> | undefined;
@@ -108,6 +114,7 @@ const laneStates = new WeakMap<Lane, LaneState>();
 
 export function createLane(options: LaneOptions = {}): Lane {
   const state: LaneState = {
+    defaults: options.defaults,
     entries: new Map(),
     gcTime: options.gcTime ?? DEFAULT_GC_TIME,
     sweepTimer: undefined,
@@ -123,7 +130,10 @@ export function createLane(options: LaneOptions = {}): Lane {
       // sweep on whatever cycle a later unsubscribe triggers.
       //
       // A read's `staleTime` / `whenStale` are deliberately ignored here: those
-      // are read-time decisions and this is not the read.
+      // are read-time decisions and this is not the read. Pinning `whenStale`
+      // also keeps a lane-wide `defaults.whenStale: "refetch"` out of the warm-up
+      // — explicit beats a default — while `retry` / `retryDelay` fall through to
+      // the lane's, since a prefetch is as entitled to them as any read.
       return readOrCreate<T, C>(lane, read.key, read.loader, {
         retry: read.retry,
         retryDelay: read.retryDelay,
@@ -231,7 +241,7 @@ export function readOrCreate<T, C = T>(
   const keyId = serializeKey(key);
   const entry = getOrCreateEntry(state, key, keyId);
 
-  const reusable = reuseCache(entry, options);
+  const reusable = reuseCache(entry, options, state.defaults);
 
   if (reusable) {
     return reusable.promise as Promise<LaneRead<T>>;
@@ -244,7 +254,8 @@ export function readOrCreate<T, C = T>(
   // cache, not `lastFulfilled`) and is `undefined` once the entry itself is
   // gone.
   const current = entry.lastFulfilled?.value as C | undefined;
-  const load = () => runLoader(loader, key, controller.signal, options, current);
+  const load = () =>
+    runLoader(loader, key, controller.signal, options, state.defaults, current);
   // A gated read is an in-flight read that has not begun: readers see it as
   // pending and hold their last value on screen until the action lands.
   const promise = gate ? gate.then(load) : load();
@@ -280,6 +291,7 @@ export function readOrCreate<T, C = T>(
 function reuseCache(
   entry: LaneEntry,
   options: LaneReadOptions | undefined,
+  defaults: LaneUseOptions | undefined,
 ): LanePromiseCache | undefined {
   const cache = entry.cache;
 
@@ -287,7 +299,7 @@ function reuseCache(
     return undefined;
   }
 
-  if ((options?.whenStale ?? "revalidate") !== "refetch") {
+  if ((options?.whenStale ?? defaults?.whenStale ?? "revalidate") !== "refetch") {
     return cache;
   }
 
@@ -309,7 +321,9 @@ function reuseCache(
     return cache;
   }
 
-  return isStale(cache, options?.staleTime ?? 0) ? undefined : cache;
+  return isStale(cache, options?.staleTime ?? defaults?.staleTime ?? 0)
+    ? undefined
+    : cache;
 }
 
 export function invalidateEntry(
@@ -401,6 +415,21 @@ export function latestNotifySource(
   keyId: string,
 ): LaneInvalidationSource | undefined {
   return getLaneState(lane).entries.get(keyId)?.lastNotifySource;
+}
+
+/**
+ * The lane's read-option defaults, for a consumer that has to resolve an option
+ * core never sees.
+ *
+ * Four of the seven reach `readOrCreate` and are resolved on the read path above.
+ * The other three — `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` —
+ * are reader-side triggers the store is deliberately unaware of ("focus" is a DOM
+ * concern the provider owns), so the hooks resolve them against this at fire
+ * time, applying the same `??` the read path does. Nothing is copied: the caller
+ * reads one option out of it and moves on.
+ */
+export function laneDefaults(lane: Lane): LaneUseOptions | undefined {
+  return getLaneState(lane).defaults;
 }
 
 export function onInvalidate(
@@ -649,10 +678,12 @@ function runLoader<T, C>(
   key: LaneKey,
   signal: AbortSignal,
   options: LaneReadOptions | undefined,
+  defaults: LaneUseOptions | undefined,
   current: C | undefined,
 ): Promise<T> {
-  const retry = options?.retry ?? 0;
-  const retryDelay = options?.retryDelay ?? DEFAULT_RETRY_DELAY;
+  const retry = options?.retry ?? defaults?.retry ?? 0;
+  const retryDelay =
+    options?.retryDelay ?? defaults?.retryDelay ?? DEFAULT_RETRY_DELAY;
   let attempt = 0;
 
   const attemptLoad = (): Promise<T> =>

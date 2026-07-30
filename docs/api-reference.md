@@ -40,7 +40,7 @@ from a pluggable event source.
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `lane` | `Lane` | a fresh `createLane()` | The Lane instance to provide. Omit to let the provider create and own one. |
+| `lane` | `Lane` | a fresh `createLane()` | The Lane instance to provide. Omit to let the provider create and own one — pass [`createLane({ … })`](#createlaneoptions) to set `gcTime` or app-wide [read defaults](#read-option-defaults). |
 | `focusThrottleInterval` | `number` | `5000` | Focus and `visibilitychange` both fire on a tab switch; focus revalidations within this window are coalesced into one. Reconnect is not throttled. |
 | `eventSource` | `LaneEventSource` | `domEventSource` | Where focus / reconnect signals originate. Defaults to browser DOM events. Pass `noopEventSource` (CLI), `createReactNativeEventSource(...)` (React Native), or your own — see [Event sources](#event-sources) and [Environments](./environments.md). Use a stable reference. |
 
@@ -88,12 +88,16 @@ lane.invalidate(["user", id]);
 
 ### `createLane(options?)`
 
-Creates a `Lane` instance directly. Most apps never call this — `LaneProvider`
-creates one for you. Use it to share a single instance across multiple providers
-or to construct one outside React.
+Creates a `Lane` instance directly. `LaneProvider` creates one for you, so reach
+for this to set instance-wide policy — [`gcTime`](#laneoptions) or app-wide
+[read defaults](#read-option-defaults) — to share a single instance across
+multiple providers, or to construct one outside React.
 
 ```ts
-const lane = createLane({ gcTime: 5 * 60_000 });
+const lane = createLane({
+  gcTime: 5 * 60_000,
+  defaults: { staleTime: 30_000, retry: 2 },
+});
 ```
 
 #### `LaneOptions`
@@ -101,12 +105,65 @@ const lane = createLane({ gcTime: 5 * 60_000 });
 ```ts
 type LaneOptions = {
   gcTime?: number;
+  defaults?: LaneUseOptions;
 };
 ```
 
 | Option | Default | Description |
 | --- | --- | --- |
 | `gcTime` | `300000` (5 min) | How long (ms) an inactive entry (no subscribers) is retained before it is garbage-collected. An instance-wide memory policy — idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. Eviction is coalesced into a single sweep per lane, so the exact moment is approximate (it never needs to be precise). A reader that has not committed yet counts as inactive from the moment it starts its first load — it suspends before it can subscribe — so `gcTime` doubles as the grace window for that first load: if it runs longer than `gcTime` and a sweep fires, the in-flight read is aborted (its `signal` fires) and refetched on the retry. Keep `gcTime` comfortably longer than your slowest request (including retries); avoid `0` for reads that suspend for a while. |
+| `defaults` | `{}` | App-wide fallbacks for every [`LaneUseOptions`](#laneuseoptions) field — see [Read-option defaults](#read-option-defaults) below. |
+
+The two are different kinds of thing, which is why they sit side by side rather
+than nested: `gcTime` is a lane-wide policy with no per-read counterpart to fall
+back from, while `defaults` is the floor a read's own options stand on.
+
+#### Read-option defaults
+
+`createLane({ defaults })` sets what every read falls back to — Lane's answer to
+react-query's `defaultOptions.queries`. It takes the same
+[`LaneUseOptions`](#laneuseoptions) a read is written with, so anything you can
+put on a read you can put here.
+
+```ts
+const lane = createLane({
+  defaults: { staleTime: 30_000, retry: 2, refetchOnFocus: true },
+});
+```
+
+Precedence is one line:
+
+```txt
+the read's own option > useLanesAll's shared options > defaults > built-in
+```
+
+```ts
+// staleTime 30_000 and retry 2 from the lane; refetchOnFocus off for this read.
+useLane({ ...taskLanes.detail(id), refetchOnFocus: false });
+```
+
+- **They apply everywhere a read is performed** — `useLane`, `useLanePromise`,
+  `useLanesAll`, `useInfiniteLane`, and [`prefetch`](#prefetch). `prefetch` still
+  pins `whenStale: "revalidate"` and ignores `staleTime` (it is a warm-up, not a
+  read), so a lane-wide `whenStale: "refetch"` cannot turn a repeated prefetch
+  into a refetch; `retry` / `retryDelay` do reach it.
+- **`undefined` means *unspecified*.** A read cannot un-set a default by passing
+  `undefined` — write the built-in value explicitly (`staleTime: 0`,
+  `refetchOnFocus: false`) to opt one read out.
+- **They belong to the instance, not to the provider.** `prefetch` runs outside
+  React (a router loader, an RSC, a link's `onMouseEnter`), and defaults that only
+  reached `LaneProvider` would leave that path on the bare built-ins. If you were
+  using `<LaneProvider>` without a lane, create one to set defaults:
+  `<LaneProvider lane={createLane({ defaults })}>`.
+- **Fixed at construction.** There is no `setDefaults`: a default is read when a
+  load starts and when a trigger fires, and it could never reach a promise the
+  lane has already cached. For policy that varies at runtime, pass options at the
+  read.
+- **There is no per-key tier.** react-query's `setQueryDefaults(key, …)` has no
+  Lane equivalent — [`laneRead`](#lanereadspec--key--loader-colocation) already
+  gives one read's options one home, and keeping key-level policy out of the store
+  is what lets Lane core hold no loaders and no options. See
+  [design notes](./design-notes.md#defaults-belong-to-the-instance).
 
 ## Reading data
 
@@ -878,6 +935,10 @@ type LaneUseOptions = {
 
 > `gcTime` is **not** a per-read option — it is an instance-wide policy passed to
 > [`createLane({ gcTime })`](#laneoptions).
+
+Every option below can be defaulted app-wide with
+[`createLane({ defaults })`](#read-option-defaults); the "Default" column is the
+built-in a lane with no `defaults` uses.
 
 | Option | Default | Description |
 | --- | --- | --- |

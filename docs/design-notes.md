@@ -336,6 +336,67 @@ Two boundaries keep it from becoming a second way to describe everything:
   the core is byte-for-byte the store it was before, apart from `prefetch`
   learning to accept a read.
 
+## Defaults belong to the instance
+
+A read being one value says where its options live; it does not say what they are
+when the read does not care. Most reads in an app want the same freshness, and
+writing it on each one is not organization — it is a fact repeated at N sites,
+free to drift at any of them. So `createLane({ defaults })` puts a floor under
+`LaneUseOptions`, and a read only writes what it means to say differently.
+
+**The floor is on the instance rather than in context**, and `prefetch` is the
+reason. It runs outside React — a router loader, an RSC, a link's `onMouseEnter` —
+so defaults that only reached `LaneProvider` would leave exactly the path that
+cannot see context reading with the bare built-ins, and "app-wide" would be a
+claim about the component tree instead of about the app. The instance is the one
+thing every path already holds, which is where `gcTime` already lives. It also
+removes a question a provider prop would have to answer: what `defaults` means
+when a `lane` is passed too.
+
+**Nothing is merged.** Options are not normalized into a copy anywhere in Lane —
+a read *is* its options bag, read fresh at each render and each fire time — so the
+defaults are resolved with `??` at the sites that already read each option: four
+on the read path in core (`retry`, `retryDelay`, `staleTime`, `whenStale`) and
+three at fire time in the hooks (`refetchOnMount` / `refetchOnFocus` /
+`refetchOnReconnect`, which the store never sees, because "focus" is a DOM concern
+the provider owns). A cache hit — the common case, once per render — therefore
+allocates nothing, and the whole tier cost 29 bytes.
+
+Resolving per option rather than per bag is also what makes the tier useful: a
+read that turns `refetchOnFocus` on still gets the lane's `staleTime` to judge
+freshness against, instead of having to restate it to keep the trigger honest.
+
+Two consequences worth stating plainly:
+
+- **`undefined` is *unspecified*, so a default cannot be un-set by writing
+  nothing.** A read opts out by writing the built-in (`staleTime: 0`,
+  `refetchOnFocus: false`). Distinguishing "absent" from "present and `undefined`"
+  would mean `in` checks on every option, and would make the shape a hook happens
+  to pass — an object whose unset options are present and `undefined` — carry
+  meaning it was never designed to carry.
+- **They are fixed at construction.** A default is read when a load starts and
+  when a trigger fires, so a mutable one would be an external mutable source read
+  during render, and it could never reach a promise the lane already cached. Policy
+  that varies at runtime belongs at the read, or on a different instance —
+  `useLane` already switches lanes during render.
+
+**There is no per-key tier.** react-query pairs global defaults with
+`setQueryDefaults(key, …)`; Lane's answer to "these options belong to this key" is
+`laneRead`, which colocates them with the loader that makes the key mean
+something. A key-prefix registry would put read policy back in the store — the one
+thing the core is built not to hold (it keeps no loaders, and now no options
+either) — and it would answer a question `laneRead` already answers, from further
+away.
+
+What is deliberately *not* defaultable: `gcTime`, because it is a lane policy with
+no per-read counterpart to fall back from, and the `staleTime` on
+`invalidate(key, { onlyIf: "stale", staleTime })`, because that is a threshold
+argument to an operation rather than an option a read left unspecified. Folding a
+default in there would make `{ onlyIf: "stale" }` mean different things per
+instance while the entry's actual read policy — which core does not store — stayed
+unknown. The rule stays one sentence: **a default fills in an option a read did
+not specify.**
+
 ## A deliberately small core
 
 Lane core owns only the lifecycle facts that must stay consistent for a key slot:
@@ -355,6 +416,8 @@ adapter option -> conditional cache invalidation -> mounted readers re-read thro
 - polling — userland: a self-scheduled `invalidate(key, { onlyIf: "settled", background: true })` (no core timer)
 - retry / backoff (`retry`, `retryDelay`)
 - inactive-entry garbage collection (`gcTime`, a per-lane policy on `createLane`)
+- app-wide read defaults (`createLane({ defaults })`) — held as given on the lane
+  and resolved where each option is already read, never stored per entry
 
 Splitting the durable key slot from its optional cached promise is what makes
 this work: invalidation clears the cache and notifies readers; the first reader
@@ -368,6 +431,7 @@ When more than one approach is possible, Lane prefers:
 
 - invalidating source data over patching cache entries
 - one definition per read over a key factory the loader has to be paired with
+- an instance-owned floor under read options over policy stored per key
 - the loaded type on the key, so addressing an entry never needs a loader
 - exact-key operations for single reads, scoped operations for key families
 - exact-key publication only for authoritative values already in hand

@@ -331,6 +331,10 @@ export type LaneUseOptions = {
 
 /**
  * Construction-time options for a `Lane` instance.
+ *
+ * The two are different kinds of thing, which is why they sit side by side rather
+ * than nested: `gcTime` is a lane-wide policy with no per-read counterpart to
+ * fall back from, while `defaults` is the floor a read's own options stand on.
  */
 export type LaneOptions = {
   /**
@@ -342,4 +346,39 @@ export type LaneOptions = {
    * just keeps the value reusable a little longer).
    */
   gcTime?: number;
+  /**
+   * What every read falls back to — the app-wide floor under
+   * {@link LaneUseOptions}, and Lane's answer to react-query's
+   * `defaultOptions.queries`.
+   *
+   * It is the same type a read is written with, so anything you can put on a
+   * read you can put here, and precedence is one line:
+   *
+   * ```txt
+   * the read's own option > useLanesAll's shared options > defaults > built-in
+   * ```
+   *
+   * ```ts
+   * const lane = createLane({
+   *   defaults: { staleTime: 30_000, retry: 2, refetchOnFocus: true },
+   * });
+   * ```
+   *
+   * **They belong to the instance rather than to context** because `prefetch`
+   * runs outside React — a router loader, an RSC, a link's `onMouseEnter` — and
+   * defaults that only reached the provider would leave that one path reading
+   * with the bare built-ins. The instance is the one thing every path already
+   * has, which is also where `gcTime` already lives.
+   *
+   * Resolution is `??`, so `undefined` means *unspecified*: a read cannot un-set
+   * a default by passing `undefined`. Write the built-in value explicitly
+   * (`staleTime: 0`, `refetchOnFocus: false`) to opt one read out.
+   *
+   * Fixed at construction. A default is read when a load starts and when a
+   * trigger fires, so a mutable one would be an external mutable source read
+   * during render — and it could never reach a promise the lane has already
+   * cached. For policy that varies at runtime, pass options at the read, or swap
+   * the whole instance (`useLane` switches lanes during render).
+   */
+  defaults?: LaneUseOptions;
 };

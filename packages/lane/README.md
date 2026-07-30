@@ -164,7 +164,9 @@ function RenameButton({ userId }: { userId: string }) {
   overwrites authoritatively on navigation.
 - **Lifecycle built in.** Garbage collection (`gcTime`, default 5 min), `retry` /
   `retryDelay`, and `refetchOnFocus` / `refetchOnMount` / `refetchOnReconnect`
-  revalidation. Polling is userland — a self-scheduled `invalidate`.
+  revalidation. Every read option has an app-wide fallback —
+  `createLane({ defaults })`, react-query's `defaultOptions.queries`. Polling is
+  userland — a self-scheduled `invalidate`.
 - **Optimistic UI stays local.** Lane ships no mutation helper; use
   `useOptimistic` / `useActionState` in the component that owns the action.
 - **A read can be one value.** `laneRead({ key, loader, ...options })` colocates
@@ -183,14 +185,15 @@ function RenameButton({ userId }: { userId: string }) {
 | `laneKey<T>(key)` | A key that carries what its entry holds, so `set` / `update` through it are type-checked — no loader needed. |
 | `useInfiniteLane(key, options, readOptions?)` | A cursor-paginated list under one key. Returns `{ promise, loadMore, … }`; `use(promise)` yields `{ pages, params, hasNext }`. Colocate it with `infiniteLaneRead`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
-| `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime }`. |
+| `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers, seed on the server, or set app-wide read defaults); accepts `{ gcTime, defaults }`. |
 | `LaneHydration` | Apply RSC-loaded snapshots as authoritative seed values. |
 
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
 `updateAll`, `remove` / `removeAll` — all keyed; `set` / `update` are checked
 when given a typed key. `useLane` options: `staleTime`, `whenStale`,
 `retry`, `retryDelay`, `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
-`createLane` options: `gcTime`. Loaders receive `{ key, signal, current }`, where
+`createLane` options: `gcTime`, and `defaults` — the same read options, applied to
+every read that does not specify them. Loaders receive `{ key, signal, current }`, where
 `current` is the entry's last fulfilled value.
 
 See the **[API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md)**

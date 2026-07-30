@@ -32,6 +32,8 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `refetchInterval` | a **userland poll** — a self-scheduled `invalidate` |
 | `refetchOnWindowFocus` | `refetchOnFocus` (`LaneProvider` wires focus / reconnect) |
 | `staleTime` / `gcTime` | `staleTime` (read option) / `gcTime` (`createLane`) |
+| `defaultOptions: { queries }` | `createLane({ defaults })` ([step 0](#app-wide-defaults-come-with-it)) |
+| `setQueryDefaults(key, …)` | no per-key tier — a key's options live on its `laneRead` |
 | `QueryClientProvider` | `LaneProvider` |
 
 ## Step 0 — keep your options factories
@@ -94,6 +96,43 @@ Colocating is not required — `useLane(key, loader, options)` is the same read
 written out — but it is the shape that keeps a key from drifting away from the
 loader and options it belongs to. See
 [`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation).
+
+### App-wide defaults come with it
+
+The client-level tier ports too: `createLane({ defaults })` takes the same options
+a read takes, and a read only writes what it means to say differently.
+
+```ts
+// Before (React Query)
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 30_000, retry: 2 } },
+});
+
+// After (Lane)
+const lane = createLane({ defaults: { staleTime: 30_000, retry: 2 } });
+```
+
+**Port the defaults you were relying on, not just the ones you wrote.** React
+Query ships `retry: 3`, `refetchOnMount: true`, `refetchOnWindowFocus: true`, and
+`refetchOnReconnect: true` out of the box; every Lane built-in is off (`retry: 0`,
+all three triggers `false`). Behavior you never configured was still behavior, so
+carry it over explicitly:
+
+```ts
+const lane = createLane({
+  defaults: {
+    retry: 3,
+    refetchOnMount: true,
+    refetchOnFocus: true,
+    refetchOnReconnect: true,
+  },
+});
+```
+
+`undefined` means *unspecified* in both, so a read opts out of a default by
+writing the built-in value (`staleTime: 0`, `refetchOnFocus: false`) rather than by
+writing nothing. There is no `setQueryDefaults` tier — see
+[read-option defaults](./api-reference.md#read-option-defaults).
 
 ## Step 1 — read with `use()`, delete the status object
 
@@ -271,6 +310,9 @@ Three things to carry across:
 - [ ] `queryOptions()` factories ported to `laneRead` — key, loader, and options
       still in one place; reads take the definition, `invalidate` / `set` take
       its `key`.
+- [ ] `defaultOptions.queries` ported to `createLane({ defaults })`, **including
+      the react-query defaults you never wrote** (`retry: 3`, `refetchOnMount`,
+      `refetchOnWindowFocus`, `refetchOnReconnect`) — Lane's built-ins are off.
 - [ ] Replaced `useQuery` reads with `useLane` + `use(promise)`; deleted the
       `isLoading` / `error` / `status` branches.
 - [ ] `Suspense` and Error Boundaries placed at the right granularity — including

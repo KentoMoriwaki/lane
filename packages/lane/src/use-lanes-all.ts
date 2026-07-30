@@ -8,10 +8,15 @@ import {
   useState,
   useTransition,
 } from "react";
-import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
+import {
+  invalidateEntry,
+  laneDefaults,
+  readOrCreate,
+  subscribeLane,
+} from "./core";
 import { serializeKey } from "./keys";
 import { useLaneInstance, useLaneRevalidation } from "./provider";
-import { revalidateOptions, toReadOptions } from "./read-options";
+import { toReadOptions, triggerOptions } from "./read-options";
 import type {
   Lane,
   LaneKey,
@@ -65,7 +70,8 @@ type Descriptor<T, C> = {
  * derived from a list. A spec carries its own options, so "shared by every read"
  * becomes "the shared `options` is the fallback": a member reads with its own
  * `staleTime` / `refetchOn*` where it defines them, exactly as it would through
- * `useLane`, and inherits the rest from the batch.
+ * `useLane`, and inherits the rest from the batch — and whatever neither supplies
+ * from the lane's `defaults` below that.
  */
 export function useLanesAll<T, C = T>(
   reads: readonly LaneReadSpec<T, C>[],
@@ -119,15 +125,15 @@ export function useLanesAll<T, C = T>(
   });
 
   // Mount / focus / reconnect derive their conditional invalidation from the
-  // trigger + latest options at fire time (`revalidateOptions` returns
+  // trigger + latest options at fire time (`triggerOptions` returns
   // `undefined` when the trigger is off), so toggling a flag never re-subscribes.
   // Each fans the invalidation across the current keys; overlaps coalesce in the
   // store, so the smallest effective `staleTime` wins.
   const mountRefetch = useEffectEvent((descriptor: Descriptor<T, C>) => {
-    const own = optionsFor(options, descriptor);
-    const invalidateOptions = revalidateOptions(
-      own.refetchOnMount,
-      own.staleTime,
+    const invalidateOptions = triggerOptions(
+      laneDefaults(lane),
+      optionsFor(options, descriptor),
+      "refetchOnMount",
     );
     if (invalidateOptions) {
       invalidateEntry(lane, descriptor.keyId, invalidateOptions, "background");
@@ -236,6 +242,10 @@ function toDescriptor<T, C>(read: LaneReadSpec<T, C>): Descriptor<T, C> {
  * batch's shared ones for the rest. With no shared options — the common case,
  * since a member usually carries its own — the member's read *is* the answer, so
  * the merge is skipped rather than allocating a copy per member per recompute.
+ *
+ * The lane's `defaults` are deliberately not merged in here. They are the tier
+ * *below* this one and are resolved where each option is used (the read path in
+ * core, `triggerOptions` at fire time), so they stay out of the per-member copy.
  */
 function optionsFor<T, C>(
   shared: LaneUseOptions,
@@ -266,18 +276,22 @@ function computeAggregate<T, C>(
 }
 
 // Fire a background revalidation across every current member for a focus /
-// reconnect trigger, skipping the members whose own trigger is off.
+// reconnect trigger, skipping the members whose own trigger is off. The lane's
+// defaults are the third tier under a member's own options and the batch's shared
+// ones, and are read once for the whole fan-out.
 function revalidateAll<T, C>(
   lane: Lane,
   descriptors: Descriptor<T, C>[],
   shared: LaneUseOptions,
   trigger: "refetchOnFocus" | "refetchOnReconnect",
 ): void {
+  const defaults = laneDefaults(lane);
+
   for (const descriptor of descriptors) {
-    const options = optionsFor(shared, descriptor);
-    const invalidateOptions = revalidateOptions(
-      options[trigger],
-      options.staleTime,
+    const invalidateOptions = triggerOptions(
+      defaults,
+      optionsFor(shared, descriptor),
+      trigger,
     );
 
     if (invalidateOptions) {

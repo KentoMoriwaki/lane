@@ -179,6 +179,55 @@ All notable changes to `use-lane` are documented here. The format is based on
   rejection on an unknown number of keys — while a bound form would be safe but
   carried by every reader and called by almost none.
 
+- **`createLane({ defaults })`** — an app-wide floor under every read option;
+  react-query's `defaultOptions.queries` for Lane. A read being one value said
+  where its options live, not what they are when the read does not care, so the
+  freshness an app wants everywhere had to be written on every read and was free to
+  drift at any of them. `defaults` takes the same `LaneUseOptions` a read takes —
+  all seven options, so nothing is defaultable-in-principle-only — and precedence
+  is one line: **the read's own option > `useLanesAll`'s shared options >
+  `defaults` > built-in.**
+
+  It sits on the *instance* rather than in context because `prefetch` runs outside
+  React — a router loader, an RSC, a link's `onMouseEnter` — and defaults that only
+  reached `LaneProvider` would leave exactly the path that cannot see context on
+  the bare built-ins, making "app-wide" a claim about the component tree instead of
+  about the app. The instance is what every path already holds, and where `gcTime`
+  already lives. `prefetch` still pins `whenStale: "revalidate"` and ignores
+  `staleTime`, so a lane-wide `"refetch"` cannot turn a repeated warm-up into a
+  refetch; `retry` / `retryDelay` do reach it.
+
+  Nothing is merged. Options are never normalized into a copy in Lane — a read
+  *is* its options bag — so each default is resolved with `??` where that option is
+  already read: four on the read path in core, three at fire time in the hooks, for
+  the triggers the store never sees. A cache hit allocates nothing, and the tier
+  cost **29 B** (core 2169 → 2198 B; `LaneProvider + useLane` 3328 → 3390 B). Per
+  *option* rather than per bag, which is what makes it useful: a read that only
+  turns `refetchOnFocus` on still judges freshness against the lane's `staleTime`
+  instead of having to restate it.
+
+  Two things to know. `undefined` means *unspecified*, so a read opts out by
+  writing the built-in (`staleTime: 0`, `refetchOnFocus: false`) rather than by
+  writing nothing — distinguishing absent from present-and-`undefined` would mean
+  `in` checks on every option and would give the shape a hook happens to pass a
+  meaning it was never designed to carry. And they are fixed at construction: a
+  default is read when a load starts and when a trigger fires, so a mutable one
+  would be an external mutable source read during render, and could never reach a
+  promise the lane had already cached.
+
+  There is no per-key tier — react-query's `setQueryDefaults(key, …)` has no Lane
+  equivalent, because `laneRead` already gives one read's options one home and a
+  key-prefix registry would put read policy back in the store, which holds no
+  loaders and now no options either. `gcTime` stays a sibling rather than a
+  default (no per-read counterpart to fall back from), and the `staleTime` on
+  `invalidate(key, { onlyIf: "stale" })` stays untouched: it is a threshold
+  argument to an operation, not an option a read left unspecified. The rule is one
+  sentence — *a default fills in an option a read did not specify.*
+
+  Migrating from react-query, port the defaults you were relying on and not only
+  the ones you wrote: it ships `retry: 3` and all three refetch triggers on, while
+  every Lane built-in is off.
+
 ### Fixed
 
 - **`whenStale: "refetch"` no longer loops on the second visit to a key.**

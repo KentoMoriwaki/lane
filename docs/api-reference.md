@@ -529,6 +529,10 @@ versus a per-item API:
 - **A member's own options win**; the batch's `options` argument is the fallback
   for what a member does not set. So a read behaves in a batch exactly as it
   would through `useLane`, and a batch-wide policy needs no edit to each member.
+  Each option falls back on its own, and "does not set" means *has no value* — an
+  option a member leaves `undefined` (`staleTime: props.staleTime` where the prop
+  is optional) is unspecified rather than an override, so the batch's value still
+  applies.
 - **The return is just the promise** — one stable, `use()`-able `Promise.all`,
   not an array of per-item handles.
 

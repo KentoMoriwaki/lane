@@ -281,6 +281,39 @@ const { promise } = useLane(spec);
 const value = promise ? use(promise).data : null;
 ```
 
+**A spec describes one read, not a family.** Parameters live in the enclosing
+factory — that is what makes the key and the loader agree, since both close over
+the same variables. (The loader also receives the key in its context, so a
+loader that is shared across keys can derive from it; for a per-key factory the
+closure is both shorter and typed.)
+
+**Bind what a loader needs, take what a key needs.** When the loader depends on
+something that is *not* part of the key — a session, a tenant, an API client —
+bind it once and let each factory take only its identity, rather than threading
+the dependency through every signature:
+
+```ts
+export function taskReads(ctx: RequestCtx) {
+  return {
+    detail: (id: string) =>
+      laneRead({
+        key: taskKeys.detail(id),
+        loader: ({ signal }) => fetchTask(ctx, id, signal),
+        staleTime: 60_000,
+      }),
+    list: (filters: TaskFilters) => laneRead({ … }),
+  };
+}
+
+// In React, bind it where the context is available:
+const reads = useMemo(() => taskReads(ctx), [ctx]);
+useLane(reads.detail(id)); // the argument list is exactly what decides the key
+```
+
+`taskReads(ctx).detail(id)` and `taskDetail(ctx, id)` build the same read; the
+first keeps "what makes this read distinct" and "what it needs to run" in
+separate places, which matters because only the first ends up in the key.
+
 **Overriding at a call site is a spread**, as with `queryOptions()` — the spec is
 a plain object, so nothing special is needed and the result stays typed:
 

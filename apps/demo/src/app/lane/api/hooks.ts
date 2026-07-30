@@ -21,7 +21,7 @@ import {
   updateTask,
 } from "./endpoints";
 import type { TaskFilters } from "./endpoints";
-import { laneKeys, laneReads } from "./lane-reads";
+import { laneKeys, workspaceReads } from "./lane-reads";
 import {
   queryKeys,
   TEAM_SCOPED_KEYS,
@@ -34,45 +34,46 @@ import {
 } from "./task-cache-sync";
 
 /* -------------------------------- Reads -------------------------------- */
+/**
+ * The workspace's reads, bound to the current session + team. `workspaceReads`
+ * takes the context once so each factory below it takes only what decides its
+ * key.
+ */
+function useWorkspaceReads() {
+  const ctx = useWorkspaceCtx();
+  return React.useMemo(() => workspaceReads(ctx), [ctx]);
+}
 
 export function useCurrentUser() {
-  const ctx = useWorkspaceCtx();
-  return useLane(laneReads.currentUser(ctx));
+  return useLane(useWorkspaceReads().currentUser());
 }
 
 export function useTeams() {
-  const ctx = useWorkspaceCtx();
-  return useLane(laneReads.teams(ctx));
+  return useLane(useWorkspaceReads().teams());
 }
 
 export function useTasks(filters: TaskFilters) {
-  const ctx = useWorkspaceCtx();
-  return useLane(laneReads.tasks(ctx, filters));
+  return useLane(useWorkspaceReads().tasks(filters));
 }
 
 export function useTask(taskId: string) {
-  const ctx = useWorkspaceCtx();
-  return useLane(laneReads.task(ctx, taskId));
+  return useLane(useWorkspaceReads().task(taskId));
 }
 
 export function useProjects() {
-  const ctx = useWorkspaceCtx();
-  return useLane(laneReads.projects(ctx));
+  return useLane(useWorkspaceReads().projects());
 }
 
 export function useLabels() {
-  const ctx = useWorkspaceCtx();
-  return useLane(laneReads.labels(ctx));
+  return useLane(useWorkspaceReads().labels());
 }
 
 export function useMembers() {
-  const ctx = useWorkspaceCtx();
-  return useLane(laneReads.members(ctx));
+  return useLane(useWorkspaceReads().members());
 }
 
 export function useInsights() {
-  const ctx = useWorkspaceCtx();
-  return useLane(laneReads.insights(ctx));
+  return useLane(useWorkspaceReads().insights());
 }
 
 /* ------------------------------ Mutations ------------------------------ */

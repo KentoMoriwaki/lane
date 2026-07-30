@@ -47,7 +47,7 @@ export const laneKeys = {
 };
 
 /**
- * Every read this workspace performs, defined once — `laneRead` colocates a
+ * Every read the workspace performs, defined once — `laneRead` colocates a
  * read's key, its loader, and the options it is read with, the way
  * react-query's `queryOptions()` does.
  *
@@ -57,60 +57,69 @@ export const laneKeys = {
  * accidentally read `["tasks", filters]` with a one-second `staleTime` while
  * some other component reads it with none.
  *
- * They take the workspace context because the **loader** needs it, and they are
- * built on `laneKeys` below, so a read and the key it writes to are checked
- * against each other: a loader returning the wrong shape for its key does not
- * compile.
+ * The workspace context is bound **once, here**, rather than passed to every
+ * factory. What a loader needs to run and what makes a read distinct are
+ * different things: `ctx` travels in request headers and is deliberately not in
+ * any key, so a `tasks(ctx, filters)` signature would list two arguments of
+ * which only one decides which entry is read. Binding the dependency up front
+ * leaves each factory taking exactly its identity — `tasks(filters)`,
+ * `task(taskId)` — which is also what the keys in `laneKeys` take.
+ *
+ * The reads are built on those keys, so a read and the entry it writes to are
+ * checked against each other: a loader returning the wrong shape for its key
+ * does not compile.
  */
-export const laneReads = {
-  currentUser: (ctx: WorkspaceCtx) =>
-    laneRead({
-      key: laneKeys.currentUser(),
-      loader: () => fetchCurrentUser(ctx),
-    }),
-  teams: (ctx: WorkspaceCtx) =>
-    laneRead({ key: laneKeys.teams(), loader: () => fetchTeams(ctx) }),
-  tasks: (ctx: WorkspaceCtx, filters: TaskFilters) =>
-    laneRead({
-      key: laneKeys.tasks(filters),
-      loader: () => fetchTasks(ctx, filters),
-      refetchOnFocus: true,
-      refetchOnMount: true,
-      staleTime: 1_000,
-    }),
-  task: (ctx: WorkspaceCtx, taskId: string) =>
-    laneRead({
-      key: laneKeys.task(taskId),
-      loader: () => fetchTask(ctx, taskId),
-    }),
-  projects: (ctx: WorkspaceCtx) =>
-    laneRead({ key: laneKeys.projects(), loader: () => fetchProjects(ctx) }),
-  labels: (ctx: WorkspaceCtx) =>
-    laneRead({ key: laneKeys.labels(), loader: () => fetchLabels(ctx) }),
-  members: (ctx: WorkspaceCtx) =>
-    laneRead({ key: laneKeys.members(), loader: () => fetchMembers(ctx) }),
-  insights: (ctx: WorkspaceCtx) =>
-    laneRead({ key: laneKeys.insights(), loader: () => fetchInsights(ctx) }),
+export function workspaceReads(ctx: WorkspaceCtx) {
+  return {
+    currentUser: () =>
+      laneRead({
+        key: laneKeys.currentUser(),
+        loader: () => fetchCurrentUser(ctx),
+      }),
+    teams: () =>
+      laneRead({ key: laneKeys.teams(), loader: () => fetchTeams(ctx) }),
+    tasks: (filters: TaskFilters) =>
+      laneRead({
+        key: laneKeys.tasks(filters),
+        loader: () => fetchTasks(ctx, filters),
+        refetchOnFocus: true,
+        refetchOnMount: true,
+        staleTime: 1_000,
+      }),
+    task: (taskId: string) =>
+      laneRead({
+        key: laneKeys.task(taskId),
+        loader: () => fetchTask(ctx, taskId),
+      }),
+    projects: () =>
+      laneRead({ key: laneKeys.projects(), loader: () => fetchProjects(ctx) }),
+    labels: () =>
+      laneRead({ key: laneKeys.labels(), loader: () => fetchLabels(ctx) }),
+    members: () =>
+      laneRead({ key: laneKeys.members(), loader: () => fetchMembers(ctx) }),
+    insights: () =>
+      laneRead({ key: laneKeys.insights(), loader: () => fetchInsights(ctx) }),
 
-  /**
-   * The detail panel's two dependency reads. Gating lives *in the definition*:
-   * a task with no blockers (or that blocks nothing) has no loader, so nothing
-   * is fetched, subscribed, or stored, and the reader unwraps `promise`
-   * conditionally. The loaded type is unaffected — the off-state is on the
-   * `promise: undefined` axis.
-   */
-  blockedBy: (ctx: WorkspaceCtx, taskId: string, ids: string[]) =>
-    laneRead({
-      key: queryKeys.taskBlockedBy(taskId),
-      loader: ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
-      refetchOnMount: true,
-      staleTime: 5_000,
-    }),
-  blocking: (ctx: WorkspaceCtx, taskId: string, ids: string[]) =>
-    laneRead({
-      key: queryKeys.taskBlocking(taskId),
-      loader: ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
-      refetchOnMount: true,
-      staleTime: 5_000,
-    }),
-};
+    /**
+     * The detail panel's two dependency reads. Gating lives *in the definition*:
+     * a task with no blockers (or that blocks nothing) has no loader, so nothing
+     * is fetched, subscribed, or stored, and the reader unwraps `promise`
+     * conditionally. The loaded type is unaffected — the off-state is on the
+     * `promise: undefined` axis.
+     */
+    blockedBy: (taskId: string, ids: string[]) =>
+      laneRead({
+        key: queryKeys.taskBlockedBy(taskId),
+        loader: ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
+        refetchOnMount: true,
+        staleTime: 5_000,
+      }),
+    blocking: (taskId: string, ids: string[]) =>
+      laneRead({
+        key: queryKeys.taskBlocking(taskId),
+        loader: ids.length > 0 ? () => fetchTasksByIds(ctx, ids) : undefined,
+        refetchOnMount: true,
+        staleTime: 5_000,
+      }),
+  };
+}

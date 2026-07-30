@@ -2,19 +2,26 @@
 
 /**
  * `<Activity>` (stable in React 19.2) preserves a hidden subtree's state while
- * destroying its effects. Lane's subscription lives in an effect, so a hidden
- * reader keeps its promise in state with nothing subscribed to the store — the
- * exact shape `syncAfterSubscribe` exists for. These tests pin that the reveal
- * converges through the existing catch-up path, with no Activity-specific code.
+ * cleaning up its effects — both layout and passive, measured on 19.2. Lane's
+ * subscription lives in a passive effect, so a hidden reader keeps its promise in
+ * state with nothing subscribed to the store — the exact shape
+ * `syncAfterSubscribe` exists for. These tests pin that the reveal converges
+ * through the existing catch-up path, with no Activity-specific code.
  */
 
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { readOrCreate } from "../core";
 import { createLane, LaneProvider, useLane } from "../index";
 import type { Lane, LaneLoader } from "../types";
-import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";
+import {
+  deferred,
+  resetVitest,
+  settlePromiseHandlers,
+  subscribe,
+} from "./test-utils";
 
 type Mode = "hidden" | "visible";
 
@@ -99,6 +106,31 @@ describe("Activity", () => {
     await flushReact();
 
     expect(app.container.textContent).toBe("v2|background:0|transition:0");
+  });
+
+  it("releases the store subscription while hidden", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: 1_000 });
+    const loader = vi.fn(async () => "loaded");
+
+    const app = await renderActivityApp({ lane, loader, mode: "visible" });
+    await waitForText(app.container, "loaded|background:0|transition:0");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    await app.rerender("hidden");
+
+    // Hiding cleans the reader's effects up, so it is no longer a subscriber and
+    // no longer anchors the entry against the lane-wide sweep. The sweep skips
+    // any entry that still has one (see core-gc), so collection here *is* the
+    // observation that the subscription was released.
+    subscribe(lane, ["__churn__"])();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    await readOrCreate(lane, ["tasks"], loader);
+    expect(loader).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -193,6 +225,21 @@ function valueElement(app: RenderedApp): HTMLElement {
   }
 
   return element;
+}
+
+async function waitForText(
+  container: HTMLElement,
+  expected: string,
+): Promise<void> {
+  for (let i = 0; i < 20; i += 1) {
+    if (container.textContent === expected) {
+      return;
+    }
+
+    await flushReact();
+  }
+
+  expect(container.textContent).toBe(expected);
 }
 
 async function flushReact(): Promise<void> {

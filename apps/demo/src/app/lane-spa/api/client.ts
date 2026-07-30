@@ -36,10 +36,8 @@ export const client = hc<AppType>(resolveApiBaseUrl());
  * so the team does not need to be encoded into every query key (see the team
  * scope constraint in the implementation doc).
  */
-export type WorkspaceCtx = {
-  userId: string;
-  teamId: string;
-};
+export type { WorkspaceCtx } from "@/lib/lane-meta";
+import type { WorkspaceCtx } from "@/lib/lane-meta";
 
 export function requestOptions(ctx: WorkspaceCtx) {
   const headers: Record<string, string> = {};

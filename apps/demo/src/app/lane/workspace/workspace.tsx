@@ -3,7 +3,7 @@
 import * as React from "react";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { useWorkspaceRefresh } from "@/app/lane/api/hooks";
-import { laneKeys } from "@/app/lane/api/lane-reads";
+import { workspaceReads } from "@/app/lane/api/lane-reads";
 import { buildWorkspaceHref } from "@/app/lane/api/url-state";
 import { useLaneInstance } from "use-lane";
 import { CreateTaskDialog } from "./create-task-dialog";
@@ -99,11 +99,11 @@ function WorkspaceShell() {
           <SidebarError
             error={error}
             onRetry={() => {
-              lane.invalidate(laneKeys.currentUser());
-              lane.invalidate(laneKeys.teams());
-              lane.invalidate(laneKeys.insights());
-              lane.invalidate(laneKeys.projects());
-              lane.invalidate(laneKeys.labels());
+              lane.invalidate(workspaceReads.currentUser().key);
+              lane.invalidate(workspaceReads.teams().key);
+              lane.invalidate(workspaceReads.insights().key);
+              lane.invalidate(workspaceReads.projects().key);
+              lane.invalidate(workspaceReads.labels().key);
               retry();
             }}
           />
@@ -132,7 +132,7 @@ function WorkspaceShell() {
                     title="Insights unavailable"
                     message={error instanceof Error ? error.message : undefined}
                     onRetry={() => {
-                      lane.invalidate(laneKeys.insights());
+                      lane.invalidate(workspaceReads.insights().key);
                       retry();
                     }}
                   />
@@ -151,9 +151,9 @@ function WorkspaceShell() {
                     title="Filters unavailable"
                     message={error instanceof Error ? error.message : undefined}
                     onRetry={() => {
-                      lane.invalidate(laneKeys.projects());
-                      lane.invalidate(laneKeys.labels());
-                      lane.invalidate(laneKeys.tasks(filters));
+                      lane.invalidate(workspaceReads.projects().key);
+                      lane.invalidate(workspaceReads.labels().key);
+                      lane.invalidate(workspaceReads.tasks(filters).key);
                       retry();
                     }}
                   />
@@ -179,7 +179,7 @@ function WorkspaceShell() {
                         error instanceof Error ? error.message : undefined
                       }
                       onRetry={() => {
-                        lane.invalidate(laneKeys.tasks(filters));
+                        lane.invalidate(workspaceReads.tasks(filters).key);
                         retry();
                       }}
                     />
@@ -208,7 +208,7 @@ function WorkspaceShell() {
                 onClose={() => selectTask(null)}
                 onRetry={() => {
                   if (selectedTaskId) {
-                    lane.invalidate(laneKeys.task(selectedTaskId));
+                    lane.invalidate(workspaceReads.task(selectedTaskId).key);
                   }
                   retry();
                 }}

@@ -35,11 +35,13 @@ export const client = hc<AppType>(resolveApiBaseUrl());
  * The active session + team context. It is sent to the API as request headers
  * so the team does not need to be encoded into every query key (see the team
  * scope constraint in the implementation doc).
+ *
+ * Declared in `@/lib/lane-meta` and re-exported here, because it is also this
+ * app's `LaneRegister["loaderMeta"]` — the value the lane hands its loaders — and
+ * that declaration belongs to the app rather than to one workspace.
  */
-export type WorkspaceCtx = {
-  userId: string;
-  teamId: string;
-};
+export type { WorkspaceCtx } from "@/lib/lane-meta";
+import type { WorkspaceCtx } from "@/lib/lane-meta";
 
 export function requestOptions(ctx: WorkspaceCtx) {
   const headers: Record<string, string> = {};

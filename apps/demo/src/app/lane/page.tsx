@@ -1,4 +1,4 @@
-import { LaneHydration, LaneProvider } from "use-lane";
+import { LaneHydration } from "use-lane";
 import { redirect } from "next/navigation";
 import {
   fetchCurrentUser,
@@ -71,12 +71,12 @@ export default async function Page({ searchParams }: PageProps) {
   });
 
   return (
-    <LaneProvider>
-      <WorkspaceProvider initialUser={user} initialTeamId={teamId}>
-        <LaneHydration snapshots={snapshots}>
-          <Workspace />
-        </LaneHydration>
-      </WorkspaceProvider>
-    </LaneProvider>
+    // `WorkspaceProvider` mounts the `LaneProvider`: the lane carries the
+    // session as `loaderMeta`, and the session is what that component owns.
+    <WorkspaceProvider initialUser={user} initialTeamId={teamId}>
+      <LaneHydration snapshots={snapshots}>
+        <Workspace />
+      </LaneHydration>
+    </WorkspaceProvider>
   );
 }

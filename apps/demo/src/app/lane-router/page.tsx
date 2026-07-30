@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { createHashRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { LaneProvider } from "use-lane";
+import { NO_SESSION } from "@/lib/lane-meta";
 import { routes } from "./routes";
 import { Boot } from "./shell";
 
@@ -17,7 +18,7 @@ import { Boot } from "./shell";
 function LaneRouterApp() {
   const [router] = useState(() => createHashRouter(routes));
   return (
-    <LaneProvider>
+    <LaneProvider loaderMeta={NO_SESSION}>
       <RouterProvider router={router} />
     </LaneProvider>
   );

@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { LaneProvider, useLaneInstance } from "use-lane";
+import { NO_SESSION } from "@/lib/lane-meta";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LabChrome } from "../_lab/chrome";
@@ -32,7 +33,7 @@ import { LaneCacheCard, LaneCacheControls } from "./lane-controls";
  */
 export default function LaneInfiniteLabPage() {
   return (
-    <LaneProvider>
+    <LaneProvider loaderMeta={NO_SESSION}>
       <LaneInfiniteLab />
     </LaneProvider>
   );

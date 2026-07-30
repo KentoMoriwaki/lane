@@ -1,9 +1,22 @@
 import type { LaneReadOptions } from "./core";
-import type { LaneInvalidateOptions, LaneUseOptions } from "./types";
+import type {
+  LaneInvalidateOptions,
+  LaneLoaderMeta,
+  LaneUseOptions,
+} from "./types";
 
-/** The fetch-shaping subset a read passes to `readOrCreate`. */
-export function toReadOptions(options: LaneUseOptions): LaneReadOptions {
+/**
+ * The fetch-shaping subset a read passes to `readOrCreate`, plus the lane's
+ * `loaderMeta`. The meta is a second argument rather than a field of `options`
+ * because it does not come from the read: the read carries what it was defined
+ * with, the lane carries what its loaders are handed.
+ */
+export function toReadOptions(
+  options: LaneUseOptions,
+  loaderMeta: LaneLoaderMeta,
+): LaneReadOptions {
   return {
+    loaderMeta,
     retry: options.retry,
     retryDelay: options.retryDelay,
     staleTime: options.staleTime,

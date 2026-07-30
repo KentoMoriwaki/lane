@@ -2,9 +2,9 @@
 
 import { LaneProvider, useLane } from "use-lane";
 import * as React from "react";
-import { fetchCurrentUser } from "@/app/lane-spa/api/endpoints";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane-spa/api/endpoints";
-import { laneKeys } from "@/app/lane-spa/api/lane-reads";
+import { workspaceReads } from "@/app/lane-spa/api/lane-reads";
+import { NO_SESSION } from "@/lib/lane-meta";
 import {
   ClientWorkspaceProvider,
   useWorkspace,
@@ -17,7 +17,10 @@ import { SignInScreen } from "./sign-in-screen";
 
 export function ClientOnlyWorkspaceApp() {
   return (
-    <LaneProvider>
+    // The bootstrap read runs before there is a session to read with, so this
+    // lane carries the session-less meta. `ClientWorkspaceProvider` re-provides
+    // the same lane with the real one once the user is known.
+    <LaneProvider loaderMeta={NO_SESSION}>
       <React.Suspense fallback={<ClientOnlyWorkspaceFallback />}>
         <ClientOnlyWorkspaceBootstrap />
       </React.Suspense>
@@ -26,12 +29,10 @@ export function ClientOnlyWorkspaceApp() {
 }
 
 function ClientOnlyWorkspaceBootstrap() {
-  const currentUser = React.use(
-    useLane({
-      key: laneKeys.currentUser(),
-      loader: () => fetchCurrentUser({ userId: "", teamId: "" }),
-    }).promise,
-  ).data;
+  // The workspace's own read, not a restatement of it: the entry this seeds is
+  // the one `useCurrentUser` reads later, because it is literally the same read.
+  const currentUser = React.use(useLane(workspaceReads.currentUser()).promise)
+    .data;
 
   return (
     <ClientWorkspaceProvider

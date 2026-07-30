@@ -10,12 +10,17 @@ import {
 } from "react";
 import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
 import { serializeKey } from "./keys";
-import { useLaneInstance, useLaneRevalidation } from "./provider";
+import {
+  useLaneInstance,
+  useLaneLoaderMeta,
+  useLaneRevalidation,
+} from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
   Lane,
   LaneKey,
   LaneLoader,
+  LaneLoaderMeta,
   LaneRead,
   LaneReadSpec,
   LaneUseOptions,
@@ -73,6 +78,8 @@ export function useLanesAll<T, C = T>(
 ): Promise<LaneRead<T>[]> {
   const lane = useLaneInstance();
   const revalidation = useLaneRevalidation();
+  // From the lane, not from a member — see `useLane`.
+  const loaderMeta = useLaneLoaderMeta();
 
   // Serialized once per (stable) `reads`, not every render.
   const descriptors = useMemo(
@@ -90,14 +97,14 @@ export function useLanesAll<T, C = T>(
   // commits, so this initializer re-runs on every retry, but `aggregateOf` returns
   // the *same* promise, so `use()` throws the settled rejection once.
   const [aggregate, setAggregate] = useState(() =>
-    computeAggregate(lane, descriptors, options),
+    computeAggregate(lane, descriptors, options, loaderMeta),
   );
   // Rebuild the aggregate during render when the keys change. `builtFrom` is the
   // descriptors the current aggregate reflects — a plain referential guard.
   const [builtFrom, setBuiltFrom] = useState(descriptors);
   let promise = aggregate;
   if (builtFrom !== descriptors) {
-    promise = computeAggregate(lane, descriptors, options);
+    promise = computeAggregate(lane, descriptors, options, loaderMeta);
     setAggregate(promise);
     setBuiltFrom(descriptors);
   }
@@ -110,7 +117,7 @@ export function useLanesAll<T, C = T>(
     // its promise — so handing it to the whole recompute is the same as handing
     // it to the member that was just invalidated.
     const apply = () =>
-      setAggregate(computeAggregate(lane, descriptors, options, gate));
+      setAggregate(computeAggregate(lane, descriptors, options, loaderMeta, gate));
     if (urgent) {
       apply();
       return;
@@ -250,6 +257,7 @@ function computeAggregate<T, C>(
   lane: Lane,
   descriptors: Descriptor<T, C>[],
   options: LaneUseOptions,
+  loaderMeta: LaneLoaderMeta,
   gate?: Promise<void>,
 ): Promise<LaneRead<T>[]> {
   return aggregateOf(
@@ -258,7 +266,7 @@ function computeAggregate<T, C>(
         lane,
         d.key,
         d.loader,
-        toReadOptions(optionsFor(options, d)),
+        toReadOptions(optionsFor(options, d), loaderMeta),
         gate,
       ),
     ),

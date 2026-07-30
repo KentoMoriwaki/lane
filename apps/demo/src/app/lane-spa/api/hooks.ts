@@ -21,7 +21,7 @@ import {
   updateTask,
 } from "./endpoints";
 import type { TaskFilters } from "./endpoints";
-import { laneKeys, TEAM_SCOPED_KEYS, workspaceReads } from "./lane-reads";
+import { TEAM_SCOPED_KEYS, workspaceReads } from "./lane-reads";
 import {
   replaceTaskInList,
   type TaskCacheStrategy,
@@ -32,45 +32,41 @@ import {
 /* -------------------------------- Reads -------------------------------- */
 
 /**
- * The workspace's reads, bound to the current session + team. `workspaceReads`
- * takes the context once so each factory below it takes only what decides its
- * key.
+ * The reads pass straight through. The session the loaders need comes from the
+ * lane (`ClientWorkspaceProvider` supplies it as `loaderMeta`), so there is
+ * nothing to bind here and nothing to memoize — a read is a plain object built
+ * per render.
  */
-function useWorkspaceReads() {
-  const ctx = useWorkspaceCtx();
-  return React.useMemo(() => workspaceReads(ctx), [ctx]);
-}
-
 export function useCurrentUser() {
-  return useLane(useWorkspaceReads().currentUser());
+  return useLane(workspaceReads.currentUser());
 }
 
 export function useTeams() {
-  return useLane(useWorkspaceReads().teams());
+  return useLane(workspaceReads.teams());
 }
 
 export function useTasks(filters: TaskFilters) {
-  return useLane(useWorkspaceReads().tasks(filters));
+  return useLane(workspaceReads.tasks(filters));
 }
 
 export function useTask(taskId: string) {
-  return useLane(useWorkspaceReads().task(taskId));
+  return useLane(workspaceReads.task(taskId));
 }
 
 export function useProjects() {
-  return useLane(useWorkspaceReads().projects());
+  return useLane(workspaceReads.projects());
 }
 
 export function useLabels() {
-  return useLane(useWorkspaceReads().labels());
+  return useLane(workspaceReads.labels());
 }
 
 export function useMembers() {
-  return useLane(useWorkspaceReads().members());
+  return useLane(workspaceReads.members());
 }
 
 export function useInsights() {
-  return useLane(useWorkspaceReads().insights());
+  return useLane(workspaceReads.insights());
 }
 
 /* --------------------------- Dependency reads -------------------------- */
@@ -83,11 +79,11 @@ export function useInsights() {
  * than a conditional mount or a single merged loader.
  */
 export function useBlockedByTasks(taskId: string, ids: string[]) {
-  return useLane(useWorkspaceReads().blockedBy(taskId, ids));
+  return useLane(workspaceReads.blockedBy(taskId, ids));
 }
 
 export function useBlockingTasks(taskId: string, ids: string[]) {
-  return useLane(useWorkspaceReads().blocking(taskId, ids));
+  return useLane(workspaceReads.blocking(taskId, ids));
 }
 
 /* ------------------------------ Mutations ------------------------------ */
@@ -100,7 +96,7 @@ export function useCreateTask() {
     const task = await createTask(ctx, input);
     // The key carries what its entry holds, so the publication is checked
     // against `Task` — and needs nothing but the key.
-    lane.set(laneKeys.task(task.id), task);
+    lane.set(workspaceReads.task(task.id).key, task);
     lane.invalidateAll(["tasks"]);
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
@@ -130,7 +126,7 @@ export function useDeleteTask() {
 
   return React.useCallback(async (taskId: string): Promise<void> => {
     await deleteTask(ctx, taskId);
-    lane.remove(laneKeys.task(taskId));
+    lane.remove(workspaceReads.task(taskId).key);
     removeTaskFromTaskLists(lane, taskId);
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
@@ -170,7 +166,7 @@ export function useCreateLabel() {
     input: CreateLabelInput,
   ): Promise<TeamLabel> => {
     const label = await createLabel(ctx, input);
-    lane.invalidate(laneKeys.labels());
+    lane.invalidate(workspaceReads.labels().key);
     return label;
   }, [ctx, lane]);
 }
@@ -183,7 +179,7 @@ export function useCreateProject() {
     input: CreateProjectInput,
   ) => {
     const project = await createProject(ctx, input);
-    lane.invalidate(laneKeys.projects());
+    lane.invalidate(workspaceReads.projects().key);
     return project;
   }, [ctx, lane]);
 }
@@ -197,10 +193,10 @@ export function useWorkspaceRefresh() {
   const refresh = React.useCallback(() => {
     startRefresh(() => {
       lane.invalidateAll(["tasks"]);
-      lane.invalidate(laneKeys.insights());
-      lane.invalidate(laneKeys.projects());
-      lane.invalidate(laneKeys.labels());
-      lane.invalidate(laneKeys.members());
+      lane.invalidate(workspaceReads.insights().key);
+      lane.invalidate(workspaceReads.projects().key);
+      lane.invalidate(workspaceReads.labels().key);
+      lane.invalidate(workspaceReads.members().key);
     });
   }, [lane]);
 
@@ -212,7 +208,7 @@ function publishTask(
   task: Task,
   strategy: TaskCacheStrategy,
 ) {
-  lane.set(laneKeys.task(task.id), task);
+  lane.set(workspaceReads.task(task.id).key, task);
   lane.updateAll<Task[]>(
     (entry) => {
       const filters = taskFiltersFromEntry(entry);
@@ -257,11 +253,11 @@ function scheduleDerivedWorkspaceRefresh(
 
   React.startTransition(() => {
     if (refresh.insights) {
-      lane.invalidate(laneKeys.insights());
+      lane.invalidate(workspaceReads.insights().key);
     }
 
     if (refresh.projects) {
-      lane.invalidate(laneKeys.projects());
+      lane.invalidate(workspaceReads.projects().key);
     }
   });
 }

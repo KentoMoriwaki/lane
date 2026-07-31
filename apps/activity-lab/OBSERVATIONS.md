@@ -23,7 +23,19 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
    「新値あり」のどちらとして合流すべきか
    - 答え:
 4. hidden 中の合流は許すべきか(hidden 中の loader 発火を含む)
-   - 答え:
+   - 答え: **許さない(オーナー判断・2026-07-31)。** hidden 中に取った値は reveal
+     時点でまた古くなり得る。「表示した瞬間の最新」を取るため、反応すべき瞬間は
+     hidden→visible の遷移そのもの。eager refetch(invalidate 時に購読ゼロでも
+     即 re-read)は却下。
+   - 帰結: promise 記録の render 照合には**「urgent update が走った visible reader
+     に当たる」問題**がある。remove は visible reader も即 fallback が仕様なので
+     over-fire しても仕様と一致するが、invalidate は transition 収束が仕様なので
+     当たると SWR が壊れる。invalidate 版には「購読経由で通知を受け取ったか」の
+     reader ローカルなゲートが要る(通知済み = transition で収束中 → 保持。
+     未通知 = hidden だった → drop 候補)。残る未解決は **hidden render と reveal
+     render を render 中に区別する信号が opaque Activity には無い**こと — ここが
+     「実装として不可能」かどうかの分水嶺で、実際に hidden ツリーが reveal 以外で
+     re-render される頻度の計測(/bfcache で測れる)が判断材料になる。
 
 ## 一次観測(2026-07-31、自動走行による粗い読み)
 

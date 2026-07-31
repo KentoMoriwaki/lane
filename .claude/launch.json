@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "activity-lab",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@lane/activity-lab", "dev"],
+      "port": 3007
+    },
+    {
       "name": "docs",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@lane/docs", "dev"],

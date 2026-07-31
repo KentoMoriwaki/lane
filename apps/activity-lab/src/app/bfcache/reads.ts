@@ -1,0 +1,43 @@
+import { laneRead, type LaneLoader } from "use-lane";
+import { labLog } from "@/lab/log";
+
+// No "use client" — the RSC pages import these reads to name their snapshot
+// entries (laneSnapshot takes the read, never calls the loader), while the
+// client probes read with the very same definitions.
+const loaders = new Map<string, LaneLoader<string>>();
+
+function loaderFor(name: string): LaneLoader<string> {
+  const existing = loaders.get(name);
+
+  if (existing) {
+    return existing;
+  }
+
+  const channel = `bfcache:loader:${name}`;
+  const loader: LaneLoader<string> = async ({ signal }) => {
+    labLog.push(channel, "loader-call");
+    const response = await fetch(
+      `/bfcache/api?name=${encodeURIComponent(name)}`,
+      { signal },
+    );
+
+    if (!response.ok) {
+      throw new Error(`/bfcache/api responded ${response.status}`);
+    }
+
+    const { data } = (await response.json()) as { data: string };
+    labLog.push(channel, "loader-settle", data);
+    return data;
+  };
+
+  loaders.set(name, loader);
+  return loader;
+}
+
+export const bfReads = {
+  /** Read by every /bfcache route; the HUD's primary target. */
+  shared: () => laneRead({ key: ["bf", "shared"], loader: loaderFor("shared") }),
+  list: () => laneRead({ key: ["bf", "list"], loader: loaderFor("list") }),
+  detail: (id: string) =>
+    laneRead({ key: ["bf", "detail", id], loader: loaderFor(`detail/${id}`) }),
+};

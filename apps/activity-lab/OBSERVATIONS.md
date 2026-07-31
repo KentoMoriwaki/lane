@@ -1,5 +1,15 @@
 # Activity Lab — Observations
 
+## 到達点(オーナー総括・2026-07-31)
+
+- **loader 付きの routing(Server Components 等)を使う場合**: hydration /
+  server-owned な lane(seeded read、republish が唯一の供給源)
+- **そうでない場合**: lane の loader(client-owned、pattern B の機構が守る)
+- 両者は同じ書き心地(useLane / Suspense / transition の同一意味論)で、
+  パターン間の差は最小に保つ
+- 残る仕事: **両パターンが Activity を含めて正しく動くことの検証、限界が
+  あるならその明示、そしてガイドと実装を作り上げること**
+
 lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエージェント)。シナリオには
 **期待値を書かない** — 「main での挙動」「#62 での挙動」を観察のまま記録し、
 「望ましい挙動」列が埋まった状態 = 仕様確定 = 実装フェーズの入力。

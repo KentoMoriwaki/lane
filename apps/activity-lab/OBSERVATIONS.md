@@ -236,6 +236,63 @@ PathnameProbe + lane Probe を配置。
   残るため、FrameStrip(route subtree の textContent 録画)は閉じたモーダルの
   文字列を拾い続ける。フレーム判定に使うときは probe の値 attribute で絞ること。
 
+### 検証: reveal 時の layout-effect 照合(/reveal-sync、本番・2026-07-31)— 成立
+
+仮説(オーナー提起): reader の (再)mount 時の `useLayoutEffect` で「remove /
+invalidate 済みの promise を持っていないか」を store と照合し、該当したら
+setPromise すれば、**トークンなしで** stale の paint を防げるのではないか。
+→ **成立。** 専用シーン `/reveal-sync` で計測(ミニ store + lane 型 reader
+2 種: passive 照合のみ = 現行 lane 相当 / + layout 照合。Activity children は
+memo 化して「reveal で render が起きない」実機条件を再現。recorder は
+rafTicks で「paint された frame」と「コミットされたが paint 前に消えた状態」
+を判別)。
+
+- **reveal の解剖**(実測): mode フリップの click タスクでは unhide も effect
+  再出現も起きない。React は**別タスクの reveal パス**をスケジュールし、その
+  1 タスク内で **unhide → layout effect 再出現 → (軽量シーンでは passive も)**
+  を実行する。`end-of-task` マーカーで click タスクとの分離を確認。
+- **layout 照合の保証**: 照合 → setPromise → 同期 re-render → suspend →
+  fallback コミットが **reveal パスと同一タスク内で完結**する。stale-visible
+  状態はタスク境界を越えず(MutationObserver にすら映らない)、ブラウザは
+  タスク中に paint しないので、**stale frame は構造的に paint 不可能**。
+  invalidate(pending 差し替え)・remove(read-through 再作成)・sync toggle・
+  transition toggle の全変種で確認。
+- **remove 経路のおまけ**: layout 照合内の `store.read()` が新 promise を
+  作る = **loader-call の発火が reveal の瞬間**(仕様 Q4「read の開始は
+  reveal の瞬間」が機構から自動的に出る)。
+- **hidden 中に resolve 済みだった場合**: 照合が settled promise を採用し、
+  suspend なし・fallback なしで新値を直接コミット(handoff と同じ見え方)。
+- **対照(layout 照合 OFF、passive のみ)**: stale-visible 状態が**タスク境界を
+  越えて存在する**(MO が `display:block v1` の frame を捕捉)。修正は別
+  タスクの passive 頼みで、paint との**競争**になる — この軽量シーンでは
+  +1.9ms で辛勝(raf:0 = 未 paint)したが、実機 Next の reveal では passive は
+  paint 後 ~9ms(実測済み)なので負ける。layout ON ではこの frame 自体が
+  存在しない、が決定的な差。
+- **設計への含意 — pattern B の大幅な単純化**:
+  1. **reveal チャネルの機構は「(再)mount 時の layout-effect 照合」で足りる。
+     トークン供給は前提条件ではなくなる**(非 router の素の Activity も
+     カバー = 未決 1 が解消)。
+  2. layout effect の再出現は**本物の reveal と初回 mount でしか起きない**
+     ので、visible reader への over-fire が構造的に存在しない。トークン方式で
+     必要だった未通知ゲート・over-approximation の議論は reveal チャネルから
+     消える(visible の invalidate は従来どおり通知 → transition の SWR)。
+  3. トークン(pathname / republish)は「修正 2 パス目を省き reveal render
+     1 パスで drop する」**最適化(fast-path)**に位置づけが変わる。republish
+     採用(pattern A handoff)は render 中採用のまま。
+- 留保:
+  - 「unhide と layout effect 再出現が同一タスク」は React 19.2 の実測挙動
+    (useLayoutEffect の paint 前契約とは整合するが、Activity reveal について
+    明文の保証があるわけではない)。React 更新時は /reveal-sync の再実行で
+    リグレッション検知する。
+  - StrictMode(effect 二重実行)での照合の冪等性は未計測(m18 と同枠)。
+  - 実機 Next(bfcache の重い reveal コミット)での再確認は未実施 — 機構の
+    答えは出たが、次は lane 本体に照合を実装して /bfcache で検証するのが順。
+- ハーネスの教訓(再発防止): (1) recorder を Activity 内に置くと hide で
+  attach effect ごと破棄され reveal 窓を録り逃す — recorder は境界の外、ref
+  だけ host child へ。(2) Activity 初回 mount は子ツリーのコミットが親の
+  effect より遅れるため、ref が null の一発 effect は永久に空振りする
+  (frame-recorder は rAF リトライで対処済み)。
+
 ## 設計結論: App Router における所有権の規律(オーナー判断・2026-07-31)
 
 App Router で Hydration(RSC seed)を使うと、同じデータが Next の payload

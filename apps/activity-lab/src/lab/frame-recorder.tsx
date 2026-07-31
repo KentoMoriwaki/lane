@@ -12,8 +12,15 @@ export type Frame = {
   text: string;
   display: string;
   flagged: boolean;
-  /** How many consecutive rAF ticks showed this exact frame. */
+  /** How many consecutive captures (rAF or mutation) showed this exact frame. */
   count: number;
+  /**
+   * How many of those captures were rAF ticks. A frame with rafTicks 0 was
+   * only ever seen by the MutationObserver — it was committed to the DOM but
+   * no paint boundary sampled it, so it (almost certainly) never reached the
+   * screen. This is the discriminator for "corrected before paint".
+   */
+  rafTicks: number;
 };
 
 export type FrameFlag = string | RegExp | ((frame: { text: string; display: string }) => boolean);
@@ -56,7 +63,7 @@ function createRecorder(options: FrameRecorderOptions): FrameRecorder & {
     }
   };
 
-  const capture = (element: HTMLElement) => {
+  const capture = (element: HTMLElement, source: "raf" | "mutation") => {
     const text = element.textContent ?? "";
     // Activity hides a subtree by setting inline `display: none` on the
     // boundary's host children; the inline value is checked first so a strip
@@ -70,6 +77,9 @@ function createRecorder(options: FrameRecorderOptions): FrameRecorder & {
     const last = frames.at(-1);
     if (last !== undefined && last.text === text && last.display === display) {
       last.count += 1;
+      if (source === "raf") {
+        last.rafTicks += 1;
+      }
       return;
     }
 
@@ -79,6 +89,7 @@ function createRecorder(options: FrameRecorderOptions): FrameRecorder & {
       display,
       flagged: isFlagged(text, display),
       count: 1,
+      rafTicks: source === "raf" ? 1 : 0,
     });
     if (frames.length > capacity) {
       frames = frames.slice(frames.length - capacity);
@@ -90,14 +101,17 @@ function createRecorder(options: FrameRecorderOptions): FrameRecorder & {
     attach(element: HTMLElement) {
       let raf = 0;
       const tick = () => {
-        capture(element);
+        capture(element, "raf");
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
 
       // A commit and its revert can both land between two rAF ticks; the
       // observer catches those sub-frame states the rAF loop would miss.
-      const observer = new MutationObserver(() => capture(element));
+      // Note the observer reads the DOM at its microtask checkpoint, so a
+      // state that is committed and corrected within one synchronous task is
+      // invisible even here — absence of a frame is itself evidence.
+      const observer = new MutationObserver(() => capture(element, "mutation"));
       observer.observe(element, {
         subtree: true,
         childList: true,
@@ -139,12 +153,26 @@ export function useFrameRecorder(
   recorder.setFlag(options.flag);
 
   useEffect(() => {
-    const element = ref.current;
-    if (element === null) {
-      return;
-    }
+    // The ref target may commit later than this effect: a subtree inside
+    // <Activity> mounts in its own (deferred) pass, so an observer component
+    // outside the boundary sees ref.current === null on its first effect.
+    // Poll with rAF until the element exists instead of giving up.
+    let cleanup: (() => void) | undefined;
+    let raf = 0;
+    const tryAttach = () => {
+      const element = ref.current;
+      if (element !== null) {
+        cleanup = recorder.attach(element);
+      } else {
+        raf = requestAnimationFrame(tryAttach);
+      }
+    };
+    tryAttach();
 
-    return recorder.attach(element);
+    return () => {
+      cancelAnimationFrame(raf);
+      cleanup?.();
+    };
   }, [recorder, ref]);
 
   return recorder;
@@ -179,12 +207,14 @@ export function FrameStrip({
         {frames.map((frame, index) => (
           <span
             key={`${frame.t}-${index}`}
-            title={`+${frame.t.toFixed(1)}ms x${frame.count}\ndisplay:${frame.display}\n${frame.text}`}
+            title={`+${frame.t.toFixed(1)}ms x${frame.count} raf:${frame.rafTicks}\ndisplay:${frame.display}\n${frame.text}`}
             className={`h-4 min-w-1.5 cursor-help ${
-              frame.flagged
-                ? "bg-red-500"
-                : frame.display === "none"
-                  ? "bg-zinc-300"
+              frame.display === "none"
+                ? "bg-zinc-300"
+                : frame.flagged
+                  ? frame.rafTicks > 0
+                    ? "bg-red-500"
+                    : "bg-amber-400"
                   : "bg-emerald-400"
             }`}
             style={{ width: `${Math.min(24, 6 + Math.log2(frame.count) * 3)}px` }}

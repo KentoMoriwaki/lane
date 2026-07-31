@@ -44,6 +44,21 @@ export function RouteProbe({
   );
 }
 
+// One key, two mount points: the full page and the intercepted modal build
+// the identical read, so whichever is on screen is a visible reader of
+// ["bf","photo",id]. The channel tells them apart in the Timeline.
+export function PhotoProbe({ route, id }: { route: string; id: string }) {
+  const read = bfReads.photo(id);
+
+  return (
+    <Probe
+      channel={`bfcache:${route}:own`}
+      read={read}
+      label={`own — key ${JSON.stringify(read.key)}`}
+    />
+  );
+}
+
 export function SeedFallback({ route }: { route: string }) {
   labLog.push(`bfcache:${route}`, "custom", "seed-fallback render");
 

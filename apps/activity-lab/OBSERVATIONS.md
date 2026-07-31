@@ -157,6 +157,46 @@ live フラグを持ち、live=0 の render = hidden render / reveal render(effe
   usePathname トークン(own path 固定 + reveal 判定付き)で埋められる**。
   pattern B のトークン供給源として採用可。
 
+### 検証: intercepting route(@modal)× Activity(本番ビルド・2026-07-31 計測)
+
+/bfcache に `/bfcache/photo/[id]`(children slot 版)+ `@modal/(.)photo/[id]`
+(intercepted 版)を追加。キー `["bf","photo",id]` は**seed しない client-owned**
+で、full page と modal が同一 read の 2 つの mount point になる。両方に
+PathnameProbe + lane Probe を配置。
+
+- **モーダル open 中、下のページは hidden にならない**: soft nav で
+  `/bfcache/static` → photo/1(intercepted)としても、static の probe に
+  cleanup は出ず、pathname の away-fire も **live=1**(effect 生存 = 購読生存)。
+  interception は「購読が切れる」という Activity の急所をそもそも突かない。
+  invalidate は通常の通知チャネル(SWR)で届く。
+- **close(router.back)でモーダルツリーは unmount ではなく hidden Activity 入り**:
+  layout/passive-cleanup の後に photo-modal の probe が **state を保ったまま
+  live=0 で render**(prev=own が生存)。閉じたモーダルは router bfcache の
+  keep-alive 対象で、通常ルートの hidden ツリーと同じ物理条件に入る。
+- **再オープンは reveal そのもの**: `prev=/bfcache/static → current=own` の
+  TOKEN-FIRE が passive-mount 前(live=0)に発火し、**loader 発火 0** で
+  state / committed promise ごと復元。pathname トークンは modal ツリーでも
+  ルートツリーと同一に機能する(own = intercepted URL が初回 mount で正しく
+  固定される)。
+- **hidden モーダル中の invalidate → 再オープン(現行 main の挙動)**:
+  invalidate 時は完全沈黙(通知・render・loader すべてなし)。再オープンで
+  **stale v1 を描画 → effect 復帰後に bg:1 refetch → fallback フラッシュ →
+  v2 で収束**。仕様が却下する reveal 挙動が interception 形でもそのまま再現。
+  トークンは stale 描画の**直前の render**で発火しており、pattern B の
+  drop + re-read がそのまま適用できる位置にある。
+- **モーダルを開いたまま第三ルートへ nav すると、モーダルは開いたまま残る**
+  (parallel routes の既知挙動: children slot だけ list に切替、@modal slot は
+  保持。このとき初めて下ページ static が hidden 入りする)。結果、
+  **「visible なのに pathname ≠ own」の reader が実在する**。したがって
+  トークンの意味論は「current === own ⇔ visible」**ではなく**、
+  (a) hidden なら必ず current ≠ own(reveal は見逃さない = over-approximate)、
+  (b) visible reader への over-fire はあり得るが、visible は購読が生きて
+  いるので**未通知ゲート + 記録照合が空振りして無害**、の 2 点で成立する。
+  close 時の下ページへの returned-to-own(live=1)も同じ over-fire 類。
+- 計測上の注意: hidden Activity の DOM は `display:none` でも textContent に
+  残るため、FrameStrip(route subtree の textContent 録画)は閉じたモーダルの
+  文字列を拾い続ける。フレーム判定に使うときは probe の値 attribute で絞ること。
+
 ## 設計結論: App Router における所有権の規律(オーナー判断・2026-07-31)
 
 App Router で Hydration(RSC seed)を使うと、同じデータが Next の payload

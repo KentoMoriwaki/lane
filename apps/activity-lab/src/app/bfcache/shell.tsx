@@ -19,6 +19,7 @@ const TARGETS = [
   { label: "detail/3", read: bfReads.detail("3") },
   { label: "static", read: bfReads.static() },
   { label: "cached", read: bfReads.cached() },
+  { label: "photo/1", read: bfReads.photo("1") },
 ] as const;
 
 const ROUTES = [
@@ -29,9 +30,16 @@ const ROUTES = [
   { href: "/bfcache/detail/3", label: "detail/3" },
   { href: "/bfcache/static", label: "static" },
   { href: "/bfcache/cached", label: "cached" },
+  { href: "/bfcache/photo/1", label: "photo/1 (intercepted)" },
 ] as const;
 
-export function BfcacheShell({ children }: { children: ReactNode }) {
+export function BfcacheShell({
+  children,
+  modal,
+}: {
+  children: ReactNode;
+  modal?: ReactNode;
+}) {
   const [targetIndex, setTargetIndex] = useState(0);
   const setCount = useRef(0);
   const routeAreaRef = useRef<HTMLDivElement>(null);
@@ -133,6 +141,10 @@ export function BfcacheShell({ children }: { children: ReactNode }) {
           className="rounded-lg border border-zinc-300 bg-zinc-100 p-3"
         >
           {children}
+          {/* The @modal slot renders inside the recorded route area so the
+              FrameStrip sees modal content too. Not styled as an overlay —
+              slot mechanics, not presentation, are what's under observation. */}
+          {modal}
         </div>
 
         <FrameStrip recorder={recorder} label="route subtree (red = (hud) value in DOM)" />

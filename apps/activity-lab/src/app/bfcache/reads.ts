@@ -42,6 +42,12 @@ export const bfReads = {
     laneRead({ key: ["bf", "detail", id], loader: loaderFor(`detail/${id}`) }),
   /** Seeded by the fully static route — no dynamic API touches the payload. */
   static: () => laneRead({ key: ["bf", "static"], loader: loaderFor("static") }),
+  /**
+   * Never seeded (client-owned): read by /bfcache/photo/[id] and by its
+   * intercepted @modal twin — the two mount points of the same key.
+   */
+  photo: (id: string) =>
+    laneRead({ key: ["bf", "photo", id], loader: loaderFor(`photo/${id}`) }),
   /** Seeded through a "use cache" function with its own hit-revealing counter. */
   cached: () => laneRead({ key: ["bf", "cached"], loader: loaderFor("cached") }),
 };

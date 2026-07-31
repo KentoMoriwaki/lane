@@ -204,6 +204,34 @@ PathnameProbe + lane Probe を配置。
     (live=1)も同じ over-fire 類。**ライブラリはアプリが catch-all を
     置いているかを仮定できないので、この over-approximation 前提の設計が
     唯一の安全な形**。
+- **browser back/forward(traverse)での modal 復帰は as-is reveal ではなく
+  republish 型**(2026-07-31 追計測。「Activity で保持されているのに戻るたびに
+  ロードが出る」の正体):
+  - 事実: forward 復帰のたびに reveal token(returned-to-own、state 保持)の
+    直後に **modal の Suspense が `seed-fallback render` に落ち**、この lab では
+    約 300ms 後に中身の effect が再 mount する(log 観測が low-pri render を
+    再スタートさせる増幅の影響はあり得るので幅は参考値)。初回 traverse は
+    `/bfcache/photo/1?_rsc=…` の**再フェッチを伴い**、2 回目はネットワークなし
+    (route cache ヒット)でも**同じ再サスペンドが起きる**。lane の loader は
+    0 回(store の promise 生存、値はそのまま)。boundary の外の PathnameProbe
+    は prev を保持したまま reveal した = ツリー骨格と state は Activity が
+    確かに保持している。
+  - 機構: interception ルートの payload は **Next-Url(参照元)で vary する**
+    (segment-cache は response の `Vary: Next-Url` から `couldBeIntercepted` を
+    立て、route cache のキーに nextUrl を含める — 同じ URL でも文脈で中身が
+    変わる)。そのため traverse 復元は通常ルートの「素の back = as-is」と
+    非対称で、modal slot の中身を payload から作り直す。page が新しい props
+    (新しい params promise)を受け取るので、`use(params)` 以下の Suspense は
+    **必ず**再サスペンドする。push での再オープン(Link)は既存 cache node を
+    そのまま再利用するので再サスペンドしない — この差が traverse だけ
+    「ロードが出る」理由。
+  - 含意: lane の分類ではこの復帰は「**republish が伴う復帰**」(server-owned
+    と同じ形)であり、トークン沈黙ケースではない。client-owned キーは store が
+    生きているので remount 後すぐ値が出る(loader 0)— 見えている「ロード」は
+    Next 自身の fallback フラッシュで、lane 側で消せる層ではない。トークン
+    設計への変更は不要(reveal 検知は traverse でも正常に機能していた)。
+    seeded modal(server-owned)にとっては、この republish はむしろ handoff の
+    供給源になる。
 - 計測上の注意: hidden Activity の DOM は `display:none` でも textContent に
   残るため、FrameStrip(route subtree の textContent 録画)は閉じたモーダルの
   文字列を拾い続ける。フレーム判定に使うときは probe の値 attribute で絞ること。

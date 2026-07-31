@@ -131,8 +131,20 @@ server-owned hydration に残る固有メリット: (1) client-owned キーと�
 タダで付く(republish = reveal トークン、#62 の handoff がその受け口)。
 これが要らなければ RSC 直渡しでよい。
 
-ライブラリへの含意: **hydration で seed されたキーへのクライアント mutation を
-dev モードで警告するガード**が、この規律を API として守らせる候補。
+**server-owned では loader も本質的に不要**(2026-07-31 追記): loader が発火する
+経路 — boundary 外 reader の mount 時 read(matrix AH:outside で実測: seed 前に
+loader が走り直後に上書きされる)、GC 後の再 read、`refetchOnMount` / `whenStale`
+— はすべて「client が Next の知らない vintage を取ってくる」所有権違反の入口。
+**loader を定義から消せば違反が構造的に不可能になる**。API 案:
+`laneRead({ key, loader })` = client-owned / `laneSeededRead({ key })` =
+server-owned(republish だけが供給源)。所有権が read の型にエンコードされるので、
+seeded read への `invalidate` / `update` / `set` / トリガー類は**型レベルで拒否**
+できる(dev 警告より強い)。宿題: loader なしエントリの retention 仕様(GC 後に
+republish の来ない復帰をされた場合 — reader の committed promise で表示は保たれ、
+次の republish で再 seed される、で足りるかの明文化)。
+
+ライブラリへの含意: 上記の型分割が本命。次点として **hydration で seed された
+キーへのクライアント mutation を dev モードで警告するガード**。
 「App Router で hydration は基本やるべきでない」という強い形は、「server-owned
 の規律(mutation 全面禁止)を守れないなら client-owned に倒せ — seed したキーを
 client で触るのが唯一の罠」というガイダンスに落ちる。

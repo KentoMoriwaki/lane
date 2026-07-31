@@ -7,6 +7,7 @@ import { FrameStrip, useFrameRecorder } from "@/lab/frame-recorder";
 import { labLog } from "@/lab/log";
 import { Timeline } from "@/lab/timeline";
 import { revalidateListAction } from "./actions";
+import { PathnameProbe } from "./pathname-probe";
 import { bfReads } from "./reads";
 import { bfcacheLane } from "./shared-lane";
 
@@ -63,6 +64,9 @@ export function BfcacheShell({ children }: { children: ReactNode }) {
             router bfcache keeps the last 3 inactive trees — visit a 4th route
             to evict the oldest
           </span>
+          {/* Control: the shell is never hidden, so this one shows how a
+              visible pathname consumer renders on every navigation. */}
+          <PathnameProbe route="hud" />
         </nav>
 
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-300 bg-white p-3">

@@ -4,6 +4,7 @@ import { LaneHydration, laneSnapshot } from "use-lane";
 import { nextValue } from "@/server/bfcache-data";
 import { bfReads } from "../reads";
 import { SnapshotIdentityProbe } from "../ident-probe";
+import { PathnameProbe } from "../pathname-probe";
 import { RouteProbes, SeedFallback } from "../route-probes";
 
 // `connection()` keeps the seed out of the static shell: without it the
@@ -38,6 +39,7 @@ export default function ListPage() {
   return (
     <main className="space-y-3">
       <h1 className="font-mono text-sm font-bold">/bfcache/list</h1>
+      <PathnameProbe route="list" />
       <Suspense fallback={<SeedFallback route="list" />}>
         <SeededList />
       </Suspense>

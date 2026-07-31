@@ -8,6 +8,12 @@
       "port": 3007
     },
     {
+      "name": "activity-lab-prod",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@lane/activity-lab", "exec", "next", "start", "-p", "3007"],
+      "port": 3007
+    },
+    {
       "name": "docs",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@lane/docs", "dev"],

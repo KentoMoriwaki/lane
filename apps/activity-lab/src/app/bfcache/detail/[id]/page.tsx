@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { LaneHydration, laneSnapshot } from "use-lane";
 import { nextValue } from "@/server/bfcache-data";
 import { bfReads } from "../../reads";
+import { PathnameProbe } from "../../pathname-probe";
 import { RouteProbes, SeedFallback } from "../../route-probes";
 
 const IDS = ["1", "2", "3"];
@@ -40,6 +41,7 @@ export default function DetailPage({
   return (
     <main className="space-y-3">
       <h1 className="font-mono text-sm font-bold">/bfcache/detail/[id]</h1>
+      <PathnameProbe route="detail" />
       <Suspense fallback={<SeedFallback route="detail" />}>
         <SeededDetail params={params} />
       </Suspense>

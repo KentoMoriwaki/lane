@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { LaneHydration, laneSnapshot } from "use-lane";
 import { bfReads } from "../reads";
 import { SnapshotIdentityProbe } from "../ident-probe";
+import { PathnameProbe } from "../pathname-probe";
 import { RouteProbe, SeedFallback } from "../route-probes";
 
 // Deliberately static: no dynamic API anywhere on this route, so the payload
@@ -18,6 +19,7 @@ export default function StaticPage() {
   return (
     <main className="space-y-3">
       <h1 className="font-mono text-sm font-bold">/bfcache/static</h1>
+      <PathnameProbe route="static" />
       <SnapshotIdentityProbe route="static" snapshots={snapshots} />
       <Suspense fallback={<SeedFallback route="static" />}>
         <LaneHydration snapshots={snapshots}>

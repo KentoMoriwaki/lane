@@ -102,8 +102,8 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
     - 次の仮説: **`usePathname()` をトークンにする** — hidden 中に他ルートへ
       移ると pathname が変わり、復帰で自分のパスに戻る。「pathname が自分の
       パスに戻った render」= reveal の前後比較として、サーバーの参加なしに
-      機能しうる。ただし Next が hidden ツリーに pathname context の更新を
-      配るか(hidden render が起きるか、context が凍結されないか)は未計測
+      機能しうる。→ **検証済み・成立(2026-07-31、下の「検証: usePathname
+      トークン」参照)**
 - 差は通知側だけ: remove の通知は visible reader も即 fallback(urgent)。
   invalidate の通知は transition で収束(SWR 維持)。**未通知ゲート**(購読経由で
   通知を受けた reader は照合で drop しない)が、visible reader への urgent
@@ -111,6 +111,51 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
 - 合成: hidden 中の remove/invalidate + 復帰時 republish は、reveal render の
   drop が store の新 seed(settled)を見つけて fallback なしで採用(RS1 の #62
   挙動と一致)。外が知らなければ fallback + reveal での read。
+
+### 検証: usePathname トークン(本番ビルド・2026-07-31 計測)— 成立
+
+/bfcache の各ルート + HUD(対照)に `pathname-probe.tsx` を追加して計測。
+プローブは pattern B と同じ機構をそのまま実行する: prev を state に持ち、
+render 中に `prev !== usePathname()` を前後比較(変化時は render 中 setState)。
+own path は初回 render の pathname を ref に固定。effect の mount/cleanup で
+live フラグを持ち、live=0 の render = hidden render / reveal render(effect
+再 mount 前)/ 初回 mount を判別する。
+
+- **ビルド時の発見**: cacheComponents では `usePathname()` は「実行時にしか
+  確定しない URL データ」扱い。dynamic ルート(detail/[id])の client
+  component が Suspense 外で呼ぶと `next build` が失敗する
+  (digest `CLIENT_HOOK_DYNAMIC`、修正は "[stream] Suspense で包む" か
+  "[block] `export const instant = false`")。プローブは自前の Suspense で
+  包んで解決 — **pathname トークンを使う機構は Suspense boundary の下に
+  住むことが構造的に強制される**。Suspense 内なら static ルートは ○ のまま
+  (静的性は壊れない)。
+- **(a) hidden ツリーに pathname 更新は届く**: ナビゲーションのたびに、
+  すべての hidden ルートの probe が live=0 で re-render し、新しい pathname を
+  観測した(context は凍結されない。hidden が複数でも全員に届く。例: list と
+  static が両方 hidden のとき、cached への nav で両者が `TOKEN-FIRE (away)`)。
+- **(b) reveal render で前後比較が成立**: 4 ケースすべてで、reveal の render が
+  `prev=<離脱先> → current=<own>` の TOKEN-FIRE を effect 再 mount より前
+  (live=0)に観測した。順序は **token render → layout-mount → passive-mount**。
+  - 素の back → static ルート(payload なし・ident イベントなし)✓
+  - push 再訪 → static ルート(payload なし)✓
+  - 素の back → "use cache" ルート(revalidate 窓内・payload なし)✓
+  - push 再訪 → dynamic ルート(republish あり、トークンも同時に発火)✓
+  - **payload の流れない復帰(従来のトークン沈黙ケース)全てで発火** —
+    残っていた沈黙は pathname トークンで埋まる。
+- **設計上の注意 — トークンは hide 側でも発火する**: 離脱時にも hidden render
+  で `prev=own → current=他` の変化が起きる(live=0)。「変わった」だけを
+  合図にすると hide 直後の hidden render で drop+read が始まり、仕様 Q4
+  (hidden 中は読まない)に違反する。**drop+re-read の条件は
+  「prev ≠ current かつ current === ownPath(mount 時固定)」**とすること。
+  current ≠ own の変化は無視(hidden のまま素通り)。
+- **限界**: pathname は path しか区別しない。同一 path で searchParams だけ
+  異なる再訪はトークンにならない(必要なら `useSearchParams` を追加トークンに
+  する — 同じく URL データなので Suspense 前提)。また own path の固定は
+  「1 つの probe は 1 つのルートにしか住まない」前提(layout 級の共有
+  component が使う場合は要注意)。
+- 結論: **client-owned × payload の流れない復帰の「残る沈黙」は、
+  usePathname トークン(own path 固定 + reveal 判定付き)で埋められる**。
+  pattern B のトークン供給源として採用可。
 
 ## 設計結論: App Router における所有権の規律(オーナー判断・2026-07-31)
 

@@ -3,6 +3,7 @@ import { LaneHydration, laneSnapshot } from "use-lane";
 import { cachedValue } from "@/server/cached-data";
 import { bfReads } from "../reads";
 import { SnapshotIdentityProbe } from "../ident-probe";
+import { PathnameProbe } from "../pathname-probe";
 import { RouteProbe, SeedFallback } from "../route-probes";
 
 // The seed comes through "use cache": within the cache lifetime a revisit is
@@ -28,6 +29,7 @@ export default function CachedPage() {
   return (
     <main className="space-y-3">
       <h1 className="font-mono text-sm font-bold">/bfcache/cached</h1>
+      <PathnameProbe route="cached" />
       <Suspense fallback={<SeedFallback route="cached" />}>
         <SeededCached />
       </Suspense>

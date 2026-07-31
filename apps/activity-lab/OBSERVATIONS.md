@@ -36,19 +36,25 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
   lifetime を知っているので、「新データを取ってから reveal」を自分で編成できる。
   lane 側の受け口は LaneHydration の republish → handoff(#62 の機構が正しい形)。
   settled な seed の採用なので fetch も fallback も出ない。
-- **パターン B(外が知らない)**: reader は render 時に自分の promise が
-  remove/invalidate 済みかを照合し、済みなら **suspend(drop)。ただし fetch は
-  始めず armed のまま**。**read の開始は reveal の瞬間**で、reveal のペイントは
-  fallback、settle したら新値。古い中身はどのフレームにも描かれない。
-  - 実装課題: suspend した reader 自身の effect は mount されないため、reveal を
-    検知して armed な read を発火するホストが**同じ boundary 内の suspend して
-    いない mounted コンポーネント**に必要。opaque Activity での自然なホストは
-    **Suspense fallback**(reader が suspend して visible なとき、確実に mount
-    されて visible なのは fallback で、その effect は hidden 中は剥がされ reveal
-    で再 mount される = reveal 信号として正確)。lane がヘルパー
-    (`useLaneRevealPing()` 等)を提供し fallback に置いてもらう形。instrumented
-    (自作ルーター)なら visibility context で直接解ける。**ヘルパーの無い
-    fallback の下での backstop は未解決(spike の宿題)**。
+- **パターン B(外が知らない)— トークン方式(確定・2026-07-31)**: reader は
+  「reveal 時に変わる値(トークン)」を state に持ち、render 中に prev ≠ current
+  を**前後比較**する。変わった render でだけ記録(remove/invalidate 時点の
+  promise)を照合し、該当すれば **drop → その render で re-read 開始** → suspend
+  → fallback → 新値。fetch の開始 = トークンが変化した render = reveal の render。
+  - hidden 中の re-render はトークン不変 → 何もしない(読まない)。visible の
+    urgent render もトークン不変 → 照合自体が走らず SWR は構造的に安全(未通知
+    ゲート不要)。armed 状態も fallback ホストも不要。
+  - これは #62 の handoff("prevSource is state" の render 中比較)の一般化で
+    あり、新しいパターンではない。
+  - トークンの供給源: (A) Next では復帰時の republish = **hydration source の
+    変化がそのままトークン**(復帰ごとに新 payload が流れるのは /bfcache で実測
+    済み)。(B) 自作ルーターでは owner が visibility / epoch を流す(instrumented)。
+  - remove は従来どおり通知で visible reader も即 fallback(urgent が仕様なので
+    無条件照合のままでよい)。invalidate はトークン照合のみ。
+  - **既知の限界**: opaque で reveal に何の値の変化も伴わない場合(republish の
+    ない reveal)は検知不能で、その reveal では古い値が出る。Next が「payload を
+    流さずに reveal する」ケースが実在するか(segment cache の staleTime 内素通し)
+    は lab で要確認 — 空集合ならこの設計で仕様は完全に満たされる。
 - 差は通知側だけ: remove の通知は visible reader も即 fallback(urgent)。
   invalidate の通知は transition で収束(SWR 維持)。**未通知ゲート**(購読経由で
   通知を受けた reader は照合で drop しない)が、visible reader への urgent

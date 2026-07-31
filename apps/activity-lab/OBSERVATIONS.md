@@ -17,6 +17,59 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
 4. hidden 中の合流は許すべきか(hidden 中の loader 発火を含む)
    - 答え:
 
+## 一次観測(2026-07-31、自動走行による粗い読み)
+
+matrix m1–m17 を main と #62(`lab/activity-lab-on-62`)の両ブランチで自動再生し、
+router-sim / bfcache は conflict 系を両ブランチで手動再生した。粒度は「最終値・
+FrameStrip の赤カウント・loader-call の有無と順序」。probe 別の fallback フラッシュと
+フレーム単位の tearing はまだ計測していない(→ 残課題)。
+
+### 両ブランチで同一だったもの(matrix はこの粒度で差なし)
+
+- **m1**: hidden のまま mount で loader は発火する(prefetch-on-prerender)。
+  Hydration 象限は seed が fetch を抑止(H の calls=0)
+- **m2/m7**: hidden 中の invalidate に hidden reader は無反応。同キーの visible reader
+  (P/H 象限、A/AH の outside)が通知経由で即 refetch し、hidden 側は reveal 後に
+  catch-up で収束。**m7 の「hidden 中 loader 発火」は observed だが、発火主は visible
+  な outside reader であり hidden reader ではない**(A 象限に outside がいる設計上、
+  純粋な「hidden だけ」の観測は B キーで取る必要がある — 設計メモ)
+- **m3/m4**: remove → visible reader は fallback→refetch。P/H(visible 象限)で削除値
+  が 1–2 フレーム赤に出る(通知〜fallback コミットの隙間)。hidden 象限(A/AH)の
+  赤は 0
+- **m8**: remove + urgent / flushSync 同一 task — 赤は P/H の 1–2 のみで両ブランチ同一。
+  クラッシュ・値の破綻なし。**ただし probe 別 fallback フラッシュ(a1 だけ落ちる
+  tearing)はこの計測では見えていない — fine pass 必須**
+- **m10**: remove 後、hidden のまま contextTick で render を誘発しても loader 発火なし
+- **m12**: invalidate + urgent / flushSync — 異常なし、赤 0
+- **RS3 相当**: 操作なしのルート往復では値が保たれ loader も発火しない(keep-alive 成立)
+
+### 両ブランチで同一に出た未解明の現象(重要)
+
+- **m8 実行後、A 象限の reveal 収束が止まる**: m13/14/15(hide → remove →(復活)→
+  reveal)で、P 象限は新値に進むのに A 象限の reader は m8 時点の v10 を表示し続けた。
+  m16(hide なしの可視操作)でようやく v20 に収束。AH 象限も m8 以降 a2=v9 のまま
+  bg:1 / tr:1 が立ちっぱなし。**詰まった transition(または残留 background)が
+  hidden→reveal の catch-up を無期限に止めている疑い**。main でも出るので #62 の
+  regression ではないが、「stuck transition は reveal 収束を止めてよいか」は仕様の問い
+  1 に直結する新しい入力。単離再現(m6/m8 を単独実行後に m13)を fine pass で
+- m6(refetchOnMount=always)実行後、bg:1 が残留する reader がいる(上と同根の可能性)
+
+### 差分が出たもの(#62 の効果)— hidden × hydration 系
+
+| 観測 | main | #62 |
+| --- | --- | --- |
+| RS1: hidden 中 remove → 復帰(+新 snapshot publish) | 復帰時に **loader 1 回発火**し、その結果が新 snapshot に負ける(無駄 fetch + 競争。最終値は同じ) | **loader 発火 0**。render 内で drop → handoff が新 seed を直接採用 |
+| BF(実機): 離脱中 HUD remove → 復帰 | (要再計測 — 初回手動確認では新 rsc 値採用まで確認、loader 数未記録) | **loader 0・赤 0** で新 rsc 値(v2 (rsc))を採用 |
+| RS2: shared キー(visible 併読あり) | visible 側は通知で refetch(共通) | 同左。hidden の他 boundary は**自分の boundary が republish するまで旧値保持**(handoff は boundary 単位) |
+
+### 計測上の注意(次の pass で直す)
+
+- 象限の lane はシナリオ間でリセットされないため、状態が持ち越される(m6/m8 の残留が
+  m13–15 を汚染した可能性と、それ自体が発見である可能性の両方がある)
+- probe 別 suspense-fallback カウントとフレーム単位の tearing 判定は未計測。FrameStrip
+  の span title を読む形で fine pass を行う
+- m6 は完走するが長い(reader opts を数パターン回すため)。m18(StrictMode)は未実施
+
 ## シナリオ表
 
 | # | シナリオ | main での挙動 | #62 での挙動 | 望ましい挙動(判断) | メモ |

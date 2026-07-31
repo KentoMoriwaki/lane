@@ -6,4 +6,10 @@ packages:
 # the global `minimumReleaseAge` supply-chain guard so apps/spa can use v8.
 minimumReleaseAgeExclude:
   - "react-router"
+  # next@16.3.0-preview.10 (published 2026-07-28) is inside the 7-day guard
+  # window; apps/activity-lab pins it exactly to observe the router bfcache
+  # keep-alive under `cacheComponents`. `@next/*` covers the swc/env companion
+  # packages that ship on the same cadence.
+  - "next"
+  - "@next/*"
 

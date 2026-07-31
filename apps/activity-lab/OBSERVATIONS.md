@@ -23,12 +23,12 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
    「新値あり」のどちらとして合流すべきか
    - 答え:
 4. hidden 中の合流は許すべきか(hidden 中の loader 発火を含む)
-   - 答え(確定・2026-07-31): **eager refetch(invalidate の瞬間に購読ゼロでも撃つ)
-     は却下。lazy な re-read(render された時に読む)は hidden でも許す** — これは
-     m1 で実測済みの「hidden prerender でも mount 時 read は走る」と同じ一様な規則
-     であり、新しいタイミング概念を持ち込まない。reveal を特別なイベントとして
-     検知する必要はない(検知しようとした案 — reveal-exact fetch、fallback ping —
-     は過剰設計として破棄)。
+   - 答え(確定・2026-07-31): **hidden の間は新しいデータを読まない。read の開始は
+     reveal の瞬間。** eager refetch(invalidate 時に即撃つ)も、hidden render を
+     契機とした read も却下。drop の照合が hidden render で fallback を(hidden の
+     まま)コミットするのは無害だが、そのとき fetch は始めない(armed 状態)。
+     ※初回 mount の prerender read(m1)は「まだ何も持っていない reader」の話で
+     別枠 — ここで縛るのは「無効化されたものを持っている reader」の再読タイミング。
 
 ### 確定した設計原則: 「外が知っている / 知らない」の二パターン分離(2026-07-31)
 
@@ -36,11 +36,19 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
   lifetime を知っているので、「新データを取ってから reveal」を自分で編成できる。
   lane 側の受け口は LaneHydration の republish → handoff(#62 の機構が正しい形)。
   settled な seed の採用なので fetch も fallback も出ない。
-- **パターン B(外が知らない)**: reader は render された時に自分の promise が
-  remove/invalidate 済みかを照合し、済みなら **suspend(drop → その render で
-  re-read)**。古い中身はどのフレームにも描かれず、fallback がコスト。
-  「無効化済みの promise は持っていないのと同じ」を mount 時 read の規則に足す
-  だけで、remove と invalidate は同じ骨格になる。
+- **パターン B(外が知らない)**: reader は render 時に自分の promise が
+  remove/invalidate 済みかを照合し、済みなら **suspend(drop)。ただし fetch は
+  始めず armed のまま**。**read の開始は reveal の瞬間**で、reveal のペイントは
+  fallback、settle したら新値。古い中身はどのフレームにも描かれない。
+  - 実装課題: suspend した reader 自身の effect は mount されないため、reveal を
+    検知して armed な read を発火するホストが**同じ boundary 内の suspend して
+    いない mounted コンポーネント**に必要。opaque Activity での自然なホストは
+    **Suspense fallback**(reader が suspend して visible なとき、確実に mount
+    されて visible なのは fallback で、その effect は hidden 中は剥がされ reveal
+    で再 mount される = reveal 信号として正確)。lane がヘルパー
+    (`useLaneRevealPing()` 等)を提供し fallback に置いてもらう形。instrumented
+    (自作ルーター)なら visibility context で直接解ける。**ヘルパーの無い
+    fallback の下での backstop は未解決(spike の宿題)**。
 - 差は通知側だけ: remove の通知は visible reader も即 fallback(urgent)。
   invalidate の通知は transition で収束(SWR 維持)。**未通知ゲート**(購読経由で
   通知を受けた reader は照合で drop しない)が、visible reader への urgent

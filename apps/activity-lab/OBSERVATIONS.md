@@ -184,15 +184,26 @@ PathnameProbe + lane Probe を配置。
   v2 で収束**。仕様が却下する reveal 挙動が interception 形でもそのまま再現。
   トークンは stale 描画の**直前の render**で発火しており、pattern B の
   drop + re-read がそのまま適用できる位置にある。
-- **モーダルを開いたまま第三ルートへ nav すると、モーダルは開いたまま残る**
-  (parallel routes の既知挙動: children slot だけ list に切替、@modal slot は
-  保持。このとき初めて下ページ static が hidden 入りする)。結果、
-  **「visible なのに pathname ≠ own」の reader が実在する**。したがって
-  トークンの意味論は「current === own ⇔ visible」**ではなく**、
-  (a) hidden なら必ず current ≠ own(reveal は見逃さない = over-approximate)、
-  (b) visible reader への over-fire はあり得るが、visible は購読が生きて
-  いるので**未通知ゲート + 記録照合が空振りして無害**、の 2 点で成立する。
-  close 時の下ページへの returned-to-own(live=1)も同じ over-fire 類。
+- **モーダルを開いたまま第三ルートへ nav したときの挙動は catch-all の有無で
+  割れる**(両方計測):
+  - catch-all なし(最初の計測): parallel routes の既知挙動でモーダルは
+    **開いたまま残る**(children slot だけ list に切替、@modal slot は保持)。
+    結果、**「visible なのに pathname ≠ own」の reader が実在する**。
+  - `@modal/[...catchAll]`(null を返す)あり = 実アプリの定石形(修正後):
+    nav でモーダルは**見た目上閉じる**が、ツリーは unmount ではなく
+    **`display:none` の hidden Activity 入り**(下ページ static と同じ nav で
+    両方 hidden 化。cleanup 後も state 保持の live=0 render、away-fire)。
+    別ルート(list)から再オープンすると、kept ツリーが reveal として復活:
+    returned-to-own が passive-mount 前に発火、loader 0、値復元。今度は
+    list が visible の下ページになる(live=1 の away-fire)。
+  - どちらの形でも、トークンの意味論は「current === own ⇔ visible」
+    **ではなく**、(a) hidden なら必ず current ≠ own(reveal は見逃さない =
+    over-approximate)、(b) visible reader への over-fire はあり得るが、
+    visible は購読が生きているので**未通知ゲート + 記録照合が空振りして
+    無害**、の 2 点で成立する。close 時の下ページへの returned-to-own
+    (live=1)も同じ over-fire 類。**ライブラリはアプリが catch-all を
+    置いているかを仮定できないので、この over-approximation 前提の設計が
+    唯一の安全な形**。
 - 計測上の注意: hidden Activity の DOM は `display:none` でも textContent に
   残るため、FrameStrip(route subtree の textContent 録画)は閉じたモーダルの
   文字列を拾い続ける。フレーム判定に使うときは probe の値 attribute で絞ること。

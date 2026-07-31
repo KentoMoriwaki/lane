@@ -102,6 +102,41 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
   drop が store の新 seed(settled)を見つけて fallback なしで採用(RS1 の #62
   挙動と一致)。外が知らなければ fallback + reveal での read。
 
+## 設計結論: App Router における所有権の規律(オーナー判断・2026-07-31)
+
+App Router で Hydration(RSC seed)を使うと、同じデータが Next の payload
+キャッシュと lane store の二箇所に写る。**invalidation・mutation が lane 側だけに
+届く構成は一貫性を失う**(実測: lane 層の無効化を Next は知らず、payload の
+流れない復帰 — 素の back / static / fresh-cached — で古い姿が as-is 復元される。
+一方 Next 自身の revalidatePath は back でも旧値を 1 フレームも見せない)。
+
+キーごとの判定則:
+
+| 条件 | 選択 |
+| --- | --- |
+| client component が誰も反応的に読まない | lane に入れない(RSC 直渡し) |
+| client が読むが、真実は server | **hydration(server-owned)** |
+| client が鮮度・内容を制御する | **seed しない(client-owned)** |
+
+**server-owned キーの規律**: lane のクライアント側 mutation 面(`update` / `set` /
+`invalidate` / `remove`)は**全面的に使わない**。lane は読み取り専用の配布層。
+楽観更新は `useOptimistic` を `useLane` の戻り値の上に component レベルで重ねる
+(store に書かない — `lane.update` は永続書き込みであり、republish が来ない復帰
+経路では精算されず、action 失敗時の巻き戻しも手動になるため、invalidate と同型の
+所有権違反)。書き込みは server action → revalidate → republish が唯一のチャネル。
+
+server-owned hydration に残る固有メリット: (1) client-owned キーと同じ読み口
+(useLane / Suspense / transition 意味論)、(2) SSR + mount 後 fetch なし、
+(3) prop drilling なしの横断読みと republish の一貫収束、(4) Activity 対応が
+タダで付く(republish = reveal トークン、#62 の handoff がその受け口)。
+これが要らなければ RSC 直渡しでよい。
+
+ライブラリへの含意: **hydration で seed されたキーへのクライアント mutation を
+dev モードで警告するガード**が、この規律を API として守らせる候補。
+「App Router で hydration は基本やるべきでない」という強い形は、「server-owned
+の規律(mutation 全面禁止)を守れないなら client-owned に倒せ — seed したキーを
+client で触るのが唯一の罠」というガイダンスに落ちる。
+
 ## 一次観測(2026-07-31、自動走行による粗い読み)
 
 matrix m1–m17 を main と #62(`lab/activity-lab-on-62`)の両ブランチで自動再生し、

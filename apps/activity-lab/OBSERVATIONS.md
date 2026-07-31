@@ -74,6 +74,21 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
       → **Next 自身が「無効化相当のものは見せず fallback で新データを待つ」を
       選んでいる**。パターン B の規範(古い中身を描かない + reveal で read)と
       同型であり、lane がそれに合わせることは Next の挙動とも整合する。
+    - **back/forward の復帰(本番・2026-07-31 計測)**: browser back は push 再訪と
+      別物。**revalidate なしの back は完全な as-is 復元**(旧値を最初のフレーム
+      から表示、fallback なし、再フェッチなし、payload なし = トークン沈黙。
+      dynamic ルートでも)。一方 **detail 側で `revalidatePath("/bfcache/list")`
+      してから back すると、旧値を 1 フレームも見せず fallback(在庫 814ms)→
+      新値、payload 再ストリーム(ident NEW)**。つまり Next にとって明示的な
+      invalidation は back の as-is 復元より強い。**「visible 時に無効化済みの
+      中身を見せない」という lane の規範は Next 自身の意味論と同型**であり、
+      back で厳密さを緩める根拠はない。
+    - トークンの守備範囲(まとめ): Next 層の invalidation は reveal に republish
+      が必ず伴う(トークン自動)。**残る沈黙は「lane 層だけが無効を知っている ×
+      payload の流れない復帰(素の back / static / fresh-cached)」の交差のみ**。
+      埋める候補: (i) pathname トークン、(ii) lane の invalidate 時にアプリが
+      `router.refresh()` / `revalidatePath` で Next にも伝える運用ブリッジ
+      (lane に新機構が不要になる可能性)。
     - 次の仮説: **`usePathname()` をトークンにする** — hidden 中に他ルートへ
       移ると pathname が変わり、復帰で自分のパスに戻る。「pathname が自分の
       パスに戻った render」= reveal の前後比較として、サーバーの参加なしに

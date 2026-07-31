@@ -6,6 +6,7 @@ import { LaneProvider } from "use-lane";
 import { FrameStrip, useFrameRecorder } from "@/lab/frame-recorder";
 import { labLog } from "@/lab/log";
 import { Timeline } from "@/lab/timeline";
+import { revalidateListAction } from "./actions";
 import { bfReads } from "./reads";
 import { bfcacheLane } from "./shared-lane";
 
@@ -106,6 +107,20 @@ export function BfcacheShell({ children }: { children: ReactNode }) {
             className="rounded border border-emerald-400 bg-white px-3 py-1 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
           >
             set
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              labLog.push(
+                "bfcache:op",
+                "lane-op",
+                "revalidatePath /bfcache/list (next layer)",
+              );
+              void revalidateListAction();
+            }}
+            className="rounded border border-sky-400 bg-white px-3 py-1 text-sm font-semibold text-sky-700 hover:bg-sky-50"
+          >
+            next: revalidatePath(list)
           </button>
         </div>
 

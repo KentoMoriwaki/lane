@@ -10,7 +10,15 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
    lane なら合流してよいか**(urgent / transition / offscreen prerender / reveal)
    - 答え:
 2. remove と invalidate を同じ合流機構(+ ポリシー差)で扱うべきか
-   - 答え:
+   - 答え: **扱うべき(オーナー判断・2026-07-31)。規範は「visible になる時に
+     invalidate/remove 済みの promise の中身を表示しない」。** 実装として不可能だと
+     示されるまで、現行の「invalidate は reveal で古い値を描き、コミット後に収束する」
+     挙動を仕様として受け付けない。`activity.test.ts` の当該 characterization
+     (invalidate の reveal が古い値を見せて background で収束する、を固定している
+     テスト)は仕様ではなく、この規範が実装され次第書き換える。
+   - 未決の境界: 常時 visible な購読 reader への invalidate(SWR: 値を見せたまま
+     background 収束)にもこの規範を適用するか。適用すると tearing.test.ts が守る
+     transition 保証と正面衝突するため、範囲の確定が必要
 3. remove 後に同キーが復活していたとき、古い promise の reader は「削除」と
    「新値あり」のどちらとして合流すべきか
    - 答え:

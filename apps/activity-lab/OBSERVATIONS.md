@@ -63,6 +63,17 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
       の re-render 自体が観測されないケースあり)→ **トークン沈黙**
     - 意味論: 沈黙するのは「Next がルートの全データを fresh と判断した reveal」。
       その下で lane が独自に invalidate したキーは信号を受け取れない
+    - **BF-Q1 の答え(本番・2026-07-31 計測)**: cached な殻 + dynamic な中身
+      (PPR)のルートへ bfcache 経由で復帰したとき、Next は
+      **(a) dynamic を待ってから遷移、でも (b) 古い dynamic を見せて後追い更新、
+      でもなく、(c) 遷移は即時(殻は 6ms で表示)+ dynamic 部分は保持していた
+      旧内容を見せずに Suspense fallback へ落とし、新 payload 到着で新値を表示**。
+      dynamic シードに 800ms の人工遅延を入れて位相分離した計測で、離脱前は
+      `list v2 (rsc)` を表示していたのに、復帰フレーム 1 発目から 805ms まで
+      fallback、その後 `list v3 (rsc)`。旧値のフレームはゼロ。
+      → **Next 自身が「無効化相当のものは見せず fallback で新データを待つ」を
+      選んでいる**。パターン B の規範(古い中身を描かない + reveal で read)と
+      同型であり、lane がそれに合わせることは Next の挙動とも整合する。
     - 次の仮説: **`usePathname()` をトークンにする** — hidden 中に他ルートへ
       移ると pathname が変わり、復帰で自分のパスに戻る。「pathname が自分の
       パスに戻った render」= reveal の前後比較として、サーバーの参加なしに

@@ -12,6 +12,10 @@ import { RouteProbes, SeedFallback } from "../route-probes";
 // distinction this route exists to observe.
 async function SeededList() {
   await connection();
+  // Slow the dynamic hole down enough that a revisit's phases are separable
+  // frame-by-frame: whatever is on screen during this window is what Next
+  // shows while the fresh payload is in flight.
+  await new Promise((resolve) => setTimeout(resolve, 800));
 
   const snapshots = {
     entries: [

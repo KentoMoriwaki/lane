@@ -51,10 +51,23 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
     済み)。(B) 自作ルーターでは owner が visibility / epoch を流す(instrumented)。
   - remove は従来どおり通知で visible reader も即 fallback(urgent が仕様なので
     無条件照合のままでよい)。invalidate はトークン照合のみ。
-  - **既知の限界**: opaque で reveal に何の値の変化も伴わない場合(republish の
-    ない reveal)は検知不能で、その reveal では古い値が出る。Next が「payload を
-    流さずに reveal する」ケースが実在するか(segment cache の staleTime 内素通し)
-    は lab で要確認 — 空集合ならこの設計で仕様は完全に満たされる。
+  - **既知の限界 — 計測済み(2026-07-31、/bfcache に static・"use cache" ルートと
+    snapshot 同一性プローブを追加して確認)**: 「payload を流さずに reveal する」
+    ケースは**本番ビルドで実在する**。空集合ではない。
+    - dev サーバー: static / cached ルートでも復帰のたびに payload が再ストリーム
+      され、snapshots は値同一でも **identity が NEW** → トークンは常に発火
+      (dev は判断材料にならない)
+    - **本番**: dynamic(PPR、`connection()`)ルートは復帰ごとに NEW + 新値
+      (list v1→v2→v3)→ トークン発火 ✓。**static ルートと revalidate 内の
+      "use cache" ルートは復帰で NEW にならない**(identity SAME、または subtree
+      の re-render 自体が観測されないケースあり)→ **トークン沈黙**
+    - 意味論: 沈黙するのは「Next がルートの全データを fresh と判断した reveal」。
+      その下で lane が独自に invalidate したキーは信号を受け取れない
+    - 次の仮説: **`usePathname()` をトークンにする** — hidden 中に他ルートへ
+      移ると pathname が変わり、復帰で自分のパスに戻る。「pathname が自分の
+      パスに戻った render」= reveal の前後比較として、サーバーの参加なしに
+      機能しうる。ただし Next が hidden ツリーに pathname context の更新を
+      配るか(hidden render が起きるか、context が凍結されないか)は未計測
 - 差は通知側だけ: remove の通知は visible reader も即 fallback(urgent)。
   invalidate の通知は transition で収束(SWR 維持)。**未通知ゲート**(購読経由で
   通知を受けた reader は照合で drop しない)が、visible reader への urgent

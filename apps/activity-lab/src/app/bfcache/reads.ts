@@ -40,4 +40,8 @@ export const bfReads = {
   list: () => laneRead({ key: ["bf", "list"], loader: loaderFor("list") }),
   detail: (id: string) =>
     laneRead({ key: ["bf", "detail", id], loader: loaderFor(`detail/${id}`) }),
+  /** Seeded by the fully static route — no dynamic API touches the payload. */
+  static: () => laneRead({ key: ["bf", "static"], loader: loaderFor("static") }),
+  /** Seeded through a "use cache" function with its own hit-revealing counter. */
+  cached: () => laneRead({ key: ["bf", "cached"], loader: loaderFor("cached") }),
 };

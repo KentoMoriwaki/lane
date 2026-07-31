@@ -15,6 +15,8 @@ const TARGETS = [
   { label: "detail/1", read: bfReads.detail("1") },
   { label: "detail/2", read: bfReads.detail("2") },
   { label: "detail/3", read: bfReads.detail("3") },
+  { label: "static", read: bfReads.static() },
+  { label: "cached", read: bfReads.cached() },
 ] as const;
 
 const ROUTES = [
@@ -23,6 +25,8 @@ const ROUTES = [
   { href: "/bfcache/detail/1", label: "detail/1" },
   { href: "/bfcache/detail/2", label: "detail/2" },
   { href: "/bfcache/detail/3", label: "detail/3" },
+  { href: "/bfcache/static", label: "static" },
+  { href: "/bfcache/cached", label: "cached" },
 ] as const;
 
 export function BfcacheShell({ children }: { children: ReactNode }) {

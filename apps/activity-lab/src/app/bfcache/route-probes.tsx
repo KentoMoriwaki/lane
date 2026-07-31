@@ -24,6 +24,26 @@ export function RouteProbes({ route, id }: { route: string; id?: string }) {
   );
 }
 
+// The read is built here, not passed in: an RSC page cannot hand a loader
+// function across the client boundary.
+export function RouteProbe({
+  route,
+  name,
+}: {
+  route: string;
+  name: "static" | "cached";
+}) {
+  const read = bfReads[name]();
+
+  return (
+    <Probe
+      channel={`bfcache:${route}:own`}
+      read={read}
+      label={`own — key ${JSON.stringify(read.key)}`}
+    />
+  );
+}
+
 export function SeedFallback({ route }: { route: string }) {
   labLog.push(`bfcache:${route}`, "custom", "seed-fallback render");
 

@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { LaneHydration, laneSnapshot } from "use-lane";
 import { nextValue } from "@/server/bfcache-data";
 import { bfReads } from "../reads";
+import { SnapshotIdentityProbe } from "../ident-probe";
 import { RouteProbes, SeedFallback } from "../route-probes";
 
 // `connection()` keeps the seed out of the static shell: without it the
@@ -20,9 +21,12 @@ async function SeededList() {
   };
 
   return (
-    <LaneHydration snapshots={snapshots}>
-      <RouteProbes route="list" />
-    </LaneHydration>
+    <>
+      <SnapshotIdentityProbe route="list" snapshots={snapshots} />
+      <LaneHydration snapshots={snapshots}>
+        <RouteProbes route="list" />
+      </LaneHydration>
+    </>
   );
 }
 

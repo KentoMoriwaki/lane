@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useContext,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -16,6 +17,7 @@ import {
   subscribeLane,
 } from "./core";
 import type { LaneInvalidationSource } from "./core";
+import { LaneHydrationSourceContext } from "./hydration";
 import { serializeKey } from "./keys";
 import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
@@ -56,6 +58,10 @@ export function useLane<T, C = T>(
   const readOptions = toReadOptions(read, loaderMeta);
   const [isTransitionPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
+  // The publication this render is happening under (nearest LaneHydration
+  // boundary, or the stable `undefined` outside one). Part of the read's
+  // source: a republish is a new source the same way a new key is.
+  const hydrationSource = useContext(LaneHydrationSourceContext);
   const [promise, setPromise] = useState<Promise<LaneRead<T>> | undefined>(() =>
     loader !== undefined ? readOrCreate(lane, key, loader, readOptions) : undefined,
   );
@@ -67,17 +73,31 @@ export function useLane<T, C = T>(
   // would survive the discarded render and leave the branch already satisfied, so
   // the retry would commit the *previous* key's promise and wait for the
   // post-subscribe catch-up to repair it.
-  const [prevSource, setPrevSource] = useState(() => ({ enabled, keyId, lane }));
+  const [prevSource, setPrevSource] = useState(() => ({
+    enabled,
+    hydration: hydrationSource,
+    keyId,
+    lane,
+  }));
 
   let effectivePromise = promise;
 
-  // A change in source identity OR in `enabled` switches the read during render:
-  // enabling reads the (possibly cached) promise immediately, disabling drops to
-  // `undefined` without an extra render of stale data.
+  // A change in source identity — the key, the lane, `enabled`, or the
+  // publication rendered under — switches the read during render: enabling
+  // reads the (possibly cached) promise immediately, disabling drops to
+  // `undefined` without an extra render of stale data. The hydration dimension
+  // is what carries a republish to readers no notification can reach: a hidden
+  // `<Activity>` reader is unsubscribed, but the reveal that re-streamed the
+  // payload re-renders it under a new publication, and this branch adopts the
+  // already-published seed in that same render — inside the revealing
+  // transition, so the framework's fetch-then-reveal stays a single commit
+  // with no fallback. (A reader whose key was not in the publication re-reads
+  // into its own current cache: a no-op.)
   if (
     enabled !== prevSource.enabled ||
     lane !== prevSource.lane ||
-    keyId !== prevSource.keyId
+    keyId !== prevSource.keyId ||
+    hydrationSource !== prevSource.hydration
   ) {
     const nextPromise =
       loader !== undefined
@@ -85,7 +105,7 @@ export function useLane<T, C = T>(
         : undefined;
     effectivePromise = nextPromise;
 
-    setPrevSource({ enabled, keyId, lane });
+    setPrevSource({ enabled, hydration: hydrationSource, keyId, lane });
     setPromise(nextPromise);
   }
 
@@ -228,11 +248,15 @@ export function useLane<T, C = T>(
   // into the boundary's fallback, which is the specified presentation for
   // repudiated content at a new appearance; the read starting here is what
   // "the read begins at the reveal" means. A replacement that settled while
-  // hidden (a republished seed, a sibling's finished read) suspends only until
+  // hidden (a sibling's finished read, a set() nobody saw) suspends only until
   // React instruments the already-resolved thenable and replays — the outdated
-  // value never reappears either way. A merely stale entry reuses its cache
-  // (`whenStale: "revalidate"`), so staleness never enters this channel;
-  // `whenStale: "refetch"` discards it here exactly as it would on a remount.
+  // value never reappears either way. Note the republish case does not land
+  // here: a reveal that carries a publication re-renders under a new hydration
+  // source and adopts during that render (see the source switch above), so
+  // this correction is the net for reveals no signal reached. A merely stale
+  // entry reuses its cache (`whenStale: "revalidate"`), so staleness never
+  // enters this channel; `whenStale: "refetch"` discards it here exactly as it
+  // would on a remount.
   const reconcileOnReveal = useEffectEvent((
     targetLane: Lane,
     targetKey: LaneKey,

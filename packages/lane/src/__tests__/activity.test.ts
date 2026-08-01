@@ -24,8 +24,13 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readOrCreate } from "../core";
-import { createLane, LaneProvider, useLane } from "../index";
-import type { Lane, LaneLoader, LaneReadSpec } from "../types";
+import { createLane, LaneHydration, LaneProvider, useLane } from "../index";
+import type {
+  Lane,
+  LaneHydrationSnapshots,
+  LaneLoader,
+  LaneReadSpec,
+} from "../types";
 import {
   deferred,
   resetVitest,
@@ -45,6 +50,12 @@ type RenderedApp = {
 
 const roots: Root[] = [];
 
+// The boundary's fallback increments this on every render. The republish test
+// pins the structural guarantee — a reveal that carries a publication commits
+// once, inside the revealing transition, without the fallback ever rendering —
+// so the counter, not just the final value, is the assertion.
+let fallbackRenders = 0;
+
 beforeAll(() => {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -59,6 +70,7 @@ afterEach(() => {
   }
 
   document.body.innerHTML = "";
+  fallbackRenders = 0;
   resetVitest();
 });
 
@@ -262,6 +274,126 @@ describe("Activity", () => {
     expect(valueElement(app).style.display).toBe("");
   });
 
+  it("reveals a republish that landed while hidden with no fallback", async () => {
+    vi.useFakeTimers();
+
+    // Infinity keeps the GC sweep out of runOnlyPendingTimers: the hide
+    // unsubscribes the reader, which arms the lane-wide sweep, and running
+    // pending timers would otherwise evict the entry mid-scenario.
+    const lane = createLane({ gcTime: Infinity });
+    const loads = controllableLoader();
+    const first: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-1" }],
+    };
+    const second: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-2" }],
+    };
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    document.body.append(container);
+    roots.push(root);
+
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, loads.loader, "visible", first));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    await waitForText(container, "server-1|background:0|transition:0");
+    expect(loads.calls).toBe(0);
+
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, loads.loader, "hidden", first));
+      await settlePromiseHandlers();
+    });
+
+    // The payload arrives while the tree is still hidden: the offscreen render
+    // picks up the new snapshots, the publish lands, and the hidden reader —
+    // unsubscribed, so no notification could reach it — adopts the seed
+    // through the source switch in its own (offscreen) render.
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, loads.loader, "hidden", second));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    const fallbacksBeforeReveal = fallbackRenders;
+
+    // The framework resolved the data before revealing; Lane must not convert
+    // that into a loading state. The reveal shows the republished value in its
+    // first committed frame — no fallback, no loader.
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, loads.loader, "visible", second));
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(container, "server-2|background:0|transition:0");
+    expect(valueElement({ container } as RenderedApp).style.display).toBe("");
+    expect(loads.calls).toBe(0);
+    expect(fallbackRenders).toBe(fallbacksBeforeReveal);
+  });
+
+  it("suspends the reveal into the fallback while its publish is in flight", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: Infinity });
+    const loads = controllableLoader();
+    const first: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-1" }],
+    };
+    const second: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-2" }],
+    };
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    document.body.append(container);
+    roots.push(root);
+
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, loads.loader, "visible", first));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    await waitForText(container, "server-1|background:0|transition:0");
+
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, loads.loader, "hidden", first));
+      await settlePromiseHandlers();
+    });
+
+    // Characterization, not a Lane guarantee: a reveal that outruns its
+    // publish suspends on the hydration boundary, and previously-hidden
+    // content is not held by a transition the way visible content is — the
+    // boundary falls back until the publish lands. This mirrors what Next
+    // itself does on such revisits (the reveal is instant, in-flight holes
+    // show their fallbacks), so Lane is not adding a loading state the
+    // framework would have avoided.
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, loads.loader, "visible", second));
+      await settlePromiseHandlers();
+    });
+
+    expect(container.textContent).toContain("loading");
+
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(container, "server-2|background:0|transition:0");
+    expect(loads.calls).toBe(0);
+  });
+
   it("releases the store subscription while hidden", async () => {
     vi.useFakeTimers();
 
@@ -329,6 +461,12 @@ function Probe({
   );
 }
 
+function Fallback() {
+  fallbackRenders += 1;
+
+  return React.createElement("span", null, "loading");
+}
+
 function activityApp(
   lane: Lane,
   loader: LaneLoader<string>,
@@ -340,8 +478,30 @@ function activityApp(
     children: React.createElement(React.Activity, {
       children: React.createElement(
         React.Suspense,
-        { fallback: React.createElement("span", null, "loading") },
+        { fallback: React.createElement(Fallback) },
         React.createElement(Probe, { loader, options }),
+      ),
+      mode,
+    }),
+  });
+}
+
+function hydrationActivityApp(
+  lane: Lane,
+  loader: LaneLoader<string>,
+  mode: Mode,
+  snapshots: LaneHydrationSnapshots,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    children: React.createElement(React.Activity, {
+      children: React.createElement(
+        React.Suspense,
+        { fallback: React.createElement(Fallback) },
+        React.createElement(LaneHydration, {
+          children: React.createElement(Probe, { loader }),
+          snapshots,
+        }),
       ),
       mode,
     }),

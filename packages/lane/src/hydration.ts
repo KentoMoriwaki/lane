@@ -31,6 +31,16 @@ const hydrationResources = new WeakMap<
  * compares changes when *any* boundary in its lineage publishes — an outer
  * republish is not hidden from readers sitting under a stable inner boundary.
  * The value is opaque to readers; only its identity means anything.
+ *
+ * Nothing about the mechanism needs the snapshots themselves — any token whose
+ * identity changes per publication would do — carrying them is just the
+ * smallest implementation. The cost is that a reader's `prevSource` state
+ * retains the lineage it last rendered under, so a reader that has not
+ * re-rendered (a hidden `<Activity>`, typically) keeps one superseded
+ * generation of seed data reachable until its next render. That is bounded and
+ * of the same order as what the kept tree already retains; if it ever shows in
+ * a profile, swap the chain node for a WeakMap-derived epoch number — readers
+ * compare identity only, so they would not change.
  */
 export type LaneHydrationSource = {
   snapshots: LaneHydrationSnapshots;

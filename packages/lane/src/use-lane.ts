@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useState,
   useTransition,
 } from "react";
@@ -209,6 +210,52 @@ export function useLane<T, C = T>(
     invalidateEntry(lane, keyId, invalidateOptions, "background");
   });
 
+  // The commit invariant: a reader only ever commits the store's current
+  // promise. Normal operation upholds it by construction — notifications reach
+  // subscribed readers, pre-commit render attempts re-run the `useState`
+  // initializer, and the switch branch re-reads on a source change. The one
+  // breach React can create is re-showing a previously committed tree whose
+  // effects were torn down in between: an `<Activity>` reveal (and the same
+  // shape, a boundary returning from a re-suspension). No render happens there
+  // unless an input changed, and passive effects flush after paint — only a
+  // layout effect, re-created inside the reveal commit before paint, can decide
+  // what the first revealed frame shows.
+  //
+  // Deliberately synchronous, never a transition: a reveal is a new appearance,
+  // not the continuation the SWR channel serves. What the correction shows is
+  // decided by what the store holds. A pending replacement — including the
+  // re-read this very call starts on a repudiated or removed entry — suspends
+  // into the boundary's fallback, which is the specified presentation for
+  // repudiated content at a new appearance; the read starting here is what
+  // "the read begins at the reveal" means. A replacement that settled while
+  // hidden (a republished seed, a sibling's finished read) suspends only until
+  // React instruments the already-resolved thenable and replays — the outdated
+  // value never reappears either way. A merely stale entry reuses its cache
+  // (`whenStale: "revalidate"`), so staleness never enters this channel;
+  // `whenStale: "refetch"` discards it here exactly as it would on a remount.
+  const reconcileOnReveal = useEffectEvent((
+    targetLane: Lane,
+    targetKey: LaneKey,
+  ) => {
+    if (loader === undefined) {
+      return;
+    }
+
+    const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
+
+    if (nextPromise !== promise) {
+      setPromise(nextPromise);
+    }
+  });
+
+  useLayoutEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    reconcileOnReveal(lane, key);
+  }, [enabled, lane, keyId]);
+
   // Deliberately a *passive* effect. A boundary that re-suspends hides the
   // subtree it had already committed and tears down its layout effects while
   // leaving passive ones mounted, so a passive subscription keeps receiving
@@ -216,7 +263,9 @@ export function useLane<T, C = T>(
   // exactly that: `LaneHydration` suspends and publishes from a macrotask rather
   // than from an effect (see `hydration.ts`), which reaches already-mounted
   // readers only because hiding them did not unsubscribe them. Moving this to
-  // `useLayoutEffect` would silently sever that.
+  // `useLayoutEffect` would silently sever that. The layout reconciliation
+  // above is the counterpart for what passive timing cannot cover — the first
+  // frame of a reveal — and carries no subscription of its own.
   useEffect(() => {
     // A disabled read owns no entry: no subscription, no GC anchor, no
     // revalidation. The effect re-runs when `enabled` flips and subscribes then.

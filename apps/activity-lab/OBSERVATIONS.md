@@ -86,7 +86,35 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
        定義する — 『見せない』は常に invalidation の意味論、という一貫性を守る。
 3. remove 後に同キーが復活していたとき、古い promise の reader は「削除」と
    「新値あり」のどちらとして合流すべきか
-   - 答え:
+   - 答え(確定・2026-08-01): **どちらでもなく、「store の現在」に合流する。**
+     reader は自分の promise が「削除されたのか」「復活があったのか」という
+     履歴を知る必要がない。layout 照合は `readOrCreate` の返す promise と
+     held promise の**同一性**だけを見て、不一致なら返ってきたものを採用する:
+     - 復活済みで **settled**(`set` / 完了した他 reader の read / republish)
+       → 同期採用、fallback なし、reveal 即新値
+     - 復活済みで **pending**(他 reader の in-flight read)→ 採用して
+       suspend → fallback → settle で新値。read は共有され重複 fetch なし
+       (coalescing 維持)
+     - **不在**(復活なし)→ その場で read 開始 → suspend → fallback → 新値
+     「削除として合流(fallback 経由)」か「新値ありとして合流(直接採用)」
+     かは reader の判断ではなく、**store の状態(settled / pending / 不在)の
+     帰結**として自動的に決まる。
+   - 機構の裏取り(core.ts): 否認の「台帳」は別リストではなく **entry の
+     ライフサイクルそのもの** — invalidate は cache を clear(`lastFulfilled`
+     は温存)、remove は entry を削除。どちらも次の `readOrCreate` が新しい
+     promise を返すため同一性照合が成立する。逆に merely stale はデフォルト
+     (`whenStale: "revalidate"`)の `reuseCache` が**同一 cache を返す**ので
+     照合が素通りし、問い 2 の境界(stale は sync 経路に乗らない、背景
+     transition で収束)が既存の意味論から自動的に守られる。
+     `whenStale: "refetch"` は「stale の新規出現を見せない」(問い 2 補強で
+     言う invalidate 昇格)の既存実装 — genuine idle remount のみ discard し、
+     adopted / subscriber ガードが pre-commit ループと shared promise の
+     yank を防ぐ。reveal の layout 照合は passive 購読の再接続**前**に走るので
+     (subscribers.size = 0)、remount と同じ扱いになるのも整合的。
+   - 実装ノート: gate 付き invalidate(server action 連動)が hidden reader に
+     届かなかった場合、reveal の readOrCreate は gate なしで即読みする。
+     action が reveal 時点でまだ in-flight のケースをどう扱うか(gate を
+     notification payload ではなく entry に持たせるか)は実装時に決める。
 4. hidden 中の合流は許すべきか(hidden 中の loader 発火を含む)
    - 答え(確定・2026-07-31): **hidden の間は新しいデータを読まない。read の開始は
      reveal の瞬間。** eager refetch(invalidate 時に即撃つ)も、hidden render を

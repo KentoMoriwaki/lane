@@ -115,6 +115,24 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
      届かなかった場合、reveal の readOrCreate は gate なしで即読みする。
      action が reveal 時点でまだ in-flight のケースをどう扱うか(gate を
      notification payload ではなく entry に持たせるか)は実装時に決める。
+   - **検討して不採用(2026-08-01)— 「混在窓への合流」案**: pending が既に
+     in-flight で、held 値が置き換えの baseline(`lastFulfilled`)と同一
+     (ちょうど 1 世代前)のときだけ transition 合流して旧値を保つ、という
+     精密化を検討したが不採用。理由: (1) **世代距離は原理にならない** —
+     一つの transition の中で複数世代が正当に更新され得るので「1 世代前なら
+     安全」という境界は成立しない。(2) 導入概念(窓・baseline・メンバー
+     シップ)3 つに対し、救われるのは「兄弟の refetch の真っ最中に reveal し、
+     かつ baseline をちょうど保持」という稀で過渡的なケースだけで、fallback の
+     持続も fetch 残り時間で有界。(3) 採用した不変条件の方が強く単純:
+     **reader が commit してよい promise は store の現在のものだけ。**
+     visible SWR はこれを破らない(画面の古い値は「古い committed tree の
+     残存」であって古い promise の新規 commit ではなく、transition の commit
+     時点で世代は揃う)。初回 mount は initializer の再実行が守る。破れる
+     唯一の場所が Activity reveal(過去の committed tree の再表示)で、
+     そこだけを layout 照合が正す — settled なら同期採用、pending なら即
+     fallback。窓も世代も出自も判定しない。判別材料(`lastFulfilled` の
+     温存/削除)は core に存在するので、実運用で不整合が目立った場合に
+     限り将来再検討する。
 4. hidden 中の合流は許すべきか(hidden 中の loader 発火を含む)
    - 答え(確定・2026-07-31): **hidden の間は新しいデータを読まない。read の開始は
      reveal の瞬間。** eager refetch(invalidate 時に即撃つ)も、hidden render を

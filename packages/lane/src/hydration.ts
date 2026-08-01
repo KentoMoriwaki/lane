@@ -11,6 +11,29 @@ const hydrationResources = new WeakMap<
 >();
 
 /**
+ * The identity of the publication this subtree was last rendered under.
+ *
+ * Notification reaches every reader whose passive subscription is alive, but a
+ * hidden `<Activity>` has none — and a revisit that re-streams a payload is
+ * exactly a republish aimed at such a tree. The context is the render-carried
+ * copy of that announcement: `useLane` keeps the value it rendered under in
+ * state and, on the render where it changed, re-reads the store in that same
+ * render (see its source-switch branch). The boundary below suspends until the
+ * publish has landed, so by the time children render under a new value the
+ * seeds are already in the store; and because that render happens inside
+ * whatever transition is rendering the boundary — a navigation, typically —
+ * the adoption commits with it, in one pass, with no fallback in between. That
+ * is what keeps a framework's "fetch, then reveal" intact through Lane.
+ *
+ * Scoped to the nearest boundary: a reader under a nested `LaneHydration`
+ * re-reads on its own boundary's publications, not an outer one's (the outer
+ * republish still reaches it by notification while subscribed).
+ */
+export const LaneHydrationSourceContext = React.createContext<
+  LaneHydrationSnapshots | undefined
+>(undefined);
+
+/**
  * Seeds the lane from server snapshots, and **suspends until it has**.
  *
  * The suspension is the mechanism, not a side effect of one. Seeding has to be
@@ -44,7 +67,11 @@ export function LaneHydration({
 
   React.use(getHydrationPromise(lane, snapshots));
 
-  return children;
+  return React.createElement(
+    LaneHydrationSourceContext.Provider,
+    { value: snapshots },
+    children,
+  );
 }
 
 function getHydrationPromise(

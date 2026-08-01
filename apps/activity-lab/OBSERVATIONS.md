@@ -293,6 +293,22 @@ rafTicks で「paint された frame」と「コミットされたが paint 前�
   effect より遅れるため、ref が null の一発 effect は永久に空振りする
   (frame-recorder は rAF リトライで対処済み)。
 
+**追記(2026-08-01): 初回 mount 中の invalidate は隙間ではない(オーナー仮説の
+実測確認)。** clear entry → remount(pending で suspend、コミット前)→
+suspend 中に invalidate(v2 → v3 差し替え)を実測した結果: コミット前の
+render 試行は**毎回 useState initializer を走り直して store の現在の promise を
+読む**。invalidate 直後の再試行は `holding v3 (pending)` を掴み、v2 は一度も
+コミット・paint されずに fallback → v3 で確定(layout-check は commit 時に
+clean = 仕事なし)。つまり「suspend 中に無効化された promise を state に抱えて
+commit する」経路は初回 mount には存在しない — hooks state は commit で初めて
+永続化され、それまでの試行は使い捨てだから。これにより:
+- layout 照合に「一度 commit 済みの reader に限る」等のガードは不要(初回
+  commit 時は構造的に clean。render → layout の マイクロ窓で発火しても
+  pre-paint の同期 drop なので無害)
+- `syncAfterSubscribe` に残る固有の守備範囲は「最後の render 試行 → passive
+  購読」のマイクロ窓のみ(+ 通知ソースと pending フラグを揃える transition
+  意味論)。reveal の守備は layout 照合へ移る
+
 ## 設計結論: App Router における所有権の規律(オーナー判断・2026-07-31)
 
 App Router で Hydration(RSC seed)を使うと、同じデータが Next の payload

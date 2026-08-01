@@ -117,6 +117,15 @@ function createMiniStore() {
       entry = settled("v1");
       notify();
     },
+    /**
+     * Empty the store without notifying — the setup for the initial-mount
+     * question: a freshly mounted reader's initializer read creates a pending
+     * promise, and what happens to invalidations while it is suspended
+     * pre-commit depends on whether retry attempts re-run the initializer.
+     */
+    clearEntry(): void {
+      entry = null;
+    },
     label(promise: Promise<string>): string {
       return labels.get(promise) ?? "?";
     },
@@ -261,6 +270,10 @@ export default function RevealSyncPage() {
   // or does the stale value reach the screen? Toggling remounts the readers
   // (the memo key changes) — flip it before running a scenario.
   const [layoutEnabled, setLayoutEnabled] = useState(true);
+  // Bumping the key mounts brand-new readers — the probe for pre-commit
+  // suspension: each render attempt logs which promise it holds, so the
+  // Timeline answers whether retries re-run the useState initializer.
+  const [mountEpoch, setMountEpoch] = useState(0);
 
   // The "end" marker closes the click task in the log: anything logged before
   // it ran in the same synchronous task as the commit — and a browser never
@@ -344,6 +357,22 @@ export default function RevealSyncPage() {
         </button>
         <button
           type="button"
+          onClick={() => op("clear entry", () => store.clearEntry())}
+          className="rounded border border-zinc-400 bg-white px-3 py-1 font-semibold hover:bg-zinc-100"
+        >
+          clear entry
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            op("remount readers", () => setMountEpoch((epoch) => epoch + 1))
+          }
+          className="rounded border border-zinc-400 bg-white px-3 py-1 font-semibold hover:bg-zinc-100"
+        >
+          remount readers
+        </button>
+        <button
+          type="button"
           onClick={() =>
             op("reset", () => {
               store.reset();
@@ -363,7 +392,7 @@ export default function RevealSyncPage() {
         </span>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2" key={mountEpoch}>
         <ReaderPanel
           title="baseline — passive check only (lane-shaped)"
           channel="reveal-sync:base"

@@ -53,6 +53,37 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
    - 未決の境界: 常時 visible な購読 reader への invalidate(SWR: 値を見せたまま
      background 収束)にもこの規範を適用するか。適用すると tearing.test.ts が守る
      transition 保証と正面衝突するため、範囲の確定が必要
+   - **境界の解消(2026-08-01)— invalidate/remove と stale の役割定義**:
+     - **invalidate / remove = 明示的な否認(correctness の宣言)**。誰かが
+       「この内容は間違っている / もう存在しない」と宣言した。以後これを出す
+       ことは既知の誤りの表示。**stale = 経年による疑い(freshness の
+       ポリシー)**。staleTime を過ぎただけで、依然として手元の最良の真実。
+       表示は正しく、更新は鮮度の最適化にすぎない。
+     - 規範は「**出現**」で書く: 否認された値が画面にあってよいのは、**まだ
+       完了していない置き換え transition の一部として**(連続した出現の継続)
+       だけ。**新しい出現**(mount / reveal)としては一切許されない。
+       - remove: 連続出現も許さない(通知で即 fallback、urgent)。
+         新規出現も layout 照合で drop → fallback
+       - invalidate: 置き換え transition 完了までは見せてよい(SWR)。
+         完了後は promise 死。新規出現は layout 照合で drop → fallback
+       - stale: staleness はイベントではなくトリガー時点で評価される述語。
+         連続出現には何も起きず、新規出現は**見せてよい**(即表示 + 背景
+         transition で収束、fallback なし)
+     - これで「常時 visible への適用」の未決は消える: visible の SWR は
+       進行中の置き換えの**継続出現**であって規範違反ではない。規範が禁じるのは
+       否認済み promise の**新規出現**のみ。tearing.test.ts の transition 保証と
+       無矛盾。
+     - 機構への写像: 否認は**台帳**(invalidate/remove 時点の promise 記録)との
+       同一性照合 = layout 照合の対象。stale は台帳不要の**タイムスタンプ述語**
+       (`settlement.at`)で、トリガー(remount / focus / reconnect)時点に評価
+       して背景 transition — 緊急性の差が実装の置き場所の差にそのまま出る。
+     - 現行 main との整合: `refetchOnMount` 等のトリガーは `"always"` 廃止済みで
+       `boolean` + `staleTime` に純化(トリガー = stale 述語の評価。無条件
+       リフレッシュは `lane.invalidate(key, { onlyIf: "settled" })` に残る)。
+       この意味論は上の役割分担そのもの。
+     - 将来「stale を新規出現でも見せない」(hard TTL)を足す場合は、第三の
+       規則ではなく「**トリガー時点で閾値超過なら invalidate に昇格**」として
+       定義する — 『見せない』は常に invalidation の意味論、という一貫性を守る。
 3. remove 後に同キーが復活していたとき、古い promise の reader は「削除」と
    「新値あり」のどちらとして合流すべきか
    - 答え:

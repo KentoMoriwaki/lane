@@ -11,6 +11,47 @@ const hydrationResources = new WeakMap<
 >();
 
 /**
+ * The lineage of publications this subtree was last rendered under.
+ *
+ * Notification reaches every reader whose passive subscription is alive, but a
+ * hidden `<Activity>` has none — and a revisit that re-streams a payload is
+ * exactly a republish aimed at such a tree. The context is the render-carried
+ * copy of that announcement: `useLane` keeps the value it rendered under in
+ * state and, on the render where it changed, re-reads the store in that same
+ * render (see its source-switch branch). The boundary below suspends until the
+ * publish has landed, so by the time children render under a new value the
+ * seeds are already in the store; and because that render happens inside
+ * whatever transition is rendering the boundary — a navigation, typically —
+ * the adoption commits with it, in one pass, with no fallback in between. That
+ * is what keeps a framework's "fetch, then reveal" intact through Lane.
+ *
+ * The value is a chain rather than the nearest boundary's snapshots, because
+ * boundaries nest and a reader's seeds may come from any ancestor: each
+ * boundary links its snapshots to the value above it, so the identity a reader
+ * compares changes when *any* boundary in its lineage publishes — an outer
+ * republish is not hidden from readers sitting under a stable inner boundary.
+ * The value is opaque to readers; only its identity means anything.
+ *
+ * Nothing about the mechanism needs the snapshots themselves — any token whose
+ * identity changes per publication would do — carrying them is just the
+ * smallest implementation. The cost is that a reader's `prevSource` state
+ * retains the lineage it last rendered under, so a reader that has not
+ * re-rendered (a hidden `<Activity>`, typically) keeps one superseded
+ * generation of seed data reachable until its next render. That is bounded and
+ * of the same order as what the kept tree already retains; if it ever shows in
+ * a profile, swap the chain node for a WeakMap-derived epoch number — readers
+ * compare identity only, so they would not change.
+ */
+export type LaneHydrationSource = {
+  snapshots: LaneHydrationSnapshots;
+  parent: LaneHydrationSource | undefined;
+};
+
+export const LaneHydrationSourceContext = React.createContext<
+  LaneHydrationSource | undefined
+>(undefined);
+
+/**
  * Seeds the lane from server snapshots, and **suspends until it has**.
  *
  * The suspension is the mechanism, not a side effect of one. Seeding has to be
@@ -41,10 +82,19 @@ export function LaneHydration({
   children: React.ReactNode;
 }) {
   const lane = useLaneInstance();
+  const parent = React.useContext(LaneHydrationSourceContext);
+  const source = React.useMemo(
+    () => ({ parent, snapshots }),
+    [parent, snapshots],
+  );
 
   React.use(getHydrationPromise(lane, snapshots));
 
-  return children;
+  return React.createElement(
+    LaneHydrationSourceContext.Provider,
+    { value: source },
+    children,
+  );
 }
 
 function getHydrationPromise(

@@ -142,18 +142,21 @@ export function useLane<T, C = T>(
     setPromise(nextPromise);
   });
 
-  // Invalidations and removals that land between render and subscription reach no
-  // subscriber. A reader whose render is still being retried converges without
-  // this: the switch branch re-reads while `prevSource` is uncommitted, and the
-  // initial `useState` re-runs on a suspense retry, so both see the store's
-  // current cache on every attempt.
+  // The last link in the chain of checks, and the only one that can close its
+  // window. Renders re-read the store on every attempt (initializer, source
+  // switch), the layout reconciliation checks again inside the commit — but
+  // the subscription only starts in this passive effect, and a store change
+  // landing between that reconciliation and this subscribe (a timer, a socket,
+  // another component's effect) reaches neither: the checks are over and the
+  // notifications have not begun. A visible reader that misses it has no
+  // re-appearance coming to reconcile it, so however narrow the window, the
+  // failure mode is rendering an abandoned promise forever.
   //
-  // What is left is the reader that *committed* while still unsubscribed — a
-  // hidden `<Activity>` that prerendered with its effects torn down, or a mount
-  // that read an already-tagged promise and committed before its effect ran. It
-  // has no retried render left to correct it and no notification coming, so
-  // subscribing is the first moment convergence is possible. Without this it
-  // renders an abandoned promise forever.
+  // This is the notification channel's completeness patch, not the reveal's —
+  // the reader is a continued appearance, so the correction impersonates the
+  // notification it missed, transition semantics included. Hidden-reveal and
+  // republish convergence, which once ran through here, belong to the layout
+  // reconciliation and the hydration source switch above.
   const syncAfterSubscribe = useEffectEvent((
     targetLane: Lane,
     targetKey: LaneKey,

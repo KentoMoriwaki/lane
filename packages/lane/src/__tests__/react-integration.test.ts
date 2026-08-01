@@ -438,6 +438,59 @@ describe("React integration", () => {
     await waitForText(app.container, "fresh|background:0|transition:0|refresh:none");
   });
 
+  it("converges an invalidation fired from a layout effect in the mounting commit", async () => {
+    const lane = createLane();
+    const reload = deferred<string>();
+    const loader = vi.fn(() => reload.promise);
+
+    // Warm mount so the remount below commits its value in the first pass:
+    // the window under test sits between a *committed* reader's layout
+    // reconciliation and its passive subscription.
+    lane.set(["tasks"], "v1");
+    const warm = await renderLaneApp({ lane, loader });
+    await waitForText(warm.container, "v1|background:0|transition:0|refresh:none");
+    expect(loader).not.toHaveBeenCalled();
+    unmountApp(warm);
+
+    // Deterministic, not a race: layout effects run in tree order, so a
+    // sibling mounted after the reader invalidates after the reader's
+    // reconciliation has already run and before its passive subscription
+    // exists. Neither the render-time checks nor a notification can see it —
+    // only the post-subscribe catch-up does. Without it the reader would show
+    // v1 forever.
+    function LayoutInvalidator() {
+      React.useLayoutEffect(() => {
+        lane.invalidate(["tasks"]);
+      }, []);
+
+      return null;
+    }
+
+    const app = await render(
+      React.createElement(LaneProvider, {
+        lane,
+        children: [
+          React.createElement(
+            React.Suspense,
+            { fallback: "loading", key: "probe" },
+            React.createElement(Probe, { loader }),
+          ),
+          React.createElement(LayoutInvalidator, { key: "invalidator" }),
+        ],
+      }),
+    );
+
+    for (let i = 0; i < 20 && loader.mock.calls.length < 1; i += 1) {
+      await flushReact();
+    }
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(app.container.textContent).toContain("v1|");
+
+    await resolveReload(reload, "v2");
+
+    await waitForText(app.container, "v2|background:0|transition:0|refresh:none");
+  });
+
   it("catches up with invalidations missed during a suspended key switch", async () => {
     const lane = createLane();
     const staleB = deferred<string>();

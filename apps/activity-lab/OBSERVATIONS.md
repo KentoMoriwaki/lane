@@ -18,7 +18,31 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
 
 1. reader が古い promise を持っていると render 中に分かったとき、**どの render
    lane なら合流してよいか**(urgent / transition / offscreen prerender / reveal)
-   - 答え:
+   - 答え(確定・2026-08-01): **render lane では判定しない — そもそも render 中の
+     無条件照合を行わない。** 合流は次の 4 経路に固定する:
+     - **(a) visible への通知**(passive 購読経由): remove は同期適用(即
+       fallback)、invalidate は transition 適用(SWR)。従来どおり
+     - **(b) reveal =(再)mount 時の useLayoutEffect 照合**: store と held
+       promise を比較し、違えば同期 setPromise → その render で re-read →
+       suspend → fallback。reveal パスと同一タスク内で完結するため stale は
+       構造的に paint 不可能(/reveal-sync で実測)。トークン供給を前提と
+       せず、layout effect は本物の reveal と mount でしか再出現しないので
+       visible への over-fire も構造的に不在
+     - **(c) 初回 mount(コミット前)**: 合流機構は不要。コミット前の render
+       試行は毎回 initializer が走り直して store の現在の promise を読む
+       (実測済み — stale commit の経路が存在しない)
+     - **(d) 最後の render 試行 → passive 購読のマイクロ窓**:
+       `syncAfterSubscribe`(現行のまま、通知ソースに合わせた transition 適用)
+   - 帰結 1: **#62 の removedPromises(render 中の無条件照合)は廃止**。
+     守備範囲は (a)+(b) で完全に覆われ、render 照合固有のリスク(hidden
+     render での read 開始 = Q4 違反、invalidate 一般化時の visible urgent
+     での fallback 誤爆)ごと消える。#62 で残すのは handoff(republish の
+     render 中採用)のみ — pattern A の受け口 + (b) の修正 2 パス目を省く
+     fast-path として
+   - 帰結 2: トークン(pathname / republish)は (b) の最適化に降格。
+     供給がある場合に reveal render 1 パスで drop できる、が正確な位置づけ
+   - 留保: 最終確定は packages/lane への実装後、activity.test.ts の書き換えと
+     tearing.test.ts 無傷、実機 /bfcache での再計測をもって行う
 2. remove と invalidate を同じ合流機構(+ ポリシー差)で扱うべきか
    - 答え: **扱うべき(オーナー判断・2026-07-31)。規範は「visible になる時に
      invalidate/remove 済みの promise の中身を表示しない」。** 実装として不可能だと
@@ -39,6 +63,10 @@ lab フェーズの最終成果物。記入は人間(+ 観察を手伝うエー�
      まま)コミットするのは無害だが、そのとき fetch は始めない(armed 状態)。
      ※初回 mount の prerender read(m1)は「まだ何も持っていない reader」の話で
      別枠 — ここで縛るのは「無効化されたものを持っている reader」の再読タイミング。
+   - 2026-08-01 追記: 問い 1 の確定(layout 照合)により **armed 状態は不要に
+     なった** — hidden render では照合自体を行わない(render 中の無条件照合の
+     廃止)。read の開始は reveal パスの layout effect 内 = 文字通り
+     「reveal の瞬間」で、この答えの規範は機構から自動的に満たされる。
 
 ### 確定した設計原則: 「外が知っている / 知らない」の二パターン分離(2026-07-31)
 

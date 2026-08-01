@@ -11,7 +11,7 @@ const hydrationResources = new WeakMap<
 >();
 
 /**
- * The identity of the publication this subtree was last rendered under.
+ * The lineage of publications this subtree was last rendered under.
  *
  * Notification reaches every reader whose passive subscription is alive, but a
  * hidden `<Activity>` has none — and a revisit that re-streams a payload is
@@ -25,12 +25,20 @@ const hydrationResources = new WeakMap<
  * the adoption commits with it, in one pass, with no fallback in between. That
  * is what keeps a framework's "fetch, then reveal" intact through Lane.
  *
- * Scoped to the nearest boundary: a reader under a nested `LaneHydration`
- * re-reads on its own boundary's publications, not an outer one's (the outer
- * republish still reaches it by notification while subscribed).
+ * The value is a chain rather than the nearest boundary's snapshots, because
+ * boundaries nest and a reader's seeds may come from any ancestor: each
+ * boundary links its snapshots to the value above it, so the identity a reader
+ * compares changes when *any* boundary in its lineage publishes — an outer
+ * republish is not hidden from readers sitting under a stable inner boundary.
+ * The value is opaque to readers; only its identity means anything.
  */
+export type LaneHydrationSource = {
+  snapshots: LaneHydrationSnapshots;
+  parent: LaneHydrationSource | undefined;
+};
+
 export const LaneHydrationSourceContext = React.createContext<
-  LaneHydrationSnapshots | undefined
+  LaneHydrationSource | undefined
 >(undefined);
 
 /**
@@ -64,12 +72,17 @@ export function LaneHydration({
   children: React.ReactNode;
 }) {
   const lane = useLaneInstance();
+  const parent = React.useContext(LaneHydrationSourceContext);
+  const source = React.useMemo(
+    () => ({ parent, snapshots }),
+    [parent, snapshots],
+  );
 
   React.use(getHydrationPromise(lane, snapshots));
 
   return React.createElement(
     LaneHydrationSourceContext.Provider,
-    { value: snapshots },
+    { value: source },
     children,
   );
 }

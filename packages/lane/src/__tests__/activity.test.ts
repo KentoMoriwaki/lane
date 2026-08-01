@@ -339,6 +339,96 @@ describe("Activity", () => {
     expect(fallbackRenders).toBe(fallbacksBeforeReveal);
   });
 
+  it("carries an outer republish through a stable inner boundary", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: Infinity });
+    const loads = controllableLoader();
+    const outerFirst: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-1" }],
+    };
+    const outerSecond: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-2" }],
+    };
+    // One instance across every render: the inner boundary publishes nothing
+    // new, so the nearest-boundary value alone would never change for the
+    // reader below it. The lineage is what carries the outer republish past it.
+    const inner: LaneHydrationSnapshots = {
+      entries: [{ key: ["other"], data: "inner" }],
+    };
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    document.body.append(container);
+    roots.push(root);
+
+    const renderApp = (mode: Mode, outer: LaneHydrationSnapshots) =>
+      root.render(
+        React.createElement(LaneProvider, {
+          lane,
+          children: React.createElement(React.Activity, {
+            children: React.createElement(
+              React.Suspense,
+              { fallback: React.createElement(Fallback) },
+              React.createElement(LaneHydration, {
+                children: React.createElement(LaneHydration, {
+                  children: React.createElement(Probe, {
+                    loader: loads.loader,
+                  }),
+                  snapshots: inner,
+                }),
+                snapshots: outer,
+              }),
+            ),
+            mode,
+          }),
+        }),
+      );
+
+    await act(async () => {
+      renderApp("visible", outerFirst);
+      await settlePromiseHandlers();
+    });
+    // Nested boundaries publish sequentially: the inner one first renders —
+    // and schedules its publish — once the outer's has landed, so the mount
+    // needs one timer flush per depth.
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    await waitForText(container, "server-1|background:0|transition:0");
+    expect(loads.calls).toBe(0);
+
+    await act(async () => {
+      renderApp("hidden", outerFirst);
+      await settlePromiseHandlers();
+    });
+
+    await act(async () => {
+      renderApp("hidden", outerSecond);
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    const fallbacksBeforeReveal = fallbackRenders;
+
+    await act(async () => {
+      renderApp("visible", outerSecond);
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(container, "server-2|background:0|transition:0");
+    expect(loads.calls).toBe(0);
+    expect(fallbackRenders).toBe(fallbacksBeforeReveal);
+  });
+
   it("suspends the reveal into the fallback while its publish is in flight", async () => {
     vi.useFakeTimers();
 

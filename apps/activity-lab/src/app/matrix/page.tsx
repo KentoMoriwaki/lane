@@ -436,12 +436,10 @@ export default function MatrixPage() {
                 const raw = event.target.value;
                 ops.setReaderOpts({
                   ...readerOpts,
-                  refetchOnMount:
-                    raw === "default"
-                      ? undefined
-                      : raw === "always"
-                        ? "always"
-                        : raw === "true",
+                  // The "always" form was removed from the triggers upstream
+                  // (main, "Drop the always form of the revalidation
+                  // triggers"); staleTime: 0 expresses the same intent.
+                  refetchOnMount: raw === "default" ? undefined : raw === "true",
                 });
               }}
               className="rounded border border-zinc-300 px-1 py-0.5"
@@ -449,7 +447,6 @@ export default function MatrixPage() {
               <option value="default">default</option>
               <option value="true">true</option>
               <option value="false">false</option>
-              <option value="always">always</option>
             </select>
           </label>
           <label className="flex items-center gap-1 text-xs">

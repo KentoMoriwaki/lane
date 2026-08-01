@@ -414,6 +414,37 @@ commit する」経路は初回 mount には存在しない — hooks state は 
   購読」のマイクロ窓のみ(+ 通知ソースと pending フラグを揃える transition
   意味論)。reveal の守備は layout 照合へ移る
 
+### 検証: reveal 照合の実機確認(/bfcache × feat/activity-reveal、本番・2026-08-01)— 成立
+
+`feat/activity-reveal`(layout 照合実装、status タグなし)に lab を merge した
+このブランチ(`lab/activity-lab-on-reveal`)で、photo モーダル(client-owned
+キー)の離脱-復帰を本番ビルドで再計測。
+
+- **invalidate を hidden 中に見逃し → 再オープン**: reveal クラスタ +2.6ms
+  (probe の layout-mount より前 = layout 照合の位置)で `changed=true` →
+  drop → fallback render(+5.3)→ loader 発火(+5.5、`runLoader` の
+  microtask 分遅延)→ 新値で収束。**reveal(+0)〜収束(+9)の窓に rAF
+  サンプルはゼロ** — stale も fallback も一度も paint されず、次の paint
+  境界は収束後の最終状態だけを見た(localhost の loader が ~4ms で返る
+  ため、意図した fallback すら sub-frame で消えた。遅い loader なら
+  fallback が仕様どおり見える)。
+- **set を hidden 中に見逃し → 再オープン**: `set#1 (hud)` を **loader 0**
+  で採用。タグ撤去の帰結である「React 計装までの 1 retry」の過渡 fallback は
+  コミット状態としては存在した(MutationObserver が捕捉)が **raf:0 =
+  一度も paint されず**。「タグなしで実用上 flash しない」が実機で裏付け
+  られた。
+- セッション全体で SUSPENDED を含む frame は 3 つ、**すべて raf:0**。
+- 無害な観測: 照合の直後に `syncAfterSubscribe` が同じ新 promise を
+  transition でもう一度適用しようとする(pending フラグが一瞬立つ)。
+  同一 promise の setPromise なので実害なし。気になるなら将来
+  「照合が直近に適用済みなら購読 catch-up は skip」の小最適化余地。
+- 計測の注意(自分への再発防止): (1) close 直後(<数百 ms)に invalidate
+  すると passive-cleanup 前で通知が届き、hidden SWR 収束済みの reveal
+  (照合 clean)という**別シナリオ**になる。(2) React の controlled select
+  へ素の `dispatchEvent` は value tracker に飲まれ得る — prototype setter
+  経由で書く。(3) branch 切替後の `next build` は `.next` キャッシュが
+  古い workspace パッケージを抱え得る — 計測前に rm -rf .next。
+
 ## 設計結論: App Router における所有権の規律(オーナー判断・2026-07-31)
 
 App Router で Hydration(RSC seed)を使うと、同じデータが Next の payload

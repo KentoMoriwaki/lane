@@ -132,16 +132,18 @@ export const SCENARIOS: readonly Scenario[] = [
     id: 6,
     title: "reader オプション切替で reveal",
     focus:
-      "refetchOnMount:'always' / whenStale:'refetch'(staleTime 0)それぞれで reveal 時に loader が動くか",
+      "refetchOnMount:true(staleTime 0)/ whenStale:'refetch'(staleTime 0)それぞれで reveal 時に loader が動くか",
     async run(ops) {
       await baseline(ops);
-      ops.mark("readerOpts: refetchOnMount=always");
-      ops.setReaderOpts({ refetchOnMount: "always" });
+      // The "always" trigger form was removed upstream; true + staleTime: 0 is
+      // the equivalent "refresh any settled value on mount".
+      ops.mark("readerOpts: refetchOnMount=true staleTime=0");
+      ops.setReaderOpts({ refetchOnMount: true, staleTime: 0 });
       await ops.sleep(400);
       ops.mark("hide");
       ops.setMode("hidden");
       await ops.sleep(500);
-      ops.mark("reveal (refetchOnMount=always)");
+      ops.mark("reveal (refetchOnMount=true staleTime=0)");
       ops.setMode("visible");
       await ops.sleep(900);
       ops.mark("readerOpts: whenStale=refetch staleTime=0");

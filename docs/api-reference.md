@@ -641,7 +641,9 @@ not committed yet, which has no subscription for a notification to reach.
   pattern — including from a component the publisher cannot pass props to.
 - **On publication**, the wait resolves with the published value, and the store's
   own promise holds the same value: readers that retried and readers that kept the
-  old promise agree.
+  old promise agree. A reader inside a hidden `<Activity>` converges the same way
+  when its tree is revealed — see [under `<Activity>` and router
+  keep-alive](./consistency.md#activity).
 - **After ~10 seconds with no publication**, it rejects with
   [`LaneExternalTimeoutError`](#laneexternaltimeouterror) to your Error Boundary.
   A read nobody publishes is a typo or a missing boundary, and failing loudly is
@@ -1743,7 +1745,9 @@ Two anti-patterns to name, because both look reasonable:
   something else keeps it reachable: the publisher's payload (the snapshots
   object a publication came from is tethered to what it published, so the value
   lives as long as the framework holds the payload) or any committed reader
-  (React state holds the promise it is rendering). In practice: a back-navigation
+  (React state holds the promise it is rendering) — including a reader inside a
+  hidden `<Activity>`, which is [why keep-alive needs no `gcTime`
+  tuning](./consistency.md#activity). In practice: a back-navigation
   into a tree the framework kept shows what that tree held, with no request; a
   key whose payload *and* readers are both gone reads as absent and its next read
   waits for the next publication — which is the same state the publisher is in,

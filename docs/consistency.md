@@ -123,6 +123,86 @@ you will notice:
 
 Neither is inconsistent; they just feel different. Pick per surface.
 
+### Under `<Activity>` and router keep-alive
+
+<a id="activity"></a>
+
+A hidden `<Activity>` — including the router keep-alive Next builds on it — is
+the one place a reader can hold a value the store has moved past, so it gets its
+own account here.
+
+**What hiding does.** The subtree keeps its state and its DOM, which is why
+revealing it is instant, and React tears down its effects, which is why the
+reader stops being a subscriber. Notification is Lane's only channel to a mounted
+reader, so for as long as the tree is hidden, nothing that happens in the store
+reaches it. Hidden trees also keep *rendering* (a context change, a parent
+re-render), and Lane deliberately does not read on those renders: reading while
+hidden would fetch data that is stale again by the time anyone sees it.
+
+**What revealing does.** A reveal re-creates layout effects inside the commit
+that unhides the tree, before paint, and Lane reconciles there: it compares the
+promise the reader is holding against the store's current one, and adopts the
+store's if they differ. Three outcomes, all decided by what the store holds
+rather than by what happened while hidden:
+
+| Store state at the reveal | What the first revealed frame shows |
+| --- | --- |
+| the same promise the reader holds | that value, immediately — no work, no request |
+| a settled replacement (a publication, a sibling's finished read) | the replacement, adopted synchronously |
+| repudiated or absent (invalidated, removed) | the boundary's fallback, with the re-read starting *at* the reveal |
+
+The last row is the guarantee worth stating plainly: **a repudiated value is
+never painted.** The correction happens in the same task as the unhide, and the
+browser does not paint mid-task, so there is no frame in which the old value is
+on screen.
+
+**A reveal that carries a publication skips even the fallback.** When the reveal
+re-renders the tree under a new publication — an App Router navigation that
+re-streams the payload — readers adopt the new seed during that render, inside the
+navigation's transition, and the whole thing commits once. That is what keeps a
+framework's "fetch, then reveal" intact instead of converting resolved data into a
+loading state.
+
+Per ownership, in one line each:
+
+- **[Published keys](./api-reference.md#external--a-read-the-owner-publishes)** —
+  a reveal that carries a republication converges in that render; one that does
+  not shows what the tree held. Retention needs no `gcTime` tuning because it is
+  [reachability](./api-reference.md#external-retention): as long as the framework
+  holds the payload or a committed reader holds the promise, the value is there.
+- **Client-owned keys** — converge through notifications while visible, and
+  through the reveal reconciliation for everything missed while hidden. Retention
+  is `gcTime`: if the entry was collected while the tree was hidden, the reveal
+  re-reads through the loader and falls back until it lands.
+
+#### Flash-free reveals: the promise has to have been `use()`d
+
+React tags a promise's status the first time `use()` sees it. Until then it has
+to suspend once, even if the promise is already resolved, before it can replay
+with the value. So an adoption at a reveal repaints without a fallback **only if
+the promise being adopted has been through `use()` at least once** — which is
+true of anything a reader has already rendered, and of anything a sibling reader
+resolved while the tree was hidden.
+
+The practical corollary is about warming: `lane.prefetch` runs outside React, so
+a prefetched-and-never-read promise is untagged, and the first `use()` of it
+suspends for one retry. Warming still saves the request; it does not by itself
+buy a flash-free first frame. If a surface must appear complete on reveal, have
+something read the key (even a hidden `<Activity>` reader) rather than only
+prefetching it.
+
+In measurement, that one retry has been transient enough not to reach the screen —
+in the lab's App Router scene the fallback it produces was committed but never
+painted. Do not lean on that: it is a race that a slower reveal commit can lose,
+whereas a promise that has already been read cannot suspend at all.
+
+> **Footnote — holding a frame during adoption.** If a specific surface must not
+> risk even that retry, the userland pattern is to keep the outgoing content
+> mounted for one commit while the adopted promise is instrumented (a "flash
+> guard" wrapper around the boundary). Lane ships nothing for this and the lab has
+> not measured a form of it; it is named here so the option is known, not
+> recommended as a default.
+
 ### Announce pending at the start of a mutation, not the end
 
 *(Client-owned keys. A published key converges when its owner republishes, so the

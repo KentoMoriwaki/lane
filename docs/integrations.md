@@ -50,6 +50,33 @@ fix.)
 The practical consequence: **make back/forward land on data that is already
 cached, so nothing suspends.** That is a retention decision, covered next.
 
+## Keep-alive (`<Activity>`), and what it does not promise
+
+Next's router keeps recent inactive route trees alive in hidden `<Activity>`
+subtrees, so returning to one restores its state and DOM instead of rebuilding
+them. Lane is built for that — [what a revealed reader
+shows](./consistency.md#activity) is specified frame by frame. Three limits are
+worth knowing before you design around it, because none of them is Lane's to fix:
+
+- **A re-suspension on traverse is the framework's layer.** An intercepted or
+  parallel-route modal restored by browser back/forward is rebuilt from the
+  router's payload (interception varies by referrer, so the segment cannot be
+  reused as-is), which re-suspends the boundary under it. Lane's entry is
+  untouched — the loader does not run and the value is already there — so what you
+  see is the router's own fallback, not a Lane re-read. Pushing to the same modal
+  reuses the cache node and does not do this.
+- **A reveal that outruns its publication falls back.** If the payload for a
+  revisited route has not landed when the tree is revealed, the boundary shows its
+  fallback until it does. That is the same presentation Next itself chooses (a
+  revisit shows the shell immediately and the in-flight holes as fallbacks) rather
+  than something Lane adds — but it does mean keep-alive is not a promise that a
+  return is *complete*, only that it is instant.
+- **Activity is an instant-restore tool.** If a screen must arrive complete rather
+  than instantly, do not keep it alive: unmount it and navigate in a transition, so
+  React holds the current screen while the destination resolves and commits once.
+  Keep-alive and "no intermediate states" are different goals, and the router
+  cannot serve both for the same surface.
+
 ## Cache lifetime across navigation
 
 To make back/forward feel instant (and flash-free), the route's entry must still be

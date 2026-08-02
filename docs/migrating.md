@@ -203,7 +203,13 @@ See [key changes that flash](./common-mistakes.md#key-changes-that-flash-filters
 
 ## Step 4 — mutations converge by invalidation
 
-Drop `useMutation`. Call the API from an action, then re-point the source:
+Drop `useMutation`. Call the API from an action, then re-point the source.
+
+*(This step is about **client-owned** keys — the ones your loaders fetch, which is
+what a React Query migration starts with. If a key is instead published into Lane
+by an RSC route or a router loader, its mutations go back through that owner and
+these calls throw; see [the ownership
+rule](./architectures.md#the-ownership-rule).)*
 
 ```tsx
 await patchUser(id, body);

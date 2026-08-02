@@ -17,10 +17,10 @@ Whatever the host, an integration comes down to five decisions:
 | Concern | How |
 | --- | --- |
 | **Identity** | Derive each Lane key from durable route/URL state — `key = f(URL)`. Revisiting a route re-reads the same key. |
-| **Seeding** | Either seed from the host's data layer with [`LaneHydration`](./api-reference.md#hydration-rsc-seeding), or let a client component fetch on first read via [`useLane`](./api-reference.md#uselaneread). |
+| **Ownership** | Per key: publish it from the host's data layer with [`LaneHydration`](./api-reference.md#lanehydration) and read it with [`external`](./api-reference.md#external--a-read-the-owner-publishes), or let the client own it and fetch on first read. Not both — a published key is read-only from the client. |
 | **Navigation** | Commit route changes inside a React transition so a suspending read keeps the current screen instead of flashing a Suspense fallback. |
-| **Convergence** | After a mutation, converge with `invalidate` (re-read), or publish authoritative data with `set` / `update`. |
-| **Retention** | How long a route's entry survives back/forward is a Lane policy — `gcTime` + `whenStale` — not the router. |
+| **Convergence** | Client-owned: `invalidate` (re-read) or publish confirmed data with `set` / `update`. Published: mutate the source and let the host revalidate — the republication is the convergence. |
+| **Retention** | For client-owned keys, a Lane policy — `gcTime` + `whenStale` — not the router. For published keys, [reachability](./api-reference.md#external-retention): the host's payload and committed readers decide, and `gcTime` does not apply. |
 
 The glue that connects the router's data to Lane (e.g. a `withHydration` HOC) lives
 in *your app*: neither Lane nor the router ships it, because neither knows about
@@ -53,7 +53,9 @@ cached, so nothing suspends.** That is a retention decision, covered next.
 ## Cache lifetime across navigation
 
 To make back/forward feel instant (and flash-free), the route's entry must still be
-warm when you return to it. Three knobs, all on Lane:
+warm when you return to it. Three knobs, all on Lane — and all of them for
+**client-owned** keys, since a published key's lifetime belongs to whoever
+publishes it ([retention](./api-reference.md#external-retention)):
 
 - **`key = f(URL)`** — the entry's identity is the route, so returning re-reads the
   same entry instead of a fresh one.
@@ -84,35 +86,51 @@ the destination's `useLane` will use, so they line up.
 
 ## Next.js App Router
 
-*Demonstrated by the demo's `/lane` (RSC-seeded) and `/lane-spa` (client-only)
+*Demonstrated by the demo's `/lane` (server-owned) and `/lane-spa` (client-owned)
 routes.*
 
-Next **is** the data router: Server Components load route data, you seed Lane from
-it, and the client owns reads after hydration. This is Lane's
-[RSC-seeded client ownership](./architectures.md#rsc-seeded-client-ownership) model.
+Next **is** the data router: Server Components load route data and publish it into
+Lane, and the client reads it without fetching. This is Lane's
+[server-owned reads](./architectures.md#server-owned-reads--published-read-with-external)
+model — and the decision is per key, so client-owned reads live beside it on the
+same route.
 
 ```tsx
-// Server Component: load route data, seed Lane with the same keys your hooks use.
-const snapshots = { entries: [{ key: ["tasks", filters], data: tasks }] };
+// Server Component: load route data, publish it under the keys your hooks read.
+const snapshots = { entries: [laneSnapshot(taskLanes.list(filters), tasks)] };
 
 <LaneProvider>
   <LaneHydration snapshots={snapshots}>
-    <Workspace /> {/* client: useLane({
-      key: ["tasks", filters],
-      loader: …,
-    }) reads the seed */}
+    <Workspace /> {/* client: useLane(taskLanes.list(filters)) — declared
+                     `loader: external`, so it reads the publication */}
   </LaneHydration>
 </LaneProvider>;
 ```
 
+```ts
+// The read both halves import. `external` says: the route fills this.
+export const taskLanes = {
+  list: (filters: TaskFilters) =>
+    laneRead<Task[]>({ key: ["tasks", filters], loader: external }),
+};
+```
+
 - **Navigation** is wrapped in transitions by Next, so a `<Link>` to a route that
-  re-hydrates does not flash.
+  republishes does not flash. A filter or selection in the URL *is* a navigation,
+  so the same mechanism serves it.
 - **Back/forward** is handled *for you*: Next's client Router Cache restores the
   segment from cache (mirroring bfcache) rather than refetching, so there is no
-  suspend and no flash. Lane only needs matching keys; re-hydration on navigation
-  overwrites and mounted readers converge.
-- **Client-only** surfaces (no server seed) just call `useLane` and fetch on first
-  read — that is `/lane-spa`.
+  suspend and no flash. Lane only needs matching keys; a republication on
+  navigation overwrites and mounted readers converge.
+- **Mutations** are Server Actions that mutate the source and `revalidatePath` /
+  `revalidateTag`; the action's response carries the re-rendered payload, which
+  republishes every seeded key at once. Do not reach for `lane.set` or
+  `lane.invalidate` afterwards — on a published key they
+  [throw](./api-reference.md#laneownershiperror). Cover the round trip with
+  `useOptimistic` over the read value.
+- **Client-only** surfaces (no publication) just call `useLane` with their own
+  loader and fetch on first read — that is `/lane-spa`, and a single route can
+  mix the two as long as no key is in both.
 - **"the same keys" can be the same module.** `use-lane` marks only its React
   modules `"use client"`, so
   [`laneKey`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds) and
@@ -157,10 +175,13 @@ so the entry is warm on return. Declarative mode also does not surface a navigat
 pending state — wrap `navigate` in your own `useTransition` if you want a progress
 indicator.
 
-### Data mode — loaders seed Lane
+### Data mode — loaders publish into Lane
 
-`createBrowserRouter` + loaders. The loader is the "server" seam: it fetches and
-returns a `LaneHydration` snapshot; a small wrapper seeds Lane before the UI reads.
+`createBrowserRouter` + loaders. **This is the server-owned shape with no server
+in it**: `LaneHydration` is not RSC-specific, it applies a payload of snapshots to
+a lane, and a client router's loader data is exactly such a payload. The loader is
+the owner; Lane is the read-only distribution layer that gets the data to
+components the router's `useLoaderData` cannot reach.
 
 ```tsx
 export async function usersLoader({ request }) {
@@ -168,15 +189,15 @@ export async function usersLoader({ request }) {
   return { entries: [{ key: ["users"], data }] }; // a LaneHydrationSnapshots
 }
 
+// The read the UI uses: published by the loader, never fetched by the client.
+const usersRead = laneRead<UsersData>({ key: ["users"], loader: external });
+
 // app-level glue — not provided by either library
 function withHydration(Ui) {
   return function HydratedRoute() {
     return (
       <LaneHydration snapshots={useLoaderData()}>
-        <Ui /> {/* useLane({
-          key: ["users"],
-          loader: …,
-        }) finds the hydrated promise */}
+        <Ui /> {/* useLane(usersRead) finds the published promise */}
       </LaneHydration>
     );
   };
@@ -200,9 +221,15 @@ createBrowserRouter([
 - React Router **re-runs loaders on back/forward** by default (unlike Next, which
   restores from cache). To make back instant, return `false` from `shouldRevalidate`
   for POP, or have the loader read through Lane's cache.
-- React Router has **no direct loader-data write** (no `setQueryData` equivalent) —
-  only revalidation. After hydration, Lane's `set` / `update` / `invalidate`
-  (key-granular) fill that gap.
+- **Refreshing and mutating both go through the router.** `useRevalidator()`
+  re-runs the loaders, which produces a new snapshots object and republishes;
+  a mutation changes the source and then revalidates. React Router has no direct
+  loader-data write (no `setQueryData` equivalent), and Lane does not offer one
+  behind its back — `set` / `update` / `invalidate` on a published key
+  [throw](./api-reference.md#laneownershiperror). What you get in exchange is that
+  an edit made this way survives navigating away and back, because it was never a
+  local edit: the loader publishes the source's current state every time it runs.
+  The demo's `/lane-router` is exactly this shape.
 
 ## TanStack Router
 
@@ -238,6 +265,6 @@ full Data-mode behavior (loader → hydration → `useLane`, no-flash back/forwa
 
 ## See also
 
-- [Supported architectures](./architectures.md) — RSC-first and RSC-seeded ownership.
+- [Supported architectures](./architectures.md) — the per-key ownership rule: RSC props, published (`external`), or client-owned.
 - [Design notes](./design-notes.md) — why Lane is transition-native by construction.
 - [API reference](./api-reference.md) — `LaneHydration`, `useLane`, `gcTime`, `whenStale`.

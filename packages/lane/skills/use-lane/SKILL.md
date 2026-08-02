@@ -1,6 +1,6 @@
 ---
 name: use-lane
-description: Use when writing or reviewing React 19 async-data code that uses use-lane — reading data with useLane + use(), Suspense / Error-Boundary wiring, re-reading after a mutation (invalidate / set / update), refetch / polling / focus / reconnect revalidation, conditional or deferred reads, RSC or loader seeding (LaneHydration), router / Next.js integration, prefetching, or migrating React Query / SWR code. Lane owns promise identity; React owns loading, errors, transitions, and optimistic UI — prefer source invalidation over external-store cache patterns. Also use it to avoid common anti-patterns: reading a promise in useEffect/.then + setState instead of use(), hand-rolled isLoading, or patching the cache after a mutation.
+description: Use when writing or reviewing React 19 async-data code that uses use-lane — reading data with useLane + use(), Suspense / Error-Boundary wiring, re-reading after a mutation (invalidate / set / update), refetch / polling / focus / reconnect revalidation, conditional or deferred reads, RSC or router-loader publication (LaneHydration + `loader: external`), router / Next.js integration, prefetching, or migrating React Query / SWR code. Lane owns promise identity; React owns loading, errors, transitions, and optimistic UI — prefer source invalidation over external-store cache patterns. Also use it to avoid common anti-patterns: reading a promise in useEffect/.then + setState instead of use(), hand-rolled isLoading, or patching the cache after a mutation.
 ---
 
 # use-lane
@@ -22,12 +22,14 @@ instead of recreating a React Query / SWR cache on top of Lane.
   focus / reconnect, on an interval, or when a key (filter / search / id) changes.
 - You want refetches to stay non-blocking — the current screen stays live — via
   transitions, not a library `keepPreviousData` flag.
-- You seed client reads from RSC / router-loader data, then own them on the client.
+- A key's truth lives outside the browser (an RSC payload, a router loader) and
+  client components must read it reactively — publish it and read with
+  `loader: external`.
 - You are migrating React Query / SWR code to the React-19-native split.
 
-**Not for:** data that should stay server-owned (let Server Components / Actions
-own it), or as a global store for mutation / optimistic state (that stays local
-to the action via `useOptimistic` / `useActionState`).
+**Not for:** data no client component reads reactively (pass it as RSC props), or
+as a global store for mutation / optimistic state (that stays local to the action
+via `useOptimistic` / `useActionState`).
 
 ## Minimal shape
 
@@ -44,6 +46,21 @@ const lane = useLaneInstance();
 await patchUser(id, body);
 lane.invalidate(["user", id]); // mounted readers re-read inside a transition
 ```
+
+## Ownership: decide it per key, first
+
+| The key… | Put it | Reads with | Changes through |
+| --- | --- | --- | --- |
+| is not read reactively by a client component | not in the lane — RSC props | — | a new render |
+| is read by the client, truth lives outside | in the lane, **published** (`LaneHydration`) | `loader: external` | mutate source → revalidate → republish |
+| is the client's to control | in the lane, **client-owned** (never seeded) | a normal loader | `invalidate` / `set` / `update` / `remove` |
+
+**Seeding a key the client then mutates is refused at runtime.** A published entry
+throws `LaneOwnershipError` on `set` / `update` / `invalidate` / `remove` /
+`prefetch`, and `useLane` of an `external` read returns no `invalidate`. Optimism
+on a published key is `useOptimistic` over the read value — never a write.
+→ `references/architectures.md#the-ownership-rule`,
+`references/api-reference.md#external--a-read-the-owner-publishes`
 
 ## Core rules (skim before writing code)
 
@@ -79,15 +96,27 @@ task touches that rule.
 - **Seed hydration with `laneSnapshot(read, data)`,** not an object literal. A
   literal's `key` is an untyped `LaneKey`, so a mismatched pair compiles and seeds
   every reader of that key with the wrong shape; `laneSnapshot` infers the type
-  from the read's key and checks `data` against it.
+  from the read's key and checks `data` against it. Everything seeded becomes
+  server-owned — read it with `laneRead<T>({ key, loader: external })` (explicit
+  `T`; the spec accepts no `staleTime` / `whenStale` / `retry` / `refetchOn*`,
+  because each one instructs a loader this read does not have). An external read
+  suspends until the publication arrives, and fails loudly with
+  `LaneExternalTimeoutError` after 10s if nothing publishes the key.
+  `LaneHydration` is not server-specific: a client router's loader data is a
+  payload too. Published entries are exempt from `gcTime` — they live as long as
+  the publisher's payload or a committed reader keeps them reachable.
+  → `references/api-reference.md#external--a-read-the-owner-publishes`
 - **One owner per key per subtree.** Dedupe makes re-reading a key in a child
   free in requests, but each reader is another subscription, pending flag, and
   suspend point — read where the data enters the screen and pass the value down.
   Read the same key twice only across genuinely separate surfaces.
   → `references/common-mistakes.md`, `references/consistency.md`
-- **Converge by invalidating the source**, not by patching a cache. Use `set` /
-  `update` only to publish data you *already have* (e.g. a mutation response);
-  use `remove` to drop entries on sign-out / team switch. → `references/api-reference.md`
+- **Converge by invalidating the source**, not by patching a cache — for
+  **client-owned** keys. Use `set` / `update` only to publish data you *already
+  have* (e.g. a mutation response); use `remove` to drop entries on sign-out /
+  team switch. For a **published** key none of these apply (they throw): mutate
+  the source, revalidate, and the republication converges every seeded key at
+  once. → `references/api-reference.md`, `references/api-reference.md#mutating-a-server-owned-key`
 - **Wrap key changes and navigation in a transition** (or drive the key from
   `useDeferredValue`) so the current screen stays live. Initial loads with no
   prior value still suspend to a Suspense fallback. → `references/integrations.md`
@@ -140,7 +169,7 @@ exact signatures you can also read the package's bundled `dist/index.d.ts`.
 | Exact API: every export, option, return type, and behavior | `references/api-reference.md` |
 | Why Lane is shaped this way; the reasoning behind each gotcha above | `references/design-notes.md` |
 | Two readers of one key showing different values; why Lane skips `useSyncExternalStore` | `references/consistency.md` |
-| Where Lane fits: RSC-first vs RSC-seeded ownership; who owns mutations | `references/architectures.md` |
+| Where Lane fits: the per-key ownership rule (RSC props / published / client-owned); who owns mutations | `references/architectures.md` |
 | Wiring to Next.js / React Router / TanStack / plain SPA; the back-forward (`popstate`) flash caveat | `references/integrations.md` |
 | Running outside the browser — CLI (Ink), React Native, other renderers; the `eventSource` prop | `references/environments.md` |
 | Conditional / deferred reads | `references/api-reference.md#conditional-reads-gating`, `#deferred-reads-render-first-swap-when-ready` |
@@ -149,4 +178,5 @@ exact signatures you can also read the package's bundled `dist/index.d.ts`.
 | Colocating a read's key + loader + options (react-query's `queryOptions()`) | `references/api-reference.md#lanereadspec--key--loader-colocation` |
 | Type-checked `set` / `update` from a key (react-query's `DataTag`) | `references/api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds` |
 | Prefetch / warm the cache on intent (hover, focus) | `references/api-reference.md#prefetch` |
-| RSC / loader seeding with `LaneHydration` | `references/api-reference.md#hydration-rsc-seeding` |
+| RSC / loader publication with `LaneHydration`, and reading it with `external` | `references/api-reference.md#hydration-rsc-seeding`, `#external--a-read-the-owner-publishes` |
+| Mutating a server-owned key (Server Action → revalidate → republish; `useOptimistic`) | `references/api-reference.md#mutating-a-server-owned-key` |

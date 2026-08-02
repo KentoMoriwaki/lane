@@ -42,6 +42,12 @@ stating because it is the most common wrong answer: data a client component only
 > ([`LaneOwnershipError`](./api-reference.md#laneownershiperror)) in development
 > and production alike. Pick a row; the runtime holds you to it.
 
+Ownership also decides how a key behaves when a router keeps its tree alive in a
+hidden `<Activity>` — a published key converges on the next publication and is
+retained by reachability, a client-owned one converges through notification and
+the reveal reconciliation. See [under `<Activity>` and router
+keep-alive](./consistency.md#activity).
+
 ## RSC-first ownership — the key stays out of the lane
 
 Use this when route or page data naturally belongs to Server Components and no

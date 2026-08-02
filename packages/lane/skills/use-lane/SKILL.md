@@ -169,6 +169,7 @@ exact signatures you can also read the package's bundled `dist/index.d.ts`.
 | Exact API: every export, option, return type, and behavior | `references/api-reference.md` |
 | Why Lane is shaped this way; the reasoning behind each gotcha above | `references/design-notes.md` |
 | Two readers of one key showing different values; why Lane skips `useSyncExternalStore` | `references/consistency.md` |
+| `<Activity>` / router keep-alive: what a revealed reader shows, flash-free reveals, and the limits | `references/consistency.md#activity`, `references/integrations.md` |
 | Where Lane fits: the per-key ownership rule (RSC props / published / client-owned); who owns mutations | `references/architectures.md` |
 | Wiring to Next.js / React Router / TanStack / plain SPA; the back-forward (`popstate`) flash caveat | `references/integrations.md` |
 | Running outside the browser — CLI (Ink), React Native, other renderers; the `eventSource` prop | `references/environments.md` |

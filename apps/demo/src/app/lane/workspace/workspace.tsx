@@ -2,10 +2,7 @@
 
 import * as React from "react";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
-import { useWorkspaceRefresh } from "@/app/lane/api/hooks";
-import { workspaceReads } from "@/app/lane/api/lane-reads";
 import { buildWorkspaceHref } from "@/app/lane/api/url-state";
-import { useLaneInstance } from "use-lane";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { SectionError } from "./feedback";
 import { FilterBar } from "./filter-bar";
@@ -18,7 +15,7 @@ import { TaskList, TaskListSkeleton } from "./task-list";
 import { Topbar } from "./topbar";
 import { useDebouncedSearchField } from "./use-debounced-search-field";
 import { useWorkspaceUrl } from "./use-workspace-url";
-import { useWorkspace } from "./workspace-provider";
+import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
 
 export function Workspace() {
   const { isSignedIn } = useWorkspace();
@@ -42,7 +39,6 @@ function WorkspaceShell() {
     isPending: isViewPending,
   } = useWorkspaceUrl();
   const [createOpen, setCreateOpen] = React.useState(false);
-  const lane = useLaneInstance();
   const { refresh, isRefreshing } = useWorkspaceRefresh();
 
   const commitSearch = React.useCallback(
@@ -99,11 +95,10 @@ function WorkspaceShell() {
           <SidebarError
             error={error}
             onRetry={() => {
-              lane.invalidate(workspaceReads.currentUser().key);
-              lane.invalidate(workspaceReads.teams().key);
-              lane.invalidate(workspaceReads.insights().key);
-              lane.invalidate(workspaceReads.projects().key);
-              lane.invalidate(workspaceReads.labels().key);
+              // Every section retries the same way now: ask the owner to
+              // publish again, then let the boundary re-render into whatever
+              // arrives. There is nothing per-key to converge from here.
+              refresh();
               retry();
             }}
           />
@@ -132,7 +127,7 @@ function WorkspaceShell() {
                     title="Insights unavailable"
                     message={error instanceof Error ? error.message : undefined}
                     onRetry={() => {
-                      lane.invalidate(workspaceReads.insights().key);
+                      refresh();
                       retry();
                     }}
                   />
@@ -151,9 +146,7 @@ function WorkspaceShell() {
                     title="Filters unavailable"
                     message={error instanceof Error ? error.message : undefined}
                     onRetry={() => {
-                      lane.invalidate(workspaceReads.projects().key);
-                      lane.invalidate(workspaceReads.labels().key);
-                      lane.invalidate(workspaceReads.tasks(filters).key);
+                      refresh();
                       retry();
                     }}
                   />
@@ -179,7 +172,7 @@ function WorkspaceShell() {
                         error instanceof Error ? error.message : undefined
                       }
                       onRetry={() => {
-                        lane.invalidate(workspaceReads.tasks(filters).key);
+                        refresh();
                         retry();
                       }}
                     />
@@ -207,9 +200,7 @@ function WorkspaceShell() {
                 error={error}
                 onClose={() => selectTask(null)}
                 onRetry={() => {
-                  if (selectedTaskId) {
-                    lane.invalidate(workspaceReads.task(selectedTaskId).key);
-                  }
+                  refresh();
                   retry();
                 }}
               />

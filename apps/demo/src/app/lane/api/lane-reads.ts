@@ -1,4 +1,4 @@
-import { laneRead, laneSnapshot } from "use-lane";
+import { external, laneRead, laneSnapshot } from "use-lane";
 import type { LaneHydrationSnapshots, LaneSnapshot } from "use-lane";
 import type {
   CurrentUser,
@@ -9,44 +9,26 @@ import type {
   TeamMember,
   TeamSummary,
 } from "@/server/api";
-import {
-  fetchCurrentUser,
-  fetchInsights,
-  fetchLabels,
-  fetchMembers,
-  fetchProjects,
-  fetchTask,
-  fetchTasks,
-  fetchTeams,
-  type TaskFilters,
-} from "./endpoints";
+import type { TaskFilters } from "./endpoints";
 
 /**
- * The board's own reads — the task list and the two views derived from it —
- * revalidate when the tab comes back to the foreground.
+ * Every read this workspace performs, defined once — and every one of them is
+ * `external`: **this client does not fetch its workspace.** The route seeds these
+ * keys from the server on every render (see `workspaceSnapshots` below and
+ * `page.tsx`), and `external` is how a read says so — a real loader that waits
+ * for the publication instead of going after the data itself.
  *
- * They are the reads a teammate's edit invalidates, so coming back to a stale
- * board is the case worth handling; the catalogue reads around them (teams,
- * labels, members, the current user) only change when someone edits them and are
- * left to load once. `staleTime` is short enough that a refocus after a moment
- * away actually fetches, and long enough that flicking between two windows does
- * not.
+ * The freshness options are gone with the loaders, and their absence is the
+ * point rather than an omission: `staleTime`, `whenStale`, `refetchOnFocus` and
+ * `refetchOnMount` are all instructions to a fetcher this read does not have.
+ * Freshness here is the server's to decide, and it decides it the same way it
+ * decides everything else — by publishing. The type will not even let these
+ * reads carry the options (the external spec has no room for them), which is
+ * what keeps "server-owned" from quietly eroding one option at a time.
  *
- * The react-query variant sets exactly this policy, on the same three reads, in
- * `react-query/api/query-options.ts`. Both libraries spell it the same way, and
- * keeping them matched is what makes the two variants comparable when you switch
- * away and come back — the notable part is not that they both refetch, it is how
- * many separate steps the screen takes to apply what comes back.
- */
-const BOARD_REVALIDATION = {
-  refetchOnFocus: true,
-  refetchOnMount: true,
-  staleTime: 1_000,
-} as const;
-
-/**
- * Every read this workspace performs, defined once — key, loader, and freshness
- * in one place, which is all `laneRead` has ever been for.
+ * `T` has to be written out for the same reason: nothing is inferred from a
+ * loader that never loads. It is the one cost of the form, and it is paid once,
+ * here.
  *
  * What is worth noticing is what is **not** here: a second map of keys. Each
  * factory takes exactly what decides its key — `tasks(filters)`, `task(taskId)` —
@@ -55,78 +37,41 @@ const BOARD_REVALIDATION = {
  * object that costs nothing to build, and `.key` is reachable from anywhere:
  *
  * ```ts
- * lane.set(workspaceReads.task(task.id).key, task);   // a mutation, no session
- * laneSnapshot(workspaceReads.insights(), insights);  // a Server Component
+ * laneSnapshot(workspaceReads.insights(), insights);  // the server publishes
+ * useLane(workspaceReads.insights());                 // the client reads
  * ```
  *
- * Binding the session into the factories instead — `workspaceReads(ctx).task(id)`
- * — is what used to force a parallel `laneKeys` map: the write side and the RSC
- * seed would have had to produce a request context just to *name* an entry.
- * Those keys are now the reads' own, so the loaded type is inferred from the
- * fetcher rather than restated by hand, and there is one definition to keep
- * correct instead of two.
+ * Those are the only two things anyone does with these reads. There is no third
+ * line writing to `.key` — `lane.set` / `update` / `invalidate` / `remove` all
+ * throw on a key a publication seeded, and the mutations live in `actions.ts`
+ * instead, where a change ends in a republication rather than in a local edit.
  *
  * Note there is no `"use client"` on this module, and both graphs import it: the
- * hooks run in the browser, while `page.tsx` — a Server Component — calls
+ * components read in the browser, while `page.tsx` — a Server Component — calls
  * `workspaceSnapshots` to seed the very same entries. `laneRead` and
  * `laneSnapshot` are isomorphic and never call a loader, so building a read on
  * the server costs one object.
  *
- * Team-owned keys omit `teamId`: the active team travels in request headers, and
- * the workspace removes these keys when it changes (see `TEAM_SCOPED_KEYS`).
- * That is the standing obligation of a session that lives on the lane rather
- * than in the key — nothing invalidates on its own when the meta changes.
+ * Team-owned keys omit `teamId`: the active team travels in request headers, so
+ * switching teams does not rename a single key. It does not have to — a switch
+ * is a navigation, the route re-renders for the new team, and the publication
+ * that follows overwrites every one of these keys. The client-owned variants
+ * have to evict them by hand; here the same event that changes the team is the
+ * one that republishes them.
  */
 export const workspaceReads = {
   currentUser: () =>
-    laneRead({
-      key: ["current-user"],
-      loader: ({ meta }) => fetchCurrentUser(meta),
-    }),
-  teams: () => laneRead({ key: ["teams"], loader: ({ meta }) => fetchTeams(meta) }),
+    laneRead<CurrentUser>({ key: ["current-user"], loader: external }),
+  teams: () => laneRead<TeamSummary[]>({ key: ["teams"], loader: external }),
   tasks: (filters: TaskFilters) =>
-    laneRead({
-      key: ["tasks", filters],
-      loader: ({ meta }) => fetchTasks(meta, filters),
-      ...BOARD_REVALIDATION,
-    }),
+    laneRead<Task[]>({ key: ["tasks", filters], loader: external }),
   task: (taskId: string) =>
-    laneRead({
-      key: ["task", taskId],
-      loader: ({ meta }) => fetchTask(meta, taskId),
-    }),
-  projects: () =>
-    laneRead({
-      key: ["projects"],
-      loader: ({ meta }) => fetchProjects(meta),
-      // Carries per-project task counts, so it moves whenever the board does.
-      ...BOARD_REVALIDATION,
-    }),
-  labels: () =>
-    laneRead({ key: ["labels"], loader: ({ meta }) => fetchLabels(meta) }),
-  members: () =>
-    laneRead({ key: ["members"], loader: ({ meta }) => fetchMembers(meta) }),
-  insights: () =>
-    laneRead({
-      key: ["insights"],
-      loader: ({ meta }) => fetchInsights(meta),
-      ...BOARD_REVALIDATION,
-    }),
+    laneRead<Task>({ key: ["task", taskId], loader: external }),
+  projects: () => laneRead<Project[]>({ key: ["projects"], loader: external }),
+  labels: () => laneRead<TeamLabel[]>({ key: ["labels"], loader: external }),
+  members: () => laneRead<TeamMember[]>({ key: ["members"], loader: external }),
+  insights: () => laneRead<Insights>({ key: ["insights"], loader: external }),
 };
-
-/**
- * The key families that belong to the active team and are removed when it
- * changes. Prefix *scopes*, not keys — they name a family of entries rather than
- * one, so they carry no type and belong to no single read.
- */
-export const TEAM_SCOPED_KEYS = [
-  ["tasks"],
-  ["task"],
-  ["projects"],
-  ["labels"],
-  ["members"],
-  ["insights"],
-] as const;
 
 export type WorkspaceSeeds = {
   currentUser: CurrentUser;

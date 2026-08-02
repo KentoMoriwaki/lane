@@ -7,7 +7,7 @@ import { useTasks } from "@/app/lane/api/hooks";
 import type { TaskFilters } from "@/app/lane/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PRIORITY_GROUP_ORDER, PRIORITY_META } from "@/lib/task-meta";
-import { useWorkspace } from "./workspace-provider";
+import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
 import { EmptyState, RefreshErrorChip } from "./feedback";
 import { TaskRow } from "./task-row";
 
@@ -27,16 +27,20 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const { userId } = useWorkspace();
-  const { promise, isTransitionPending, invalidate } =
-    useTasks(filters);
-  const { data: tasks, refreshError } = React.use(promise);
+  const { refresh, isRefreshing, refreshError } = useWorkspaceRefresh();
+  const { promise, isTransitionPending } = useTasks(filters);
+  const { data: tasks } = React.use(promise);
 
-  const dimmed = isTransitionPending;
+  const dimmed = isTransitionPending || isRefreshing;
+  // The read cannot fail here — it is served by the publication — so what the
+  // chip reports is the *refresh* that failed: the last one the user asked for
+  // never reached the owner, and what is on screen is the publication before it.
+  // Retrying means asking again, not re-fetching from here.
   const refreshNotice = (
     <RefreshErrorChip
       refreshError={refreshError}
-      onRetry={invalidate}
-      isRetrying={isTransitionPending}
+      onRetry={refresh}
+      isRetrying={isRefreshing}
       className="mx-4 mt-3"
     />
   );

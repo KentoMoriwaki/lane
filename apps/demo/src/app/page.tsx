@@ -11,16 +11,16 @@ const VARIANTS: Variant[] = [
   {
     href: "/lane",
     name: "use-lane",
-    badge: "RSC-seeded",
+    badge: "server-owned",
     tagline:
-      "Server-prefetched then hydrated; the client owns reads after first paint. Suspense, Error Boundaries, transitions, and useOptimistic own the UI.",
+      "The RSC route is the only supplier: it seeds every key, reads are `external` (they wait for the publication instead of fetching), and mutations are server actions that revalidate — so one payload updates the task, the lists, and the insights together. useOptimistic covers the round trip.",
   },
   {
     href: "/lane-spa",
     name: "use-lane",
-    badge: "client-only",
+    badge: "client-owned",
     tagline:
-      "No server prefetch — the client owns every read from first paint. Same library, SPA architecture.",
+      "The same workspace with the opposite answer: no seeding, the client fetches and owns every key from first paint, and keeps its own cache honest after a mutation — publish the task, patch the lists, invalidate what derives from it.",
   },
   {
     href: "/react-query",
@@ -57,10 +57,11 @@ export default function Home() {
         </h1>
         <p className="text-pretty text-lg text-muted-foreground">
           The same UI and the same backend, built five ways —{" "}
-          <span className="text-foreground">use-lane</span> server-seeded,
-          use-lane client-only, the TanStack Query baseline, a Relay GraphQL
+          <span className="text-foreground">use-lane</span> server-owned,
+          use-lane client-owned, the TanStack Query baseline, a Relay GraphQL
           variant, and plain jotai atoms — so you can feel the difference. Switch
-          by changing the route.
+          by changing the route. The first two are the same library on opposite
+          sides of one question: who owns the data the screen is reading?
         </p>
       </header>
 
@@ -104,11 +105,14 @@ export default function Home() {
         </div>
         <p className="mt-1 text-pretty text-muted-foreground">
           A focused mini-SPA (users / posts) running as a hash-routed client
-          island: React Router v8 Data mode loaders hydrate Lane, the UI reads via{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">useLane</code>. Shows
-          back/forward without a fallback flash and{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">lane.update</code>{" "}
-          in-place writes.{" "}
+          island: React Router v8 Data mode loaders publish into Lane, the UI reads
+          via{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">
+            loader: external
+          </code>
+          . Shows back/forward without a fallback flash, and that server-owned is
+          not the same as server-side — here the owner is a client router, and a
+          mutation lands by revalidating it.{" "}
           <Link
             href="/lane-router"
             className="text-foreground underline underline-offset-4"

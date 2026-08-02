@@ -6,18 +6,45 @@ import {
   type LoaderFunctionArgs,
   useLoaderData,
   useParams,
+  useRevalidator,
 } from "react-router";
 import {
+  external,
+  laneRead,
   LaneHydration,
   type LaneHydrationSnapshots,
-  type LaneUseOptions,
   useLane,
-  useLaneInstance,
 } from "use-lane";
-import { fetchPosts, fetchUser, fetchUsers, userName } from "./api";
+import {
+  fetchPosts,
+  fetchUser,
+  fetchUsers,
+  type PostsData,
+  promoteFirstPost,
+  promoteFirstUser,
+  type UserData,
+  type UsersData,
+  userName,
+} from "./api";
 import { AppShell, RouteSkeleton } from "./shell";
 
-const READ_POLICY: LaneUseOptions = { staleTime: 5_000, whenStale: "revalidate" };
+/**
+ * The reads. Every one of them is `external`, which is this route's whole claim:
+ * **the router's loaders own this data, and Lane distributes it.** A read here
+ * has no fetcher and no freshness policy of its own — both belong to the loader
+ * that supplies the key — so what `useLane` does is wait for the publication and
+ * hand it over.
+ *
+ * The keys are the contract between the two halves: a loader publishes
+ * `["users"]` (see `usersLoader`), and anything under the boundary reads it by
+ * naming it — no props threaded down, no context of its own.
+ */
+const routeReads = {
+  users: () => laneRead<UsersData>({ key: ["users"], loader: external }),
+  user: (id: string) =>
+    laneRead<UserData>({ key: ["user", id], loader: external }),
+  posts: () => laneRead<PostsData>({ key: ["posts"], loader: external }),
+};
 
 // ---- loaders: fetch route data, return it as a Lane hydration snapshot -------
 export async function usersLoader({
@@ -43,7 +70,7 @@ export async function postsLoader({
   return { entries: [{ key: ["posts"], data }] };
 }
 
-// ---- seed Lane from the loader's snapshot, then render the UI ----------------
+// ---- publish the loader's snapshot into Lane, then render the UI ------------
 function withHydration(Ui: ComponentType) {
   return function HydratedRoute() {
     const snapshots = useLoaderData() as LaneHydrationSnapshots;
@@ -59,7 +86,7 @@ function Home() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight">
-        Route data via loaders → hydrated into Lane
+        Route data via loaders → published into Lane
       </h1>
       <p className="text-muted-foreground">
         A self-contained SPA that runs inside this Next.js route as a{" "}
@@ -67,10 +94,12 @@ function Home() {
         <code className="rounded bg-muted px-1.5 py-0.5 text-sm">#/…</code>, Next owns
         the pathname — no router conflict). Each list route is loaded by a React
         Router <code className="rounded bg-muted px-1.5 py-0.5 text-sm">loader</code> and
-        seeded into Lane with{" "}
+        published into Lane with{" "}
         <code className="rounded bg-muted px-1.5 py-0.5 text-sm">LaneHydration</code>; the
         UI reads it back through{" "}
-        <code className="rounded bg-muted px-1.5 py-0.5 text-sm">useLane</code>.
+        <code className="rounded bg-muted px-1.5 py-0.5 text-sm">useLane</code>. Nothing
+        about that mechanism is server-specific — the publisher here is a client
+        router, and Lane cannot tell the difference.
       </p>
       <div className="rounded-lg border-l-2 border-foreground/40 bg-card px-4 py-3 text-sm">
         <strong>What to watch.</strong> Navigate Users / Posts and use the browser
@@ -79,11 +108,17 @@ function Home() {
         lights for every navigation, popstate included.
       </div>
       <p className="text-sm text-muted-foreground">
-        After hydration <strong>Lane owns the data</strong>:{" "}
-        <em>Refresh</em> re-reads through Lane (no navigation), and{" "}
-        <em>Edit (lane.update)</em> rewrites the cached value <em>in place with no
-        fetch</em> — something React Router's loader model can't do. Navigating away and
-        back re-runs the loader and re-seeds authoritative data, overwriting the edit.
+        <strong>Who owns the data.</strong> The loaders do. These reads are declared{" "}
+        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">loader: external</code>{" "}
+        — they wait for a publication instead of fetching — and Lane refuses a client
+        write to any key that arrived that way. So both buttons go through the owner:{" "}
+        <em>Refresh</em> asks the router to re-run its loader (
+        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">useRevalidator</code>),
+        and <em>Edit</em> changes the source first and then asks for the same thing.
+        The edit survives navigating away and back, because it was never a local
+        edit — which is the part a cached-value patch could not promise here: the
+        next loader run would have published the source's unchanged copy over the
+        top of it, silently.
       </p>
     </section>
   );
@@ -107,10 +142,10 @@ function Toolbar({
       <h2 className="text-lg font-semibold">{title}</h2>
       <div className="flex gap-2">
         <button className={btn} onClick={onRefresh} disabled={pending}>
-          {pending ? "Refreshing…" : "↻ Refresh (invalidate)"}
+          {pending ? "Revalidating…" : "↻ Refresh (revalidate)"}
         </button>
         <button className={btn} onClick={onEdit} disabled={pending}>
-          ✎ Edit (lane.update)
+          ✎ Edit (mutate + revalidate)
         </button>
       </div>
     </div>
@@ -118,37 +153,30 @@ function Toolbar({
 }
 
 function UsersList() {
-  const lane = useLaneInstance();
-  const { promise, isTransitionPending, invalidate } = useLane({
-    ...READ_POLICY,
-    key: ["users"],
-    loader: ({ signal }) => fetchUsers(signal),
-  });
+  const { revalidate, state } = useRevalidator();
+  const { promise } = useLane(routeReads.users());
   const { data } = use(promise);
+  const pending = state !== "idle";
 
-  // lane.update: rewrite the cached value in place — no loader, no fetch.
-  const editInPlace = () => {
-    lane.update<typeof data>(["users"], (current) => ({
-      ...current,
-      loadedAt: `${new Date().toLocaleTimeString()} (client edit)`,
-      users: current.users.map((u, i) =>
-        i === 0 ? { ...u, name: `★ ${u.name}` } : u,
-      ),
-    }));
+  // Mutate the source, then ask its owner to publish again. The second line is
+  // what puts it on screen — there is no third line writing to the store.
+  const edit = () => {
+    promoteFirstUser();
+    void revalidate();
   };
 
   return (
     <section className="space-y-3">
       <Toolbar
         title="Users"
-        pending={isTransitionPending}
-        onRefresh={invalidate}
-        onEdit={editInPlace}
+        pending={pending}
+        onRefresh={() => void revalidate()}
+        onEdit={edit}
       />
       <p className="text-sm tabular-nums text-muted-foreground">
         loaded {data.loadedAt} · fetch #{data.fetch} · {data.users.length} users
       </p>
-      <ul className={`space-y-2 ${isTransitionPending ? "opacity-50" : ""}`}>
+      <ul className={`space-y-2 ${pending ? "opacity-50" : ""}`}>
         {data.users.map((u) => (
           <li key={u.id} className="rounded-lg border bg-card px-4 py-3">
             <Link
@@ -167,11 +195,7 @@ function UsersList() {
 
 function UserDetail() {
   const { id } = useParams();
-  const { promise } = useLane({
-    ...READ_POLICY,
-    key: ["user", id],
-    loader: ({ signal }) => fetchUser(id!, signal),
-  });
+  const { promise } = useLane(routeReads.user(id!));
   const { data } = use(promise);
 
   return (
@@ -209,36 +233,28 @@ function UserDetail() {
 }
 
 function PostsList() {
-  const lane = useLaneInstance();
-  const { promise, isTransitionPending, invalidate } = useLane({
-    ...READ_POLICY,
-    key: ["posts"],
-    loader: ({ signal }) => fetchPosts(signal),
-  });
+  const { revalidate, state } = useRevalidator();
+  const { promise } = useLane(routeReads.posts());
   const { data } = use(promise);
+  const pending = state !== "idle";
 
-  const editInPlace = () => {
-    lane.update<typeof data>(["posts"], (current) => ({
-      ...current,
-      loadedAt: `${new Date().toLocaleTimeString()} (client edit)`,
-      posts: current.posts.map((p, i) =>
-        i === 0 ? { ...p, title: `★ ${p.title}` } : p,
-      ),
-    }));
+  const edit = () => {
+    promoteFirstPost();
+    void revalidate();
   };
 
   return (
     <section className="space-y-3">
       <Toolbar
         title="Posts"
-        pending={isTransitionPending}
-        onRefresh={invalidate}
-        onEdit={editInPlace}
+        pending={pending}
+        onRefresh={() => void revalidate()}
+        onEdit={edit}
       />
       <p className="text-sm tabular-nums text-muted-foreground">
         loaded {data.loadedAt} · fetch #{data.fetch} · {data.posts.length} posts
       </p>
-      <ul className={`space-y-2 ${isTransitionPending ? "opacity-50" : ""}`}>
+      <ul className={`space-y-2 ${pending ? "opacity-50" : ""}`}>
         {data.posts.map((p) => (
           <li key={p.id} className="rounded-lg border bg-card px-4 py-3">
             <strong className="text-sm">{p.title}</strong>

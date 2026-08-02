@@ -19,7 +19,6 @@ import {
   useTask,
   useUpdateTask,
 } from "@/app/lane/api/hooks";
-import { taskCacheStrategies } from "@/app/lane/api/task-cache-sync";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -119,7 +118,7 @@ function TaskDetail({
       dispatchSaveAction({
         errorMessage: "Couldn't save title",
         onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.searchText),
+        run: () => update(input),
       });
     });
   }
@@ -131,7 +130,7 @@ function TaskDetail({
       dispatchSaveAction({
         errorMessage: "Couldn't save description",
         onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.searchText),
+        run: () => update(input),
       });
     });
   }
@@ -143,7 +142,7 @@ function TaskDetail({
       dispatchSaveAction({
         errorMessage: "Couldn't update status",
         onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.status),
+        run: () => update(input),
       });
     });
   }
@@ -155,7 +154,7 @@ function TaskDetail({
       dispatchSaveAction({
         errorMessage: "Couldn't update priority",
         onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.priority),
+        run: () => update(input),
       });
     });
   }
@@ -167,7 +166,7 @@ function TaskDetail({
       dispatchSaveAction({
         errorMessage: "Couldn't update assignee",
         onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.assignee),
+        run: () => update(input),
       });
     });
   }
@@ -179,7 +178,7 @@ function TaskDetail({
       dispatchSaveAction({
         errorMessage: "Couldn't move task",
         onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.project),
+        run: () => update(input),
       });
     });
   }
@@ -191,7 +190,7 @@ function TaskDetail({
       dispatchSaveAction({
         errorMessage: "Couldn't update due date",
         onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.dueDate),
+        run: () => update(input),
       });
     });
   }

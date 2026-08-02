@@ -245,9 +245,12 @@ server-confirmed data and wants to avoid an immediate duplicate read — a creat
 response seeding a detail key, or an update response publishing the confirmed
 entity while broader derived reads are invalidated.
 
-`set` is not optimistic UI. It publishes data the app actually has.
+`set` is not optimistic UI. It publishes data the app actually has — and only
+into a key the client owns. On a published key it throws; the equivalent there is
+to mutate the source and let the republication carry the confirmed value, which
+is the same idea with the ownership rearranged.
 
-## Hydration overwrites
+## Hydration overwrites — and what that implies about ownership
 
 `LaneHydration` applies server snapshots as authoritative values: it overwrites
 existing entries and notifies subscribers. Navigation is the reason — when a
@@ -273,6 +276,25 @@ never commits. That is the same shape as an inline
 rather than guarded at runtime, because the guard would have to be either a
 content hash (which breaks authoritative re-seeding of unchanged data) or a
 dev-only warning in a core measured in bytes.
+
+**Authoritative is the whole argument for closing the write side.** If a
+publication overwrites whatever it finds — which navigation requires — then a
+client write to a seeded key is a value with a scheduled deletion: the next
+payload replaces it, and nothing anywhere records that it existed. The opposite
+case is no better. A key that stops being republished keeps the local edit
+forever, and now the screen shows something the source never agreed to. Neither
+outcome announces itself, which is why the pairing is refused at the write
+instead of documented as a caveat: seeded entries are external, and the client
+mutation surface throws on them
+([`LaneOwnershipError`](./api-reference.md#laneownershiperror)).
+
+The enforcement is at runtime rather than in the key's type. A branded key would
+have to travel through every mutation path to be worth anything, and a plain
+`["task", id]` literal — which every app writes somewhere — would slip past it
+with no error at all. The store knows which entries were published; the type
+system only knows which values were annotated. So the type layer does the part it
+is good at (an external read spec accepts no loader options, and its result has no
+`invalidate` to call), and the store does the part that cannot be evaded.
 
 ## Key matching: exact vs scoped
 
@@ -438,7 +460,7 @@ against the typical `LaneProvider` + `useLane` import:
 | `{ LaneProvider, useLane }` — **typical** | 3358 B | — |
 | `+ laneRead`, `laneKey` | 3366 B | **+8 B** |
 | `+ laneSnapshot` | 3380 B | +22 B |
-| `+ LaneHydration` — the RSC-seeded minimum | 3501 B | +143 B |
+| `+ LaneHydration` — the publication minimum | 3501 B | +143 B |
 | `+ infiniteLaneRead`, `useInfiniteLane` | 3687 B | +329 B |
 | `+ useLanesAll` | 3944 B | +586 B |
 | `*` — everything | 4726 B | +1368 B |

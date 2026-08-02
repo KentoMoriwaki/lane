@@ -25,6 +25,12 @@ const scenes = [
     description:
       "Real Next.js navigation under cacheComponents: router bfcache keep-alive (WS4).",
   },
+  {
+    href: "/outside-reader",
+    title: "/outside-reader",
+    description:
+      "external reads: a layout-level reader outside every LaneHydration boundary, publishing / non-publishing sibling routes, and the WeakRef retention probe.",
+  },
 ];
 
 export default function IndexPage() {

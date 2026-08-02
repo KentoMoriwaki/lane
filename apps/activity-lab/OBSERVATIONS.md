@@ -723,3 +723,230 @@ loader はデフォルト auto/200ms(パネルで manual + resolve next に切�
 | BF2 | 別ルートに居る間に HUD で remove(/ invalidate / set)→ `<Link>` で復帰: 復帰の見え方をフレーム単位で | | | | FrameStrip + probe の render / passive-mount 順。shared キーは復帰時の再 seed と衝突する系 |
 | BF3 | BF1–BF2 を `LAB_PARTIAL_PREFETCH=0` で(`LAB_PARTIAL_PREFETCH=0 pnpm --filter @lane/activity-lab dev`) | | | | prefetch 内容の差が復帰時の payload に効くか |
 | BF4 | 4 ルート(list + detail/1..3)を回って LRU 追い出しを起こしてから追い出されたルートへ復帰: keep-alive された場合との差 | | | | 追い出し = probe の layout-cleanup 後に一から remount するはず、の確認込み |
+
+## /outside-reader
+
+external read(`loader: external`)の観測シーン。**layout に 1 つだけ置いた reader**
+(どの `<LaneHydration>` boundary の子孫でもない、自前の Suspense を持つ)が
+`["outside","topic"]` を external で読み、ページ側がそれを publish する。
+
+- ルート: `/outside-reader`(index、publish なし)/ `alpha` / `beta` / `gamma`
+  (いずれも publish、alpha・beta は 600ms、gamma は 100ms の人工遅延)/ `quiet`
+  (publish なし)。**同一レベルに 5 本**あるので、Activity の予算(表示 1 + 隠し 2)
+  超えを起こせる。
+- キーは 2 種: 全ルートが同じ値枠に書く共有キー `["outside","topic"]` と、
+  そのルートだけが publish する `["outside","route",<label>]`。共有キーは
+  「last publication wins」を、route キーは「そのルート自身の値が残ったか」を測る。
+- 値は `{ text, n }` のオブジェクト(**WeakRef で掴むため**文字列にしていない)。
+  `n` はサーバの通し番号なので、値を見れば何番目の publication か分かる。
+- HUD(layout、ルート subtree の外): reader の現在値・最終 render / commit 時刻・
+  fallback 窓(コミットされた各回の持続 ms)・pending フラグ・error(name と keyId)、
+  **store probe**(オンデマンドで同キーの使い捨て reader を mount し、fallback なしで
+  commit したか = スロットに値が生きているかを報告)、**WeakRef 表**(publish された
+  data オブジェクトへの自前 WeakRef + FinalizationRegistry、500ms ポーリング)、
+  **synthetic publisher**(snapshots をクライアント state だけが持つ publish。
+  unmount すれば publish 側の強参照が消える = 回収の陽性対照)、GC 圧ボタン。
+- lane は `<LaneProvider>` に `lane` を渡さない(provider が 1 インスタンス 1 lane を作る)。
+  **module スコープの lane にすると SSR がリクエストを跨いで汚染され、
+  ストリーミング計測が全部嘘になる**ため。
+
+| # | シナリオ | 観測(2026-08-02 本番) | メモ |
+| --- | --- | --- | --- |
+| OR1 | cold で publish ルートへ(streaming SSR の順序) | server 側で suspend → publish で resolve。first paint は fallback | 下記「検証: streaming SSR」 |
+| OR2 | publish ルート間の soft nav | publication の +0.9ms で収束、fallback フレーム 0 | 下記「検証: soft nav」 |
+| OR3 | 素の back(payload なしの復元) | reader は無反応(0 render)、値そのまま | 下記「検証: 素の back」 |
+| OR4 | publish しないルートへ nav | last publication wins(前の値を保持) | 同上 |
+| OR5 | publish のないルートに cold 着地 | 10.0s fallback → `LaneExternalTimeoutError`(keyId 入り) | 下記「検証: timeout」 |
+| OR6 | Activity 追い出し + WeakRef 回収 | 世代ごとに 1 周遅れで回収。初回 SSR 分だけ永久 ALIVE | 下記「検証: WeakRef 回収」 |
+
+### 検証: boundary 外 reader × streaming SSR(/outside-reader、本番・2026-08-02)
+
+再現: `pnpm --filter @lane/activity-lab exec next build` → `... next start -p 3007` →
+`curl -sN --no-buffer http://localhost:3007/outside-reader/alpha`(チャンクごとに
+タイムスタンプを取る)、および Playwright(headless、**visible なタブ**)で
+`goto(..., {waitUntil:"commit"})` してから DOM を 80/200/400/560/640/800/1200/2000ms で
+サンプル。
+
+- **boundary 外 reader は server 側で suspend し、publish で server 側のまま resolve する。**
+  HTML のチャンク順(alpha、publish 遅延 600ms):
+  - `+5ms` shell + `data-outside-fallback`(reader の fallback)を flush
+  - `+614ms` `data-outside-value` と `data-inside-value` が**同一 flush で**到着、
+    `$RC(...)` 3 本。総レスポンス 609–727ms
+  - つまり **`<LaneHydration>` の publish は SSR 中に走り、その abort が
+    boundary 外の external read を解決している**。クライアントに投げ返されていない
+    (`$RX` は出ない)。
+- **first paint の中身は fallback。** ブラウザは shell を受け取った時点で描画するので、
+  publish が届くまでの ~514ms は `SUSPENDED (outside reader)` が実際に画面に出る
+  (FrameStrip: `+156.0ms x32 raf:31`)。ページ側の穴も同じ窓で `seeding alpha…`。
+  遅い publish は「reader が出るのを待つ」のではなく「fallback が出続ける」形になる。
+- **クライアント側の fallback フラッシュは起きない。** hydration 時、reader の
+  `useState` initializer は publish 前の store を読んで一度 suspend するが、
+  同じ hydration パス内で `LaneHydration` の publish(`setTimeout(0)`)が着地するため、
+  **+2.4ms 後の再試行で値ごと commit**する。HUD の "fallback windows" は `none`、
+  reader の render/commit は 1/1。**クライアントで fallback が commit された回数はゼロ**。
+- **publish しない static ルートは prerender 時に boundary を諦める**:
+  `/outside-reader` と `/outside-reader/quiet` のビルド出力は `○ (Static)` で、
+  HTML には `$RX("B:0","BAILOUT_TO_CLIENT_SIDE_RENDERING")` が入る。
+  **`next build` が 10s ハングすることはない**(全体 6.2s)。external の待ちは
+  prerender の abort で捨てられ、クライアントで一からやり直される。
+
+### 検証: publish ルート間の soft nav(/outside-reader、本番・2026-08-02)
+
+再現: alpha に着地 → HUD の "reset HUD + timeline" と FrameStrip の "clear" →
+nav リンク `beta (publishes)` をクリック → 1.6s 待って Timeline / FrameStrip を読む。
+
+Timeline(clear からの相対、alpha→beta):
+
+```
+    0.0  custom          outside:beta          seed-fallback render
+    1.1  layout-cleanup  outside:alpha:inside
+    3.8  passive-cleanup outside:alpha:inside
+  601.2  render          outside:reader        bg:0 tr:1     ← 旧値のまま transition pending
+  601.2  custom          outside:reader        value=alpha v2 (rsc)
+  602.1  custom          outside:reader        value=beta v3 (rsc)   ← 収束
+  603.1  render          outside:beta:inside                          ← ページ側の reader
+```
+
+- **収束の経路は通知チャネル**。boundary 外 reader は hydration source を持たない
+  (context は常に `undefined`)ので、`useLane` の source-switch 分岐は走らない。
+  走るのは `publishEntry` → `notifyInvalidate(entry, "transition")` → 購読中の
+  reader が transition で再読み、という**通常の購読経路**。
+  → **「boundary 外でも republish は届く」が、届き方は handoff ではなく通知**。
+- **タイミング: publication の +0.9ms で新値を commit し、ページ側の reader より
+  ~1ms 早い。** ページと「同じ commit」ではないが、同じナビゲーション transition の中、
+  同じフレームの中で終わる。
+- **fallback フレームは 0。** FrameStrip は `旧値(raf:49 で継続表示)` →
+  `旧値 tr:1(raf:0)` → `新値(raf:0)` の 3 フレームで、**中間状態は 2 つとも
+  raf:0 = 一度も paint されていない**。画面上は旧値から新値へ直接切り替わる。
+- 逆向き(beta→alpha)も数値までほぼ同一(+601.3 tr:1 → +601.9 新値 → +602.3 ページ)。
+
+### 検証: 素の back と publish しないルート(/outside-reader、本番・2026-08-02)
+
+再現: alpha →(nav)beta → `page.goBack()`。復帰の窓は rAF ループで
+「**表示中の**(`offsetParent !== null`)値要素」を録画。隠し Activity の DOM は
+`display:none` で残るので、フィルタしないと隠しツリーの値を読んでしまう(実際に一度
+踏んだ罠)。
+
+- **payload は流れない。** back では `seed-fallback render` も新しい publication も
+  出ない(WeakRef 表に新しい世代が増えない)。**boundary 外 reader は 0 render / 0
+  fallback**、値は据え置き。
+- **route キーは「そのルート自身の値」が最初の paint フレームから出る。**
+  録画: `beta:beta-own v20 …`(24 フレーム)→ `alpha:alpha-own v18 (rsc) …`(90 フレーム)。
+  **間に SUSPENDED フレームは 1 つもない**。Activity が保持していたツリーの reveal で、
+  store の promise と held promise が同一なので reveal 照合は clean。
+  → 設計が約束する retention(「reveal され得る tree がある限り値は生きる」)は、
+  **本番の素の back で fallback ゼロとして観測できる**。
+- **共有キーは last publication wins が back でも貫かれる。** back で alpha のツリーに
+  戻ったとき、alpha の**内側**の共有キー reader は `alpha v11` ではなく **`beta v13`**
+  を表示した(reveal の layout 照合が store の現在値を同期採用)。
+  つまり「戻ったルートが自分の publish した値を見せる」保証は共有キーには無い。
+  ルート固有の値が要るならキーをルートで分けるのが正しい形。
+- **publish しないルート(quiet / index)への nav でも同じ**: reader は 0 render・
+  0 fallback で直前の publication を保持し続ける。**last publication wins を確認**。
+
+### 検証: publish されないキーの timeout(/outside-reader、本番・2026-08-02)
+
+再現: 新しいブラウザコンテキスト(publication 履歴ゼロ)で
+`http://localhost:3007/outside-reader/quiet` に直接着地し、11s 待つ。
+
+- **fallback に座り続けて 10.0s で reject する。** HUD の fallback 窓は
+  **10014.2ms**(FrameStrip: `+99.3ms x602 raf:601` = 601 回の rAF で実際に描かれ続けた)。
+  Timeline は `+1.0 fallback-commit` … `+10015.2 fallback-cleanup` →
+  `+10017.9 ERROR LaneExternalTimeoutError`。
+- **エラーはキーを名乗る。** `error.name = "LaneExternalTimeoutError"`、
+  `error.keyId = ["outside","topic"]`、message は
+  `No publication arrived for ["outside","topic"] within 10000ms.`
+  (本番ビルドなので開発用の解説段落は落ちている = 意図どおり)。
+- **timeout 後、そのキーは「publication が来るまで」死んでいる。** reject した read は
+  entry に残るので、直後に mount した使い捨て reader は**新しい 10s 待ちを始めず即座に
+  同じエラー**を受け取る。その後 alpha へ nav して publish が着地すると、同じ probe は
+  **`HIT (no fallback) after 0.6ms`**。→ 毒は永続ではなく、publication で解除される。
+- **ただし既にエラーになった reader は自力で復帰しない**(React の error boundary は
+  リセットされないため)。publish 側が復活しても画面はエラーのまま。
+  ライブラリの問題ではないが、**external read を使うアプリは boundary に
+  リセット経路を用意する必要がある**という運用上の含意。
+- SSR 側は 10s ハングしない(上記 `$RX` 参照)。待ちが 10s 生きるのは
+  **クライアントの document ごと**。
+
+### 検証: WeakRef 回収の実測(/outside-reader、本番・2026-08-02)— BF4 の後継
+
+ブラウザでは GC を強制できないので、**自前の WeakRef + FinalizationRegistry** を
+publish された data オブジェクトに掛け、500ms ポーリングで `deref()` を見る。
+値そのものは決して保持しない(ラベルと世代番号だけ)。GC 圧ボタン(短命オブジェクトの
+大量確保 + タスク境界跨ぎ)も用意したが、**実際には自然な major GC で回収が起きた**。
+
+再現: alpha に cold 着地 → `beta → gamma → quiet → index → alpha` を 1 周として
+4 周し、各周のあとに GC 圧 ×2(各 3.5s 待ち)→ WeakRef 表を読む。
+
+**(a) Activity の追い出しは研究資料どおり(表示 1 + 隠し 2)。**
+DOM 上の `[data-route]` は `alpha(v)` → `beta(v) alpha(h)` → `gamma(v) beta(h) alpha(h)`
+→ `quiet(v) gamma(h) beta(h)`(**alpha のツリーが unmount**)→
+`index(v) quiet(h) gamma(h)`。
+
+**(b) 値は「payload が置き換わり、かつツリーが落ちた」1 周後に確実に回収される。**
+
+| 世代 | 1 周後 | 2 周後 | 3 周後 | 4 周後 |
+| --- | --- | --- | --- | --- |
+| 初回 SSR(topic#41 / route:alpha#42) | ALIVE | ALIVE | ALIVE | **ALIVE** |
+| 1 周目(#43–#48) | ALIVE | **COLLECTED** | COLLECTED | COLLECTED |
+| 2 周目(#49–#54) | — | ALIVE | **COLLECTED** | COLLECTED |
+| 3 周目(#55–#60) | — | — | ALIVE | **COLLECTED** |
+| 4 周目(#61–#66) | — | — | — | ALIVE |
+
+定常状態では**最新 1 世代だけが生きている**。つまり lane 側の保持は
+「Next が payload を持っている間」に正確に一致しており、**WeakRef 委譲は実機で
+機能している**。回収の引き金は「同じ varyPath に新しい bfcache エントリが書かれて
+古い payload が落ちること」+「そのツリーが Activity 予算から溢れて unmount されること」の
+両方で、片方だけでは落ちない(1 周目の値は 1 周目の終わりにはまだ ALIVE)。
+
+**(c) 唯一の永久保持は「初回ロード時の publication」。** `topic#41` と
+`route:alpha#42` は 4 周・GC 圧 8 回を経ても ALIVE のまま。`self.__next_f` は
+hydration 後に空(length 0、値の文字列も含まれない)なので、掴んでいるのは
+**Next 側の初期 payload 参照**(初期 RSC payload は mount 済みの AppRouter に props
+として渡るので document 寿命で生き続ける、が最有力)。**lane 側ではない**ことは
+下の陽性対照で確定している。分類としては「**設計どおりまだ到達可能**」であって
+「回収可能なのに回収されていない」ではない。
+
+**(d) 陽性対照(lane が何も強く握っていないことの証明)。** HUD の synthetic publisher は
+snapshots オブジェクトをクライアント state だけに持ち、`<LaneHydration>` で publish して
+**中に reader を置かない**。unmount すると publish 側の最後の強参照が消える。実測:
+
+```
+29338  track synthetic#1 / publish synthetic s1
+29985  unmount publisher
+30108  FINALIZED synthetic#1      ← unmount の +123ms、GC 圧を押す前に自然回収
+```
+
+→ **entry の殻(`state.entries` のエントリ)も `publications` の tether も、値を
+生かし続けなかった**。`lastFulfilled` を external でスキップしている実装も含めて、
+強参照は publication の payload と committed reader だけ、という設計の記述どおり。
+
+**(e) 回収された値のあとに何が起きるか**: 回収後のキーを新しい reader が読むと
+スロットは空なので `external` の待ちが始まる(= 次の publication まで fallback)。
+これは Next 側も必ずサーバ再取得する状態なので、不整合にはならない。
+ただし「そのルートに戻る」以外の経路(横断 reader が単独で mount)では
+**10s の timeout に当たり得る**ことは意識しておくべき挙動。
+
+### 計測上の注意(/outside-reader、自分への再発防止)
+
+- **hidden なタブでは計測が成立しない。** エディタ埋め込みのブラウザペインは
+  `document.visibilityState === "hidden"` で、(1) rAF が一切 tick しない
+  (FrameStrip の `raf:` が全部 0 になり paint 判定が死ぬ)、(2) **PPR の dynamic
+  hole がクライアントで hydrate されないまま止まる**(ページの client component が
+  1 つも render されず、`LaneHydration` が走らないので publish が起きず、
+  boundary 外 reader が**publish されているはずのルートで 10s timeout する**)。
+  この 2 つ目は lane の挙動ではなく計測環境の副作用なので、**必ず visible な
+  ブラウザ(ここでは Playwright の headless chromium、`visibilityState === "visible"`)で
+  取り直すこと**。
+- **HUD が reader を再 render させると無限ループになる。** reader は render 中に
+  観測ストアへ書き、そのストアを HUD が `useSyncExternalStore` で購読する。
+  購読を shell に置くと「publish 1 回 → rAF ごとに render」が止まらなくなり、
+  1 回の計測で render が 145 回に膨れた。**購読は HUD の葉に置き、reader は
+  `memo` で包む**(現在の実装)。なお suspend 中の reader は memo が効かず
+  親 render ごとに再試行されるので、hydration 直後の ~200ms は
+  16ms 間隔の render ログが残る(実害なし)。
+- **隠し Activity の DOM は残る。** `[data-own-value]` 等を素の
+  `querySelector` で読むと隠しツリーの値を拾う。表示中だけを見るには
+  `offsetParent !== null` で絞る。
+- ブランチ/パッケージを触ったら計測前に `rm -rf apps/activity-lab/.next`
+  (既存の注意どおり。今回も `pnpm --filter use-lane build` → `.next` 削除 → build の順)。

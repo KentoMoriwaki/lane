@@ -647,6 +647,13 @@ not committed yet, which has no subscription for a notification to reach.
   A read nobody publishes is a typo or a missing boundary, and failing loudly is
   the point — the alternative is a fallback that never resolves.
 
+**A key holds its latest publication, wherever it is read — including a restored
+tree.** If two routes publish the same key and the user navigates back to the
+first, its readers show the *second* route's value, not the one this route
+published: the reveal synchronously adopts the store's current value. That is
+the correct semantics for genuinely shared data (a session, a workspace); for a
+value that belongs to one route, put the route in the key.
+
 #### Gating
 
 `loader: cond ? external : undefined` gates an external read exactly as an absent
@@ -679,6 +686,17 @@ publishes this key; something publishes it under a *different* key (a filters
 object that serializes differently, an id of the wrong type); or the reader is
 mounted outside the boundary that publishes it and no publication has happened
 yet. Compare the serialized key in the message against what the publisher seeds.
+
+Two runtime behaviors worth knowing (both measured in a production build):
+
+- **The rejection is the entry's state, not the reader's.** A reader mounted
+  after the timeout receives the same rejection immediately — it does not start
+  a fresh 10-second wait. The next publication clears it: the key serves again,
+  with no fallback, the moment a value lands.
+- **An errored reader does not heal itself.** React error boundaries stay on
+  their error UI after a later publication revives the key, so a screen that can
+  hit this error needs a reset path (a retry button that remounts the boundary,
+  or a boundary keyed on the route).
 
 ### `useLanesAll(reads, options?)` — a batch read
 
@@ -1487,6 +1505,13 @@ demo's `/lane-router` publishes from React Router loaders with no server involve
 and the semantics are identical: the loader owns the data, Lane distributes it,
 and the client reads it with [`external`](#external--a-read-the-owner-publishes).
 See [Data mode](./integrations.md#data-mode--loaders-publish-into-lane).
+
+It is not client-specific either: during streaming SSR the publication runs on
+the server, and an `external` reader elsewhere in the tree — even outside the
+boundary — suspends and resolves inside the same server render. Which is why the
+lane must be **per request** on the server: let `LaneProvider` create it (the
+default). A module-scoped lane shared across requests would leak one request's
+publications into another's render.
 
 ### `LaneHydration`
 

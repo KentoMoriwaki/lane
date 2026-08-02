@@ -4,6 +4,7 @@
 // barrel without pulling a client reference. Adding it back would re-make the
 // whole package client-only.
 export { createLane } from "./core";
+export { external, LaneExternalTimeoutError } from "./external";
 export {
   createReactNativeEventSource,
   domEventSource,
@@ -18,6 +19,7 @@ export type {
 } from "./event-source";
 export { LaneHydration } from "./hydration";
 export { laneKey } from "./keys";
+export { LaneOwnershipError } from "./ownership";
 export { LaneProvider, useLaneInstance } from "./provider";
 export type { LaneProviderProps } from "./provider";
 export { laneRead } from "./read-spec";
@@ -33,7 +35,13 @@ export { useLane, useLanePromise } from "./use-lane";
 export { useLanesAll } from "./use-lanes-all";
 export type {
   Lane,
+  LaneClientLoader,
   LaneEntryInfo,
+  LaneExternalLoader,
+  LaneExternalReadSpec,
+  LaneExternalResult,
+  LaneGatedExternalReadSpec,
+  LaneGatedExternalResult,
   LaneGatedReadSpec,
   LaneGatedResult,
   LaneHydrationSnapshots,

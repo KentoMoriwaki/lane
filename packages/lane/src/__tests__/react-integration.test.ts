@@ -7,6 +7,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createLane,
   LaneHydration,
+  LaneOwnershipError,
   LaneProvider,
   useLane,
 } from "../index";
@@ -21,7 +22,12 @@ import type {
   LaneRead,
   LaneUseOptions,
 } from "../types";
-import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";
+import {
+  deferred,
+  resetVitest,
+  settlePromiseHandlers,
+  subscribeInvalidate,
+} from "./test-utils";
 
 type RenderedApp = {
   container: HTMLDivElement;
@@ -372,6 +378,7 @@ describe("React integration", () => {
       entries: [{ key: ["tasks"], data: "server" }],
     };
 
+    const published = vi.fn();
     const app = await render(hydrationApp(lane, snapshots, loader));
     await act(async () => {
       vi.runOnlyPendingTimers();
@@ -379,14 +386,13 @@ describe("React integration", () => {
     });
     await waitForText(app.container, "server|background:0|transition:0|refresh:none");
 
-    // A client-side publication after hydration.
-    await act(async () => {
-      lane.set(["tasks"], "client");
-      await settlePromiseHandlers();
-    });
-    await waitForText(app.container, "client|background:0|transition:0|refresh:none");
+    // A publication is announced, so counting the announcements is what says
+    // whether one landed. (This used to publish over the seed with `lane.set`
+    // and watch the value: a hydrated key is external now, so the client cannot
+    // write to it at all — see below.)
+    const unsubscribe = subscribeInvalidate(lane, ["tasks"], published);
 
-    // Re-rendering the same instance must not re-publish the server value over it.
+    // Re-rendering the same instance must not re-publish the server value.
     await act(async () => {
       app.root.render(hydrationApp(lane, snapshots, loader));
       await settlePromiseHandlers();
@@ -396,7 +402,40 @@ describe("React integration", () => {
       await settlePromiseHandlers();
     });
 
-    await waitForText(app.container, "client|background:0|transition:0|refresh:none");
+    await waitForText(app.container, "server|background:0|transition:0|refresh:none");
+    expect(published).not.toHaveBeenCalled();
+    expect(loader).not.toHaveBeenCalled();
+
+    unsubscribe();
+  });
+
+  // The ownership rule this hook of the previous test used to lean on: what a
+  // publication seeds belongs to whoever published it, and stays read-only from
+  // the client for as long as the entry lives.
+  it("refuses a client publication over a hydrated key", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "reloaded");
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server" }],
+    };
+
+    const app = await render(hydrationApp(lane, snapshots, loader));
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    await waitForText(app.container, "server|background:0|transition:0|refresh:none");
+
+    expect(() => lane.set(["tasks"], "client")).toThrow(LaneOwnershipError);
+    expect(() => lane.update<string>(["tasks"], (value) => value)).toThrow(
+      LaneOwnershipError,
+    );
+    expect(() => lane.invalidate(["tasks"])).toThrow(LaneOwnershipError);
+    expect(() => lane.remove(["tasks"])).toThrow(LaneOwnershipError);
+
+    await waitForText(app.container, "server|background:0|transition:0|refresh:none");
     expect(loader).not.toHaveBeenCalled();
   });
 

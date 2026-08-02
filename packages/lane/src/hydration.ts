@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { hydrateMany } from "./core";
+import { hydrateMany } from "./hydrate";
 import { useLaneInstance } from "./provider";
 import type { Lane, LaneHydrationSnapshots } from "./types";
 

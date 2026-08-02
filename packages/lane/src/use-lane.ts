@@ -23,22 +23,56 @@ import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
   Lane,
+  LaneExternalReadSpec,
+  LaneExternalResult,
+  LaneGatedExternalReadSpec,
+  LaneGatedExternalResult,
   LaneGatedReadSpec,
   LaneGatedResult,
   LaneInvalidateOptions,
   LaneKey,
+  LaneLoader,
   LaneRead,
   LaneReadSpec,
   LaneResult,
+  LaneUseOptions,
 } from "./types";
 
+/**
+ * Every read the hook accepts, as one shape — the implementation's parameter,
+ * never a caller's. The loader is a plain {@link LaneLoader} here (`external` is
+ * one, brand aside), which is what lets the body stay free of a single test for
+ * *which* kind of read it is holding: one `readOrCreate` per path, and the store
+ * is where the difference lives.
+ */
+type LaneAnyReadSpec<T, C> = LaneUseOptions & {
+  key: LaneKey;
+  loader: LaneLoader<T, C> | undefined;
+};
+
+/**
+ * An external read — `loader: external`. The result is a {@link LaneResult}
+ * without `invalidate`: the entry is filled by whoever publishes it, so there is
+ * no loader here to re-run and nothing for a client-side invalidation to do but
+ * empty a key it does not own (which the store throws on). Everything else — the
+ * promise, both pending flags, the transition semantics — is identical, because
+ * the wait *is* a read.
+ */
+export function useLane<T>(read: LaneExternalReadSpec<T>): LaneExternalResult<T>;
 export function useLane<T, C = T>(read: LaneReadSpec<T, C>): LaneResult<T>;
 export function useLane<T, C = T>(
   read: LaneGatedReadSpec<T, C>,
 ): LaneGatedResult<T>;
+export function useLane<T>(
+  read: LaneGatedExternalReadSpec<T>,
+): LaneGatedExternalResult<T>;
 export function useLane<T, C = T>(
-  read: LaneGatedReadSpec<T, C>,
-): LaneResult<T> | LaneGatedResult<T> {
+  read: LaneAnyReadSpec<T, C>,
+):
+  | LaneResult<T>
+  | LaneGatedResult<T>
+  | LaneExternalResult<T>
+  | LaneGatedExternalResult<T> {
   // A read is one value: its key, its loader, and the options it is read with.
   // The value doubles as the options bag — no destructuring into a normalized
   // copy — so every option is read fresh on each render and at each fire time.
@@ -352,14 +386,20 @@ export function useLane<T, C = T>(
   };
 }
 
+export function useLanePromise<T>(
+  read: LaneExternalReadSpec<T>,
+): Promise<LaneRead<T>>;
 export function useLanePromise<T, C = T>(
   read: LaneReadSpec<T, C>,
 ): Promise<LaneRead<T>>;
 export function useLanePromise<T, C = T>(
   read: LaneGatedReadSpec<T, C>,
 ): Promise<LaneRead<T>> | undefined;
+export function useLanePromise<T>(
+  read: LaneGatedExternalReadSpec<T>,
+): Promise<LaneRead<T>> | undefined;
 export function useLanePromise<T, C = T>(
-  read: LaneGatedReadSpec<T, C>,
+  read: LaneAnyReadSpec<T, C>,
 ): Promise<LaneRead<T>> | undefined {
   return useLane<T, C>(read).promise;
 }

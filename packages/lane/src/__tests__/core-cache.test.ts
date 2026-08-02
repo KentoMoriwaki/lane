@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hydrateMany, latestNotifySource, readOrCreate } from "../core";
-import { createLane } from "../index";
+import { latestNotifySource, readOrCreate } from "../core";
+import { hydrateMany } from "../hydrate";
+import { createLane, LaneOwnershipError } from "../index";
 import { serializeKey } from "../keys";
 import type { LaneRead } from "../types";
 import {
@@ -117,6 +118,10 @@ describe("hydrateMany", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
+  // Hydration seeds an *external* entry, so the client cannot invalidate it —
+  // which is what makes the freshness stamp observable here: the `onlyIf: "stale"`
+  // gate runs first, so the same call is a silent no-op while the seed is fresh
+  // and an ownership violation once it is not.
   it("sets freshness metadata from hydration time", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
@@ -136,6 +141,36 @@ describe("hydrateMany", () => {
     await expect(
       readOrCreate(lane, ["tasks"], async () => "too-early"),
     ).resolves.toEqual({ data: "server" });
+
+    vi.setSystemTime(11_000);
+
+    expect(() =>
+      lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 }),
+    ).toThrow(LaneOwnershipError);
+
+    expect(listener).not.toHaveBeenCalled();
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "after-stale"),
+    ).resolves.toEqual({ data: "server" });
+  });
+
+  it("sets freshness metadata from publication time on a client-owned key", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+
+    const lane = createLane();
+    const listener = vi.fn();
+
+    lane.set(["tasks"], "published");
+    subscribeInvalidate(lane, ["tasks"], listener);
+
+    vi.setSystemTime(10_999);
+    lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
+
+    expect(listener).not.toHaveBeenCalled();
+    await expect(
+      readOrCreate(lane, ["tasks"], async () => "too-early"),
+    ).resolves.toEqual({ data: "published" });
 
     vi.setSystemTime(11_000);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });

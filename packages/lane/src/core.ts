@@ -1,4 +1,9 @@
 import { isPrefixKey, serializeKey } from "./keys";
+import {
+  isExternalLoader,
+  LaneOwnershipError,
+  publicationReason,
+} from "./ownership";
 import { replaceEqualDeep } from "./structural";
 import type {
   Lane,
@@ -67,7 +72,18 @@ type LanePromiseSettlement = {
 };
 
 type LanePromiseCache = {
-  promise: Promise<unknown>;
+  /**
+   * The read itself: the promise for a client-owned entry, and a weak reference
+   * to it for an external one, whose value the lane does not keep alive (see
+   * {@link cacheSlot}). Which of the two is decided by the entry, never by
+   * inspecting this — `entry.external` says how to read the slot, and marking an
+   * entry external converts the slot it already had, so the two cannot disagree.
+   *
+   * A client-owned entry holds the promise directly rather than through a
+   * wrapper, because every entry in every app has one of these and almost none
+   * of them are external.
+   */
+  promise: Promise<unknown> | LaneWeakSlot;
   settlement: LanePromiseSettlement | undefined;
   startedAt: number;
   controller: AbortController | undefined;
@@ -107,6 +123,17 @@ type LaneEntry = {
   // transition — otherwise siblings of one key disagree about which pending flag
   // is set for the same update.
   lastNotifySource: LaneInvalidationSource | undefined;
+  /**
+   * Whether this key's value comes from outside: read with `external`, or seeded
+   * by a publication (see `hydrate.ts`, which marks everything it seeds). It
+   * decides two things and nothing else — the client mutation surface throws on
+   * it, and its retention is delegated to reachability rather than to `gcTime`.
+   *
+   * It is one-way. A key someone declared external stays external for as long as
+   * the shell lives: the second reader of a key cannot be the one that decides
+   * nobody owns it.
+   */
+  external: boolean;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -134,6 +161,17 @@ export function createLane(options: LaneOptions = {}): Lane {
       //
       // A read's `staleTime` / `whenStale` are deliberately ignored here: those
       // are read-time decisions and this is not the read.
+      if (isExternalLoader(read.loader)) {
+        // Rejected by `LaneReadSpec`'s loader type as well; this catches the
+        // spec that reached here as `any` or through a cast. Warming an
+        // external key would start a wait whose only outcome is the timeout.
+        throw new LaneOwnershipError(
+          read.key,
+          serializeKey(read.key),
+          "prefetch",
+        );
+      }
+
       return readOrCreate<T, C>(lane, read.key, read.loader, {
         // Same precedence as a hook read: the read's own override wins over the
         // value supplied alongside it.
@@ -160,13 +198,12 @@ export function createLane(options: LaneOptions = {}): Lane {
       }
     },
     set<T>(key: LaneKey, valueOrPromise: LaneValue<T>) {
-      const keyId = serializeKey(key);
-      const entry = getOrCreateEntry(state, key, keyId);
-      const promise = publishEntryValue(state, entry, valueOrPromise);
+      assertClientOwned(
+        getOrCreateEntry(state, key, serializeKey(key)),
+        "set",
+      );
 
-      notifyInvalidate(entry, "transition");
-
-      return promise;
+      return publishEntry<T>(lane, key, valueOrPromise);
     },
     update<T>(key: LaneKey, updater: LaneUpdater<T>) {
       const entry = state.entries.get(serializeKey(key));
@@ -175,10 +212,20 @@ export function createLane(options: LaneOptions = {}): Lane {
         return undefined;
       }
 
+      assertClientOwned(entry, "update");
+
       return updateLaneEntry(state, entry, updater);
     },
     updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>) {
-      return matchingEntries(state.entries, scope).flatMap((entry) => {
+      const entries = matchingEntries(state.entries, scope);
+
+      // Checked over the whole match before anything is written, so a scope that
+      // happens to reach a published key is refused rather than half-applied.
+      // (`invalidateAll` cannot do the same: whether it touches an entry at all
+      // is `onlyIf`'s decision, entry by entry.)
+      assertScopeClientOwned(entries, "updateAll");
+
+      return entries.flatMap((entry) => {
         const promise = updateLaneEntry(state, entry, updater);
         return promise ? [promise] : [];
       });
@@ -190,10 +237,15 @@ export function createLane(options: LaneOptions = {}): Lane {
         return;
       }
 
+      assertClientOwned(entry, "remove");
       removeLaneEntry(state, entry);
     },
     removeAll(scope) {
-      for (const entry of matchingEntries(state.entries, scope)) {
+      const entries = matchingEntries(state.entries, scope);
+
+      assertScopeClientOwned(entries, "removeAll");
+
+      for (const entry of entries) {
         removeLaneEntry(state, entry);
       }
     },
@@ -214,22 +266,50 @@ export function createLane(options: LaneOptions = {}): Lane {
 }
 
 /**
- * Applies server snapshots as authoritative values. Existing entries are
- * overwritten and their subscribers notified so that mounted readers converge
- * to the new data when a navigation re-hydrates the same keys.
+ * Publish a value under a key as the entry's authoritative content, and announce
+ * it — `lane.set` addressed by key rather than by an entry the caller already
+ * holds, which is what the publication path (`hydrate.ts`) needs.
+ *
+ * `external` says the value came from outside, marking the key as one the client
+ * may not write to and whose retention is reachability's business rather than
+ * `gcTime`'s. Not exported from the package: publishing on someone else's behalf
+ * is an internal seam, and `lane.set` is the public way to publish your own.
  */
-export function hydrateMany(
+export function publishEntry<T>(
   lane: Lane,
-  snapshots: LaneHydrationSnapshots,
-): void {
+  key: LaneKey,
+  valueOrPromise: LaneValue<T>,
+  external = false,
+): Promise<LaneRead<T>> {
   const state = getLaneState(lane);
+  const entry = getOrCreateEntry(state, key, serializeKey(key));
 
-  for (const snapshot of snapshots.entries) {
-    const keyId = serializeKey(snapshot.key);
-    const entry = getOrCreateEntry(state, snapshot.key, keyId);
+  if (external) {
+    markExternal(entry);
+  }
 
-    publishEntryValue(state, entry, snapshot.data);
-    notifyInvalidate(entry, "transition");
+  const promise = publishEntryValue(state, entry, valueOrPromise);
+
+  notifyInvalidate(entry, "transition");
+
+  return promise;
+}
+
+/**
+ * Record that this key is filled from outside, once. Converting the cache it
+ * already holds is what keeps `entry.external` a sound description of the slot:
+ * a key read with a client loader first and `external` second would otherwise be
+ * an entry that says "weak" over a bare promise.
+ */
+function markExternal(entry: LaneEntry): void {
+  if (entry.external) {
+    return;
+  }
+
+  entry.external = true;
+
+  if (entry.cache) {
+    entry.cache.promise = externalRef(entry.cache.promise as Promise<unknown>);
   }
 }
 
@@ -244,10 +324,19 @@ export function readOrCreate<T, C = T>(
   const keyId = serializeKey(key);
   const entry = getOrCreateEntry(state, key, keyId);
 
+  // The one place the store asks *which* loader it was handed: reading a key
+  // with `external` declares that it is filled from outside. Nothing downstream
+  // branches on the loader again — the wait is a loader like any other — but the
+  // entry's mutation surface and its retention both hang off whose value this
+  // is.
+  if (isExternalLoader(loader)) {
+    markExternal(entry);
+  }
+
   const reusable = reuseCache(entry, options);
 
   if (reusable) {
-    return reusable.promise as Promise<LaneRead<T>>;
+    return reusable as Promise<LaneRead<T>>;
   }
 
   const controller = new AbortController();
@@ -289,19 +378,35 @@ export function readOrCreate<T, C = T>(
  * been mounted at all, so the retry after a remount's *own* refetch is judged a
  * remount too — and the loop this guard exists to prevent reappears on the
  * second visit to any key.
+ *
+ * An external entry adds one case before any of that: its value may simply be
+ * *gone*. Nothing else changes — a collected value reads as an absent one, so
+ * the read goes through the loader (which, being `external`, waits for the next
+ * publication) exactly as it would for a key never read before.
  */
 function reuseCache(
   entry: LaneEntry,
   options: LaneReadOptions | undefined,
-): LanePromiseCache | undefined {
+): Promise<unknown> | undefined {
   const cache = entry.cache;
 
   if (!cache) {
     return undefined;
   }
 
+  const promise = cachedPromise(entry, cache);
+
+  if (promise === undefined) {
+    // Pruned here rather than on a timer, the way the router evicts its own
+    // caches: the read is the moment the shell's emptiness first matters, and
+    // an unread dead shell costs a map slot until then.
+    entry.cache = undefined;
+
+    return undefined;
+  }
+
   if ((options?.whenStale ?? "revalidate") !== "refetch") {
-    return cache;
+    return promise;
   }
 
   if (
@@ -318,7 +423,7 @@ function reuseCache(
   }
 
   if (cache.settlement === undefined || entry.subscribers.size > 0) {
-    return cache;
+    return promise;
   }
 
   // Errors are checked before the mount gate: a rejected read throws to an error
@@ -332,10 +437,10 @@ function reuseCache(
   // remount; reuse so it can't loop. Only a value some reader actually committed
   // on is stale enough to throw away.
   if (!cache.adopted) {
-    return cache;
+    return promise;
   }
 
-  return isStale(cache, options?.staleTime) ? undefined : cache;
+  return isStale(cache, options?.staleTime) ? undefined : promise;
 }
 
 export function invalidateEntry(
@@ -372,6 +477,8 @@ export function updateEntry<T>(
     return undefined;
   }
 
+  assertClientOwned(entry, "update");
+
   return updateLaneEntry(state, entry, updater);
 }
 
@@ -397,6 +504,14 @@ export function subscribeLane(
     entry.subscribers.delete(subscriber);
 
     if (entry.subscribers.size > 0) {
+      return;
+    }
+
+    if (entry.external) {
+      // Lane does not time an external entry out, because it does not know what
+      // the value is worth: the publisher and the readers do, and both of them
+      // hold it. Idleness says nothing here — the shell stays, and whether it
+      // still points at anything is settled by reachability, checked on read.
       return;
     }
 
@@ -454,6 +569,14 @@ function invalidateLaneEntry(
   if (!shouldInvalidateEntry(entry, options)) {
     return;
   }
+
+  // After the `onlyIf` gate, not before: an invalidation that would not have
+  // done anything has not reached into anyone's ownership. That is what keeps a
+  // revalidation trigger (`refetchOnMount` / focus / reconnect) from throwing out
+  // of an effect merely for being configured on a reader that happens to sit
+  // over a published key — while a trigger that *would* discard the owner's
+  // value still fails, because that is the violation.
+  assertClientOwned(entry, "invalidate");
 
   // `{ after }` rides the notification: subscribers re-read synchronously during
   // the fan-out, the first one installs a cache whose load waits for the gate,
@@ -552,13 +675,14 @@ function updateLaneEntry<T>(
   updater: LaneUpdater<T>,
 ): Promise<LaneRead<T>> | undefined {
   const cache = entry.cache;
+  const promise = cache && cachedPromise(entry, cache);
 
-  if (!cache || cache.settlement?.kind === "rejected") {
+  if (!cache || !promise || cache.settlement?.kind === "rejected") {
     return undefined;
   }
 
   const info = { key: entry.key, keyId: entry.keyId };
-  const valueOrPromise = cache.promise.then((current) =>
+  const valueOrPromise = promise.then((current) =>
     updater((current as LaneRead<T>).data, info),
   );
   // The updater adopts the in-flight result, so the previous controller must
@@ -575,7 +699,20 @@ function publishEntryValue<T>(
   entry: LaneEntry,
   valueOrPromise: LaneValue<T>,
 ): Promise<LaneRead<T>> {
-  entry.cache?.controller?.abort();
+  // The read being replaced is aborted, as it always was — but an external one
+  // is told *what* replaced it, on the abort itself. A publication is the value
+  // that read was waiting for, so it ends as a fulfilled read rather than an
+  // abandoned one, and that is the only thing that reaches a reader suspended on
+  // it: uncommitted, therefore not a subscriber, and retried by React only when
+  // the promise it suspended on settles.
+  //
+  // Only an external entry's abort carries the reason. A client loader's read is
+  // aborted exactly as before, so nothing it might do with `signal.reason`
+  // changes — and `abort(undefined)` is `abort()`, so there is no third case
+  // here.
+  entry.cache?.controller?.abort(
+    entry.external ? publicationReason(valueOrPromise) : undefined,
+  );
 
   return setEntryCache(state, entry, valueOrPromise, undefined);
 }
@@ -677,7 +814,12 @@ function runLoader<T, C>(
   options: LaneReadOptions | undefined,
   current: C | undefined,
 ): Promise<T> {
-  const retry = options?.retry ?? 0;
+  // `external` is never retried, whatever the read asked for. Its rejection is a
+  // timeout, so a retry would not re-attempt anything — it would start the clock
+  // again, and a key nobody publishes would fail only after `retry + 1` full
+  // timeouts instead of one. (The external spec has no `retry` option; this
+  // covers the read written inline against the wider signature.)
+  const retry = isExternalLoader(loader) ? 0 : (options?.retry ?? 0);
   const retryDelay = options?.retryDelay ?? DEFAULT_RETRY_DELAY;
   // Snapshotted with the read, like `current`: every retry below sees the value
   // the read started with, not whatever the provider holds when the retry fires.
@@ -732,6 +874,7 @@ function createEntry(
 ): LaneEntry {
   return {
     cache: undefined,
+    external: false,
     idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
     lastNotifySource: undefined,
     key,
@@ -739,6 +882,27 @@ function createEntry(
     lastFulfilled: undefined,
     subscribers: new Set(),
   };
+}
+
+/**
+ * The client mutation surface, closed on an entry whose value came from outside.
+ * Thrown in production as well as development: this is not a lint about style
+ * but a write that silently loses, and there is no degraded mode worth shipping
+ * where it half-works.
+ */
+function assertClientOwned(entry: LaneEntry, operation: string): void {
+  if (entry.external) {
+    throw new LaneOwnershipError(entry.key, entry.keyId, operation);
+  }
+}
+
+function assertScopeClientOwned(
+  entries: readonly LaneEntry[],
+  operation: string,
+): void {
+  for (const entry of entries) {
+    assertClientOwned(entry, operation);
+  }
 }
 
 function setEntryCache<T>(
@@ -751,6 +915,7 @@ function setEntryCache<T>(
 
   if (!isPromiseLike(valueOrPromise)) {
     const value = shareWithLastFulfilled(entry, valueOrPromise);
+    const settled = Promise.resolve<LaneRead<T>>({ data: value });
 
     entry.cache = {
       // A cache installed while the key already has a live reader is adopted on
@@ -758,13 +923,13 @@ function setEntryCache<T>(
       adopted: entry.subscribers.size > 0,
       cancelled: false,
       controller,
-      promise: Promise.resolve<LaneRead<T>>({ data: value }),
+      promise: cacheSlot(entry, settled),
       settlement: { at: startedAt, kind: "fulfilled" },
       startedAt,
     };
-    entry.lastFulfilled = { at: startedAt, value };
+    rememberFulfilled(entry, startedAt, value);
 
-    return entry.cache.promise as Promise<LaneRead<T>>;
+    return settled;
   }
 
   const cache: LanePromiseCache = {
@@ -823,7 +988,7 @@ function setEntryCache<T>(
       const shared = shareWithLastFulfilled(entry, value);
 
       cache.settlement = { at, kind: "fulfilled" };
-      entry.lastFulfilled = { at, value: shared };
+      rememberFulfilled(entry, at, shared);
 
       return { data: shared };
     },
@@ -839,10 +1004,78 @@ function setEntryCache<T>(
   // Bookkeeping must not surface as an unhandled rejection when no reader
   // ever consumes a rejected cache.
   guarded.catch(noop);
-  cache.promise = guarded;
+  cache.promise = cacheSlot(entry, guarded);
   entry.cache = cache;
 
   return guarded;
+}
+
+/**
+ * How this entry holds the read it just installed. Strong for a client-owned
+ * entry — the lane promised to keep it for `gcTime` and is the one that will
+ * drop it. Weak for an external one, which is the whole retention design: the
+ * publisher tethers what it published, a committed reader holds what it is
+ * showing, and a value no longer reachable from either is one the owner would
+ * have to re-supply anyway. Delegating to reachability is also what sidesteps
+ * the thing effects cannot tell apart — a hidden subtree and an unmounted one
+ * run the same cleanup, but only one of them still holds its promise.
+ */
+function cacheSlot(
+  entry: LaneEntry,
+  promise: Promise<unknown>,
+): LanePromiseCache["promise"] {
+  return entry.external ? externalRef(promise) : promise;
+}
+
+/** A weakly held read: alive, or collected and so indistinguishable from absent. */
+type LaneWeakSlot = { deref(): Promise<unknown> | undefined };
+
+type LaneWeakSlotFactory = (promise: Promise<unknown>) => LaneWeakSlot;
+
+const weakSlot: LaneWeakSlotFactory = (promise) => new WeakRef(promise);
+
+let externalRef: LaneWeakSlotFactory = weakSlot;
+
+/**
+ * Replace how external entries hold their values, or restore the default
+ * (`WeakRef`) with `undefined`. Test seam, deliberately not exported from the
+ * package: collection is not schedulable, but "the value is gone" is a state the
+ * store must serve correctly, so a test installs a reference it can kill on
+ * demand and asserts that a dead value reads as absent.
+ */
+export function setExternalRefFactory(
+  factory: LaneWeakSlotFactory | undefined,
+): void {
+  externalRef = factory ?? weakSlot;
+}
+
+/**
+ * The cached read, whichever way this entry holds it. The entry decides, not the
+ * slot: a client-owned one is the promise, and only an external one has to be
+ * asked whether its value is still there.
+ */
+function cachedPromise(
+  entry: LaneEntry,
+  cache: LanePromiseCache,
+): Promise<unknown> | undefined {
+  return entry.external
+    ? (cache.promise as { deref(): Promise<unknown> | undefined }).deref()
+    : (cache.promise as Promise<unknown>);
+}
+
+/**
+ * Record a fulfilled value as the entry's last — except on an external entry,
+ * where it would be a strong reference to the very value the weak one exists to
+ * release. Nothing is lost with it: `lastFulfilled` feeds the stale-on-error
+ * fallback, the loader's `current`, and structural sharing across reloads, and
+ * all three belong to a loader that fetches. An external entry has none.
+ */
+function rememberFulfilled(entry: LaneEntry, at: number, value: unknown): void {
+  if (entry.external) {
+    return;
+  }
+
+  entry.lastFulfilled = { at, value };
 }
 
 function shareWithLastFulfilled<T>(entry: LaneEntry, value: T): T {
@@ -894,7 +1127,15 @@ function sweep(state: LaneState): void {
   let idleRemaining = false;
 
   for (const entry of [...state.entries.values()]) {
-    if (entry.subscribers.size > 0 || entry.idleSince === undefined) {
+    // External entries are not the lane's to collect — their value lives as long
+    // as the publisher's payload or a committed reader keeps it reachable, and
+    // an idle timer would only race that. They are skipped rather than marked
+    // idle, so they never hold the sweep open either.
+    if (
+      entry.external ||
+      entry.subscribers.size > 0 ||
+      entry.idleSince === undefined
+    ) {
       continue;
     }
 

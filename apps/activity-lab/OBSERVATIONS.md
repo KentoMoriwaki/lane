@@ -492,6 +492,102 @@ republish の来ない復帰をされた場合 — reader の committed promise 
 の規律(mutation 全面禁止)を守れないなら client-owned に倒せ — seed したキーを
 client で触るのが唯一の罠」というガイダンスに落ちる。
 
+## 設計確定: external read(オーナー承認・2026-08-02)
+
+Issue #63 コメントスレッドの設計議論の到達点。「loader なしの seeded read を型として分ける」
+(上記 2026-07-31 追記)の具体化で、当初案(別関数 `laneSeededRead`)から大きく形が変わった。
+裏付けの App Router 内部調査は `RESEARCH-next-router-caches.md`(Next 16.3.0-preview.10
+実ソース、Opus サブエージェントによる)。
+
+### API: 別関数ではなく sentinel loader
+
+```ts
+laneRead<Task>({ key: ["task", id], loader: external })
+```
+
+- 命名は `external`(**seeded / serverOwned は不採用**)。供給者は server とは限らない
+  (React Router 等の client-only router が publish する構成も同型)ため、確定原則
+  「外が知っている / 知らない」の語をそのまま使う。「loader は外にある」と読める
+- loader スロットは 3 値のシグナルになる: 関数 = client-owned / `external` =
+  外が publish する / `undefined` = disabled(従来どおり)。gating
+  (`loader: cond ? external : undefined`)も自然に共存
+- `T` は loader から推論できないため明示アノテーション必須(別関数でも同じ負担)
+
+### sentinel は本物の loader — 読み取り経路に分岐なし
+
+`external` は「呼ばれたら resolve しない promise を返し、デフォルト timeout で reject
+(key 名入りエラー)、publish が来たら entry 上書きで abort される」**運命づけられた
+loader**。fetch は絶対にしない。これにより:
+
+- `useLane` の全読み取り経路(`useState` 初期化・source switch・`syncAfterSubscribe`・
+  `reconcileOnReveal`・`onRemove`)は無条件 `readOrCreate` のまま。分岐ゼロ
+- boundary 外 reader の publish 前 mount(matrix AH:outside)は「suspend して
+  publication を待つ」**サポートされる読み方**に変わる(旧記録の「所有権違反の入口」は
+  loader が fetch する場合の話で、external では構造的に無害)。App Router が構造的に
+  持たない layout↔page 間のデータチャネル(props の届かない場所への promise 配布)が
+  強みとして立つ
+- 誰も publish しないキー(typo・boundary 置き忘れ)は timeout エラーで大声で失敗する。
+  静かな無限 suspense にはならない
+- timeout 調整は `external({ timeout })` が configured 版を返す形(将来拡張)
+
+### 実行時エンフォース(型のキー拒否は不採用)
+
+- publish 時に entry へ external マーク → `invalidate` / `set` / `update` / `remove` は
+  **実行時 throw**(dev/prod とも)。branded key + conditional generics による型レベル
+  拒否は、素のキー literal 経由の穴が残る割にシグネチャコストが大きいので不採用
+- 型は薄く: external overload はトリガー系オプション(`staleTime` / `whenStale` /
+  `retry` / `refetchOn*` / `loaderMeta`)を持たず(excess property check で定義箇所
+  エラー)、`useLane` 戻り値から `invalidate` を除去。`lane.prefetch` は loader 実行が
+  本務なので external spec を型で受けない
+- トリガーの effect は元々オプション未設定なら no-op なので実行時対応も不要
+
+### retention: WeakRef による到達可能性委譲(pin は不採用)
+
+App Router は時間・容量・版数の 3 軸で client cache を確実に破棄する(RESEARCH §2)が、
+隠し `<Activity>` は payload を持たず reveal は必ずデータの再供給を伴う(同 §4)。
+lane 側の保持はこれと**シグナルではなく到達可能性で**揃える:
+
+1. external entry は値(promise)を **WeakRef** で持つ。殻は永続(小さい)、dead の殻は
+   Next 同様 lazy に回収
+2. publish 時に published promise 群を **snapshots オブジェクトをキーにした WeakMap** へ
+   強参照で繋ぐ → 「Next が payload をどこかに持っている限り lane の値も生きる」が自動
+3. committed reader の React state が第三の強参照 → 「reveal され得る tree がある限り
+   生きる」も自動
+
+解放されるのは「Next の全キャッシュから消え、かつ committed reader も全滅」のとき
+だけで、これは Next 側も必ずサーバ再取得する状態。hide と unmount を effect で区別
+できない問題(cleanup は両方で走る)を、参照可能性で回避しているのが要点。
+
+**不採用の記録(重要・再提案しないこと)**:
+
+- **throw-on-create(誤用は即クラッシュ)**: GC 後 reveal という誤用でない経路が
+  create に到達するため、pin とセットでしか成立せず、wait-for-publish の方が
+  横断読みを機能にできる
+- **reader からの store 書き戻し(GC 後に committed promise で再 seed)**: reader が
+  覚えているのは「自分が最後に見た世代」であり、古い tree の reveal が共有 store に
+  古い世代を再注入して visible reader を巻き戻す(publication の単調性違反)。
+  防ぐには GC 耐性のある epoch watermark が要り複雑。しかも store entry を消しても
+  reader が生きている限り promise は JS GC から解放されない(同一オブジェクト)ので、
+  **書き戻しが可能なキーと GC で得するキーは完全に排反** — 効くところでは不要、
+  必要なところでは不可能
+- **pin(superseded-only 永久保持)**: 一貫性は正しいが、reader ゼロのキーが document
+  寿命で残る。WeakRef 方式が同じ一貫性をメモリコストなしで与えるため置き換え
+- **timeout 後に fetch する fallback loader**: client が owner の知らない vintage を
+  取る穴(AH:outside の実測ハザード)を opt-in で開け直すため見送り。timeout の運命は
+  reject のみ
+- **`useRouter().bfcacheId` を寿命・キー境界に使う**: 前進ナビゲーションのたびに
+  新採番される(RESEARCH §3)ため、同一 URL 再訪でキャッシュが割れる
+
+### 検証残(lab)
+
+- outside-reader シーン新設: streaming SSR での順序(boundary 外 reader が server 側で
+  suspend → publish で resolve するか)、素の back、revalidate 後の収束、
+  「last publication wins」の横断 reader 挙動
+- WeakRef 回収の実測(node `--expose-gc` / 本番ビルド)— BF4 計測はこの検証を兼ねる
+- テスト方針: GC タイミングは非決定的なので「生きている / 死んでいる」の両状態を
+  正しい状態として扱う(実際どちらも valid な設計になっている)
+- 初期値 API(publish 前の placeholder)は outside-reader シーンの実測後に形を決める
+
 ## 一次観測(2026-07-31、自動走行による粗い読み)
 
 matrix m1–m17 を main と #62(`lab/activity-lab-on-62`)の両ブランチで自動再生し、

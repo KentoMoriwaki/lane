@@ -148,9 +148,15 @@ test("a failed refresh keeps data visible and recovers through the chip", async 
   await gotoWorkspace(page);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
-  // Break only the tasks read; the refresh button invalidates it and the
-  // client refetch fails. Stale-on-error must keep the rows rendered.
-  await page.route("**/api/tasks**", (route) => route.abort("failed"));
+  // Break the refresh where it actually travels: the workspace is server-owned,
+  // so the refresh button is a server action (a POST to the page), not a
+  // browser-side /api fetch. The store keeps its published values, so the rows
+  // must stay rendered while the chip reports the failure.
+  await page.route("**/lane**", (route) =>
+    route.request().method() === "POST"
+      ? route.abort("failed")
+      : route.fallback(),
+  );
 
   await expect(async () => {
     await page.getByRole("button", { name: "Refresh workspace" }).click();
@@ -161,7 +167,7 @@ test("a failed refresh keeps data visible and recovers through the chip", async 
 
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
-  await page.unroute("**/api/tasks**");
+  await page.unroute("**/lane**");
   await page.getByRole("button", { name: "Retry", exact: true }).click();
 
   await expect(page.getByText("Couldn't refresh")).toBeHidden();

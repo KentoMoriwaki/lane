@@ -1,4 +1,11 @@
-import type { LaneGatedReadSpec, LaneKeyOf, LaneReadSpec } from "./types";
+import type {
+  LaneExternalLoader,
+  LaneExternalReadSpec,
+  LaneGatedExternalReadSpec,
+  LaneGatedReadSpec,
+  LaneKeyOf,
+  LaneReadSpec,
+} from "./types";
 
 /**
  * Colocate a read's key, loader, and options into one value that every consumer
@@ -51,16 +58,36 @@ import type { LaneGatedReadSpec, LaneKeyOf, LaneReadSpec } from "./types";
  * produce two objects with equal keys, and Lane addresses entries by serialized
  * key, so they name the same read. Specs can be built per render, in an event
  * handler, or on the server; nothing has to be memoized for identity.
+ *
+ * A read of a key somebody else publishes is written the same way, with
+ * `external` in the loader slot: `laneRead<Task>({ key, loader: external })`.
+ * Nothing is inferred from that loader — it loads nothing — so `T` is annotated,
+ * and the shape accepts nothing else: every option here instructs a loader, and
+ * that read has none. Its overload comes first, so a spec whose loader is
+ * `external` is described by that shape rather than by the general one.
  */
+export function laneRead<T>(
+  spec: LaneExternalReadSpec<T>,
+): { key: LaneKeyOf<T>; loader: LaneExternalLoader };
 export function laneRead<T, C = T>(
   spec: LaneReadSpec<T, C>,
 ): LaneReadSpec<T, C> & { key: LaneKeyOf<T> };
 export function laneRead<T, C = T>(
   spec: LaneGatedReadSpec<T, C>,
 ): LaneGatedReadSpec<T, C> & { key: LaneKeyOf<T> };
+/**
+ * Gated external — `loader: enabled ? external : undefined`. Last of the four,
+ * because its loader type also admits a bare `undefined`, and a gated *client*
+ * read written with no loader at all must keep landing on the overload above.
+ */
+export function laneRead<T>(
+  spec: LaneGatedExternalReadSpec<T>,
+): { key: LaneKeyOf<T>; loader: LaneExternalLoader | undefined };
 export function laneRead<T, C = T>(
-  spec: LaneGatedReadSpec<T, C>,
-): LaneGatedReadSpec<T, C> & { key: LaneKeyOf<T> } {
+  spec: LaneGatedReadSpec<T, C> | LaneGatedExternalReadSpec<T>,
+):
+  | (LaneGatedReadSpec<T, C> & { key: LaneKeyOf<T> })
+  | (LaneGatedExternalReadSpec<T> & { key: LaneKeyOf<T> }) {
   // The tag is a type-level assertion about the key, so the value passes
   // through untouched; only the signature above changes what callers see.
   return spec as LaneGatedReadSpec<T, C> & { key: LaneKeyOf<T> };

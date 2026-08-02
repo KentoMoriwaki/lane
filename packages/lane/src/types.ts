@@ -134,6 +134,71 @@ export type LaneLoader<T, C = T> = (
   context: LaneLoaderContext<C>,
 ) => Promise<T>;
 
+declare const laneExternalTag: unique symbol;
+
+/**
+ * A loader the **client** owns: it fetches, so a read built on it is the client's
+ * to refresh, publish to, and discard.
+ *
+ * The optional tag is the whole of it. `external` declares the same tag as
+ * `true`, so it is not assignable here — which is what makes a read spec's
+ * `loader` slot discriminate between the two ownerships instead of merely
+ * accepting both functions. Every plain loader is missing the property and so
+ * satisfies it, at no cost to inference or to what a loader may be.
+ *
+ * It is deliberately *not* on {@link LaneLoader} itself: `external` has to stay a
+ * genuine loader everywhere one runs (`readOrCreate` takes it unbranched), and
+ * only the places that decide ownership — the read specs, and `prefetch` through
+ * them — need to tell the two apart.
+ */
+export type LaneClientLoader<T, C = T> = LaneLoader<T, C> & {
+  readonly [laneExternalTag]?: undefined;
+};
+
+/**
+ * The type of {@link external}: a real loader, branded so the overloads can see
+ * it. Its result type is `never` and its `current` is `unknown`, which is what
+ * makes it assignable wherever a `LaneLoader<T, C>` runs — a loader that never
+ * produces a value fits every read.
+ */
+export type LaneExternalLoader = LaneLoader<never, unknown> & {
+  readonly [laneExternalTag]: true;
+};
+
+/**
+ * A read whose value arrives from outside: the owner publishes it (an RSC payload
+ * through `<LaneHydration>`, a router's loader data), and the client only reads.
+ *
+ * The shape is the enforcement. There is no `staleTime` / `whenStale` / `retry` /
+ * `refetchOn*` / `loaderMeta`, because every one of them is an instruction to a
+ * loader this read does not have — so writing one is an excess property at the
+ * `laneRead` call, which is where the mistake was made. What the entry holds
+ * cannot be inferred from `external` either, so `T` is annotated:
+ * `laneRead<Task>({ key, loader: external })`.
+ */
+export type LaneExternalReadSpec<T> = {
+  key: LaneKeyMaybeOf<T>;
+  loader: LaneExternalLoader;
+};
+
+/**
+ * The gated form of {@link LaneExternalReadSpec} — `loader: enabled ? external :
+ * undefined`, which gates the read exactly as an absent client loader does.
+ */
+export type LaneGatedExternalReadSpec<T> = {
+  key: LaneKeyMaybeOf<T>;
+  loader: LaneExternalLoader | undefined;
+};
+
+/**
+ * Where an external read's `T` comes from. A client read infers it from its
+ * loader's return type; `external` returns nothing, so the only place left is the
+ * key: a {@link LaneKeyOf} (what `laneRead` hands back, so a spec passed on to
+ * `useLane` stays typed) supplies it, and a plain array leaves it to the explicit
+ * annotation the read needs anyway.
+ */
+type LaneKeyMaybeOf<T> = LaneKey & { readonly [laneDataTag]?: T };
+
 export type LaneRetryDelay = (attempt: number, error: unknown) => number;
 
 declare const laneDataTag: unique symbol;
@@ -210,7 +275,7 @@ export type LanePlainKey = LaneKey & { readonly [laneDataTag]?: undefined };
  */
 export type LaneReadSpec<T, C = T> = LaneUseOptions & {
   key: LaneKey;
-  loader: LaneLoader<T, C>;
+  loader: LaneClientLoader<T, C>;
 };
 
 /**
@@ -226,7 +291,7 @@ export type LaneReadSpec<T, C = T> = LaneUseOptions & {
  */
 export type LaneGatedReadSpec<T, C = T> = LaneUseOptions & {
   key: LaneKey;
-  loader: LaneLoader<T, C> | undefined;
+  loader: LaneClientLoader<T, C> | undefined;
 };
 
 export type LaneScope =
@@ -297,6 +362,11 @@ export type Lane = {
    * It is also the one read that happens outside React, so it is the one place
    * `loaderMeta` is passed by hand rather than taken from the provider — and only
    * when {@link LaneRegister} declares one.
+   *
+   * An external read is not one of these: {@link LaneReadSpec} carries a
+   * {@link LaneClientLoader}, which `external` is branded out of. There is
+   * nothing to warm — the owner publishes — so it is rejected here rather than
+   * silently starting a wait that only times out.
    */
   prefetch<T, C = T>(
     read: LaneReadSpec<T, C>,
@@ -385,6 +455,19 @@ export type LaneResult<T> = {
 export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
   promise: Promise<LaneRead<T>> | undefined;
 };
+
+/**
+ * What `useLane` returns for an external read: {@link LaneResult} without
+ * `invalidate`. Nothing is missing — an external entry has no loader to
+ * re-run, so invalidating it could only empty a key its owner is expected to
+ * fill, which is why the runtime throws on one. Removing it from the type is
+ * how that becomes a compile error instead of a crash. The publication channel
+ * is the owner's; optimistic UI belongs in `useOptimistic` over the read value.
+ */
+export type LaneExternalResult<T> = Omit<LaneResult<T>, "invalidate">;
+
+/** {@link LaneExternalResult} for a gated external read. */
+export type LaneGatedExternalResult<T> = Omit<LaneGatedResult<T>, "invalidate">;
 
 export type LaneWhenStale = "revalidate" | "refetch";
 

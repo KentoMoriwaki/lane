@@ -161,8 +161,15 @@ function RenameButton({ userId }: { userId: string }) {
   stale data and the error together. Only an *initial* load (no previous value)
   rejects the promise and reaches the Error Boundary.
 - **Authoritative publication.** `set` / `update` publish server-confirmed data
-  to exact keys; `LaneHydration` seeds promises from RSC-loaded data and
-  overwrites authoritatively on navigation.
+  to exact keys the client owns; `LaneHydration` publishes RSC- or router-loaded
+  data and overwrites authoritatively on navigation.
+- **Ownership is decided per key, and enforced.** A key the client fetches is
+  client-owned. A key a publication seeds is not: read it with
+  `laneRead<T>({ key, loader: external })` — a loader that waits for the
+  publication instead of fetching — and the client mutation surface (`set` /
+  `update` / `invalidate` / `remove`) throws on it. Mutations go back through the
+  owner (Server Action → revalidate → republish); immediacy is `useOptimistic`
+  over the read value.
 - **Lifecycle built in.** Garbage collection (`gcTime`, default 5 min), `retry` /
   `retryDelay`, and `refetchOnFocus` / `refetchOnMount` / `refetchOnReconnect`
   revalidation. Polling is userland — a self-scheduled `invalidate`.
@@ -192,7 +199,8 @@ function RenameButton({ userId }: { userId: string }) {
 | `useInfiniteLane(read)` | A cursor-paginated list under one key. Returns `{ promise, loadMore, … }`; `use(promise)` yields `{ pages, params, hasNext }`. Colocate it with `infiniteLaneRead`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
 | `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime }`. |
-| `LaneHydration` | Apply RSC-loaded snapshots as authoritative seed values. |
+| `LaneHydration` | Publish a payload of snapshots as authoritative values — RSC props or a client router's loader data. |
+| `external` | The loader for a key its owner publishes: waits for the publication, never fetches. `laneRead<T>({ key, loader: external })`. |
 
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
 `updateAll`, `remove` / `removeAll` — all keyed; `set` / `update` are checked
@@ -208,7 +216,7 @@ for full signatures and semantics.
 
 - [API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md) — every export, option, and behavior.
 - [Migrating from React Query / SWR](https://github.com/KentoMoriwaki/lane/blob/main/docs/migrating.md) — the mental-model map and the migration gotchas.
-- [Supported architectures](https://github.com/KentoMoriwaki/lane/blob/main/docs/architectures.md) — RSC-first and RSC-seeded client ownership.
+- [Supported architectures](https://github.com/KentoMoriwaki/lane/blob/main/docs/architectures.md) — the per-key ownership rule: RSC props, published (`external`), or client-owned.
 - [Environments](https://github.com/KentoMoriwaki/lane/blob/main/docs/environments.md) — CLI (Ink), React Native, and other React renderers.
 - [Design notes](https://github.com/KentoMoriwaki/lane/blob/main/docs/design-notes.md) — why Lane is shaped this way.
 

@@ -1,12 +1,10 @@
 "use client";
 
-import { useLaneInstance } from "use-lane";
 import { Check, ChevronsUpDown, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as React from "react";
 import { useTeams } from "@/app/lane/api/hooks";
-import { TEAM_SCOPED_KEYS } from "@/app/lane/api/lane-reads";
 import { buildWorkspaceHref, EMPTY_VIEW_STATE } from "@/app/lane/api/url-state";
 import {
   DropdownMenu,
@@ -30,7 +28,6 @@ function teamInitials(name: string) {
 export function TeamSwitcher() {
   const pathname = usePathname();
   const { activeTeamId } = useWorkspace();
-  const lane = useLaneInstance();
   const teams = React.use(useTeams().promise).data;
 
   const active = teams.find((team) => team.id === activeTeamId) ?? teams[0];
@@ -39,18 +36,12 @@ export function TeamSwitcher() {
       buildWorkspaceHref(pathname, EMPTY_VIEW_STATE, { teamId }),
     [pathname],
   );
-  const prepareTeamSwitch = React.useCallback(
-    (teamId: string) => {
-      if (teamId === activeTeamId) {
-        return;
-      }
-
-      for (const key of TEAM_SCOPED_KEYS) {
-        lane.removeAll(key);
-      }
-    },
-    [activeTeamId, lane],
-  );
+  // No eviction step. Every workspace key is published by the route, so the
+  // navigation this link performs re-renders the route for the new team and the
+  // publication that follows overwrites all of them at once. The client-owned
+  // variants have to drop those keys by hand here — and have to do it *after*
+  // the new team is in scope, or the readers they wake up refetch under the team
+  // being left. Owning none of it removes the ordering problem with the code.
 
   return (
     <DropdownMenu>
@@ -81,7 +72,6 @@ export function TeamSwitcher() {
               href={hrefForTeam(team.id)}
               prefetch={false}
               scroll={false}
-              onClick={() => prepareTeamSwitch(team.id)}
             >
               <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-sage/15 text-[11px] font-bold text-sage">
                 {teamInitials(team.name)}

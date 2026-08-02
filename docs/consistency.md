@@ -125,6 +125,10 @@ Neither is inconsistent; they just feel different. Pick per surface.
 
 ### Announce pending at the start of a mutation, not the end
 
+*(Client-owned keys. A published key converges when its owner republishes, so the
+mutation's own transition — the Server Action, the router revalidation — is
+already the pending signal.)*
+
 ```ts
 await saveTodo(patch);
 lane.invalidateAll(["todos"]);   // readers learn about it only now
@@ -163,6 +167,11 @@ keeps is the one that happens first. Readers of the same key that disagree about
 them get a policy decided by mount order, which is a predictability problem well
 before it is a consistency one. Share the options object, or derive it from one
 place.
+
+A [published key](./api-reference.md#external--a-read-the-owner-publishes) cannot
+have this problem: its read spec carries no freshness options at all, so every
+reader of it agrees by construction, and the publication is what changes the
+value for all of them at once.
 
 ## What not to reach for
 

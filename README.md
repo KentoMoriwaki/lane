@@ -21,7 +21,7 @@ or improving — the same user experience with React transitions.
 | Path | Description |
 | --- | --- |
 | [`packages/lane`](packages/lane) | The `use-lane` library and its unit/React-integration tests. |
-| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, five implementations switchable by route: `/lane` (use-lane, RSC-seeded), `/lane-spa` (use-lane, client-only), `/react-query` (the TanStack Query baseline), `/relay` (a normalized GraphQL store), and `/jotai` (async atoms, no fetching library). It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
+| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, five implementations switchable by route: `/lane` (use-lane, server-owned: published + `external` reads), `/lane-spa` (use-lane, client-owned), `/react-query` (the TanStack Query baseline), `/relay` (a normalized GraphQL store), and `/jotai` (async atoms, no fetching library). It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
 | [`apps/docs`](apps/docs) | The Nextra documentation site (sourced from `docs/*.md`). |
 | [`apps/e2e`](apps/e2e) | Playwright suite running the user-facing success criteria (reload restoration, search, mutation convergence, team switching, stale-on-error refresh) against the demo's `/lane` route. |
 

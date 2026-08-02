@@ -74,3 +74,41 @@ export async function fetchPosts(signal?: AbortSignal) {
 export function userName(id: string): string {
   return USERS.find((u) => u.id === id)?.name ?? id;
 }
+
+/* ------------------------------ Mutations ------------------------------ */
+
+/**
+ * Writes, such as they are: they change the arrays above — the source the
+ * loaders read — and nothing else. Nobody hands the result to the UI, because
+ * the UI is not where a change is applied here. The caller revalidates, the
+ * router re-runs its loader, and the new value reaches the screen the same way
+ * every other value does.
+ *
+ * That indirection is the entire point of the button in this demo. Editing the
+ * cached copy instead would show the same thing on screen for a moment and then
+ * lose it at the next navigation, when the loader publishes the source's
+ * unchanged version over the top.
+ */
+export function promoteFirstUser(): void {
+  const [first] = USERS;
+  if (first) {
+    first.name = star(first.name);
+  }
+}
+
+export function promoteFirstPost(): void {
+  const [first] = POSTS;
+  if (first) {
+    first.title = star(first.title);
+  }
+}
+
+function star(value: string): string {
+  return value.startsWith("★ ") ? value : `★ ${value}`;
+}
+
+/* --------------------- What each loader publishes ---------------------- */
+
+export type UsersData = Awaited<ReturnType<typeof fetchUsers>>;
+export type UserData = Awaited<ReturnType<typeof fetchUser>>;
+export type PostsData = Awaited<ReturnType<typeof fetchPosts>>;

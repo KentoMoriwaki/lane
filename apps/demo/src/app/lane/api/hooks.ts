@@ -4,37 +4,34 @@ import type {
   CreateLabelInput,
   CreateProjectInput,
   CreateTaskInput,
+  Project,
   Task,
   TeamLabel,
   UpdateTaskInput,
 } from "@/server/api";
-import { useLane, useLaneInstance, type Lane } from "use-lane";
+import { useLane } from "use-lane";
 import * as React from "react";
 import { useWorkspaceCtx } from "@/app/lane/workspace/workspace-provider";
 import {
-  addTaskLabel,
-  createLabel,
-  createProject,
-  createTask,
-  deleteTask,
-  removeTaskLabel,
-  updateTask,
-} from "./endpoints";
+  addTaskLabelAction,
+  createLabelAction,
+  createProjectAction,
+  createTaskAction,
+  deleteTaskAction,
+  removeTaskLabelAction,
+  updateTaskAction,
+} from "./actions";
 import type { TaskFilters } from "./endpoints";
-import { TEAM_SCOPED_KEYS, workspaceReads } from "./lane-reads";
-import {
-  replaceTaskInList,
-  type TaskCacheStrategy,
-  taskCacheStrategies,
-  taskFiltersFromEntry,
-} from "./task-cache-sync";
+import { workspaceReads } from "./lane-reads";
 
 /* -------------------------------- Reads -------------------------------- */
 
 /**
- * The reads pass straight through. The session the loaders need comes from the
- * lane (`WorkspaceProvider` supplies it as `loaderMeta`), so there is nothing to
- * bind here and nothing to memoize — a read is a plain object built per render.
+ * The reads pass straight through, and there is nothing to them: every key here
+ * is published by the route, so a read is `useLane` over an `external` spec and
+ * the value arrives with the payload. No fetch, no freshness policy, and no
+ * `invalidate` on the result — the type does not offer one, because converging
+ * this data is not the client's move to make.
  */
 export function useCurrentUser() {
   return useLane(workspaceReads.currentUser());
@@ -70,175 +67,83 @@ export function useInsights() {
 
 /* ------------------------------ Mutations ------------------------------ */
 
+/**
+ * Every mutation is the same two steps — call the server action, let the
+ * republication it triggers land — so every hook below is the action plus the
+ * session, and nothing else. What used to live here was the other half of a
+ * write: publish the task, patch each list it belongs to, invalidate the views
+ * derived from it. That bookkeeping is not simplified away, it is *relocated* —
+ * the server recomputes the whole payload from one database read, so the parts
+ * arrive already agreeing with each other.
+ *
+ * The awaited promise still resolves with the mutated entity, so callers that
+ * need it (the create dialog opens the task it just made) keep working; what
+ * they must not do is publish it into the lane themselves.
+ */
 export function useCreateTask() {
   const ctx = useWorkspaceCtx();
-  const lane = useLaneInstance();
 
-  return React.useCallback(async (input: CreateTaskInput): Promise<Task> => {
-    const task = await createTask(ctx, input);
-    // The key carries what its entry holds, so the publication is checked
-    // against `Task` — and needs nothing but the key.
-    lane.set(workspaceReads.task(task.id).key, task);
-    lane.invalidateAll(["tasks"]);
-    scheduleDerivedWorkspaceRefresh(lane, {
-      insights: true,
-      projects: Boolean(task.project),
-    });
-    return task;
-  }, [ctx, lane]);
+  return React.useCallback(
+    (input: CreateTaskInput): Promise<Task> => createTaskAction(ctx, input),
+    [ctx],
+  );
 }
 
 export function useUpdateTask(taskId: string) {
   const ctx = useWorkspaceCtx();
-  const lane = useLaneInstance();
 
-  return React.useCallback(async (
-    input: UpdateTaskInput,
-    strategy: TaskCacheStrategy,
-  ): Promise<Task> => {
-    const task = await updateTask(ctx, taskId, input);
-    publishTask(lane, task, strategy);
-    return task;
-  }, [ctx, lane, taskId]);
+  return React.useCallback(
+    (input: UpdateTaskInput): Promise<Task> =>
+      updateTaskAction(ctx, taskId, input),
+    [ctx, taskId],
+  );
 }
 
 export function useDeleteTask() {
   const ctx = useWorkspaceCtx();
-  const lane = useLaneInstance();
 
-  return React.useCallback(async (taskId: string): Promise<void> => {
-    await deleteTask(ctx, taskId);
-    lane.remove(workspaceReads.task(taskId).key);
-    removeTaskFromTaskLists(lane, taskId);
-    scheduleDerivedWorkspaceRefresh(lane, {
-      insights: true,
-      projects: true,
-    });
-  }, [ctx, lane]);
+  return React.useCallback(
+    (taskId: string): Promise<void> => deleteTaskAction(ctx, taskId),
+    [ctx],
+  );
 }
 
 export function useAddTaskLabel(taskId: string) {
   const ctx = useWorkspaceCtx();
-  const lane = useLaneInstance();
 
-  return React.useCallback(async (label: TeamLabel): Promise<Task> => {
-    const task = await addTaskLabel(ctx, taskId, label.id);
-    publishTask(lane, task, taskCacheStrategies.labels);
-    return task;
-  }, [ctx, lane, taskId]);
+  return React.useCallback(
+    (label: TeamLabel): Promise<Task> =>
+      addTaskLabelAction(ctx, taskId, label.id),
+    [ctx, taskId],
+  );
 }
 
 export function useRemoveTaskLabel(taskId: string) {
   const ctx = useWorkspaceCtx();
-  const lane = useLaneInstance();
 
-  return React.useCallback(async (labelId: string): Promise<Task> => {
-    const task = await removeTaskLabel(ctx, taskId, labelId);
-    publishTask(lane, task, taskCacheStrategies.labels);
-    return task;
-  }, [ctx, lane, taskId]);
+  return React.useCallback(
+    (labelId: string): Promise<Task> =>
+      removeTaskLabelAction(ctx, taskId, labelId),
+    [ctx, taskId],
+  );
 }
 
 export function useCreateLabel() {
   const ctx = useWorkspaceCtx();
-  const lane = useLaneInstance();
 
-  return React.useCallback(async (
-    input: CreateLabelInput,
-  ): Promise<TeamLabel> => {
-    const label = await createLabel(ctx, input);
-    lane.invalidate(workspaceReads.labels().key);
-    return label;
-  }, [ctx, lane]);
+  return React.useCallback(
+    (input: CreateLabelInput): Promise<TeamLabel> =>
+      createLabelAction(ctx, input),
+    [ctx],
+  );
 }
 
 export function useCreateProject() {
   const ctx = useWorkspaceCtx();
-  const lane = useLaneInstance();
 
-  return React.useCallback(async (
-    input: CreateProjectInput,
-  ) => {
-    const project = await createProject(ctx, input);
-    lane.invalidate(workspaceReads.projects().key);
-    return project;
-  }, [ctx, lane]);
-}
-
-/* ------------------------------- Refresh ------------------------------- */
-
-export function useWorkspaceRefresh() {
-  const lane = useLaneInstance();
-  const [isRefreshing, startRefresh] = React.useTransition();
-
-  const refresh = React.useCallback(() => {
-    startRefresh(() => {
-      lane.invalidateAll(["tasks"]);
-      lane.invalidate(workspaceReads.insights().key);
-      lane.invalidate(workspaceReads.projects().key);
-      lane.invalidate(workspaceReads.labels().key);
-      lane.invalidate(workspaceReads.members().key);
-    });
-  }, [lane]);
-
-  return { refresh, isRefreshing };
-}
-
-function publishTask(
-  lane: Lane,
-  task: Task,
-  strategy: TaskCacheStrategy,
-) {
-  lane.set(workspaceReads.task(task.id).key, task);
-  lane.updateAll<Task[]>(
-    (entry) => {
-      const filters = taskFiltersFromEntry(entry);
-      return Boolean(filters && !strategy.shouldInvalidateTaskList(filters));
-    },
-    (tasks) => replaceTaskInList(tasks, task),
+  return React.useCallback(
+    (input: CreateProjectInput): Promise<Project> =>
+      createProjectAction(ctx, input),
+    [ctx],
   );
-  lane.invalidateAll((entry) => {
-    const filters = taskFiltersFromEntry(entry);
-    return Boolean(filters && strategy.shouldInvalidateTaskList(filters));
-  });
-  scheduleDerivedWorkspaceRefresh(lane, {
-    insights: strategy.refreshInsights,
-    projects: strategy.refreshProjects,
-  });
-}
-
-function removeTaskFromTaskLists(
-  lane: Lane,
-  taskId: string,
-) {
-  lane.updateAll<Task[]>(["tasks"], (tasks) =>
-    tasks.filter((item) => item.id !== taskId),
-  );
-}
-
-function scheduleDerivedWorkspaceRefresh(
-  lane: Lane,
-  refresh: { insights: boolean; projects: boolean },
-) {
-  if (!refresh.insights && !refresh.projects) {
-    return;
-  }
-
-  React.startTransition(() => {
-    if (refresh.insights) {
-      lane.invalidate(workspaceReads.insights().key);
-    }
-
-    if (refresh.projects) {
-      lane.invalidate(workspaceReads.projects().key);
-    }
-  });
-}
-
-export function clearTeamScopedLaneEntries(
-  lane: Lane,
-) {
-  for (const key of TEAM_SCOPED_KEYS) {
-    lane.removeAll(key);
-  }
 }

@@ -1,4 +1,5 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
+import { io } from "next/cache";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { fetchTasksByIds } from "@/app/react-query/api/endpoints";
@@ -65,7 +66,6 @@ export default function Page({ searchParams }: PageProps) {
  * stream into the reusable shell instead of blocking navigation into the route.
  */
 async function WorkspaceHydration({ searchParams }: PageProps) {
-  const queryClient = getQueryClient();
   const requested = parseWorkspaceState(getterFromRecord(await searchParams));
 
   // Resolve the mock-authenticated user (the API applies a default user when no
@@ -97,6 +97,12 @@ async function WorkspaceHydration({ searchParams }: PageProps) {
         ? getCachedTask(ctx, requested.selectedTaskId)
         : Promise.resolve(null),
     ]);
+
+  // TanStack Query stamps setQueryData/dehydrate with Date.now(). Keep that
+  // generation-specific metadata out of Next's static shell while preserving
+  // the cached data reads above as prerenderable/prefetchable work.
+  await io();
+  const queryClient = getQueryClient();
 
   // `setQueryData` records this server generation's completion time as
   // `dataUpdatedAt`. On mutation, that timestamp is later than the optimistic

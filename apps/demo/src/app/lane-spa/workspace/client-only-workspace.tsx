@@ -16,6 +16,24 @@ import {
 import { SignInScreen } from "./sign-in-screen";
 
 export function ClientOnlyWorkspaceApp() {
+  const isBrowser = React.useSyncExternalStore(
+    subscribeToBrowser,
+    getBrowserSnapshot,
+    getServerSnapshot,
+  );
+
+  if (!isBrowser) {
+    return <ClientOnlyWorkspaceFallback />;
+  }
+
+  return <BrowserWorkspaceApp />;
+}
+
+const subscribeToBrowser = () => () => {};
+const getBrowserSnapshot = () => true;
+const getServerSnapshot = () => false;
+
+function BrowserWorkspaceApp() {
   return (
     // The bootstrap read runs before there is a session to read with, so this
     // lane carries the session-less meta. `ClientWorkspaceProvider` re-provides
@@ -100,5 +118,11 @@ function useLocalWorkspaceView(): WorkspaceViewController {
 }
 
 function ClientOnlyWorkspaceFallback() {
-  return <div className="h-screen bg-background" />;
+  return (
+    <div
+      data-testid="lane-spa-workspace-shell"
+      aria-label="Loading Lane SPA workspace"
+      className="h-screen bg-background"
+    />
+  );
 }

@@ -1,21 +1,47 @@
 import type { AppType } from "@/server/api";
 import { hc } from "hono/client";
+import { COLOCATED_SERVER_REQUEST_HEADER } from "@/lib/team-api";
 
 /**
- * The single place the frontend touches the backend. Everything goes through
- * the typed Hono RPC client; Lane hooks call the wrappers in `endpoints.ts`,
- * never `fetch` directly.
+ * Browser query functions and React Query's Server Actions go through the typed
+ * Hono RPC wrappers in `endpoints.ts`; components never call `fetch` directly.
+ * The RSC hydration pass uses the shared tagged reads in
+ * `lane/api/cached-endpoints.ts` so Next owns its server generation.
  */
-/** Browser-only, same-origin transport. This variant never calls the API in SSR. */
-export const client = hc<AppType>("");
+/**
+ * The team API is embedded in this app (`app/api/[[...route]]/route.ts`), so the
+ * browser talks to it same-origin via a relative URL. Server Components (the RSC
+ * prefetch in `page.tsx`) run in Node and need an absolute origin: an explicit
+ * `NEXT_PUBLIC_SITE_URL`, the Vercel deployment URL, or the local dev port.
+ */
+function resolveApiBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    return "";
+  }
+
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/+$/, "");
+  }
+
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+
+  return `http://localhost:${process.env.PORT ?? "3006"}`;
+}
+
+export const client = hc<AppType>(resolveApiBaseUrl());
 
 /**
  * The active session + team context. It is sent to the API as request headers
  * so the team does not need to be encoded into every query key (see the team
  * scope constraint in the implementation doc).
  */
-export type { WorkspaceCtx } from "@/lib/lane-meta";
-import type { WorkspaceCtx } from "@/lib/lane-meta";
+export type WorkspaceCtx = {
+  userId: string;
+  teamId: string;
+};
 
 export function requestOptions(ctx: WorkspaceCtx) {
   const headers: Record<string, string> = {};
@@ -23,6 +49,10 @@ export function requestOptions(ctx: WorkspaceCtx) {
   // very first server request, before the current user is known.
   if (ctx.userId) headers["x-user-id"] = ctx.userId;
   if (ctx.teamId) headers["x-team-id"] = ctx.teamId;
+  if (typeof window === "undefined") {
+    headers[COLOCATED_SERVER_REQUEST_HEADER] = "1";
+  }
+
   return {
     headers,
     init: {

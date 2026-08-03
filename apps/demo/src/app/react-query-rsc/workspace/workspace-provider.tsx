@@ -4,8 +4,8 @@ import type { CurrentUser } from "@/server/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
-import type { WorkspaceCtx } from "@/app/react-query/api/client";
-import { TEAM_SCOPED_KEYS } from "@/app/react-query/api/query-options";
+import type { WorkspaceCtx } from "@/app/react-query-rsc/api/client";
+import { TEAM_SCOPED_KEYS } from "@/app/react-query-rsc/api/query-options";
 
 type WorkspaceContextValue = {
   /** Headers context sent to the API. Stable unless the user or team changes. */
@@ -38,8 +38,8 @@ export function WorkspaceProvider({
   const [userId] = React.useState(initialUser.id);
   const [isSignedIn, setIsSignedIn] = React.useState(true);
 
-  // The active team is durable URL state. It falls back to the team resolved by
-  // the browser bootstrap when no `team` param is present.
+  // The active team is durable URL state. It falls back to the team the server
+  // resolved for this request when no `team` param is present.
   const activeTeamId = searchParams.get("team")?.trim() || initialTeamId;
 
   const switchTeam = React.useCallback(
@@ -55,8 +55,9 @@ export function WorkspaceProvider({
         queryClient.removeQueries({ queryKey: [...key] });
       }
 
-      // Reset the route's team-specific view params. The newly mounted query
-      // observers fetch the next workspace directly from the browser.
+      // A team change is a route-identity change: navigate so the Server
+      // Component re-prefetches the new team's workspace, and reset the other
+      // view params (filters/search/selected task) which are team-specific.
       router.push(`${pathname}?team=${encodeURIComponent(teamId)}`);
     },
     [activeTeamId, pathname, queryClient, router],

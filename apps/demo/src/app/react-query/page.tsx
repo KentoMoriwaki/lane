@@ -1,8 +1,10 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
-import { fetchCurrentUser, fetchTeams } from "@/app/react-query/api/endpoints";
+import { fetchTasksByIds } from "@/app/react-query/api/endpoints";
 import {
+  blockedByTasksQueryOptions,
+  blockingTasksQueryOptions,
   currentUserQueryOptions,
   insightsQueryOptions,
   labelsQueryOptions,
@@ -21,6 +23,16 @@ import { getQueryClient } from "@/app/react-query/get-query-client";
 import { Workspace } from "@/app/react-query/workspace/workspace";
 import { WorkspaceLoadingShell } from "@/app/react-query/workspace/workspace-loading-shell";
 import { WorkspaceProvider } from "@/app/react-query/workspace/workspace-provider";
+import {
+  getCachedCurrentUser,
+  getCachedInsights,
+  getCachedLabels,
+  getCachedMembers,
+  getCachedProjects,
+  getCachedTask,
+  getCachedTasks,
+  getCachedTeams,
+} from "@/app/lane/api/cached-endpoints";
 
 // Match the Lane route's navigation contract: a reusable workspace shell is
 // available immediately while the server prepares the hydration payload.
@@ -32,8 +44,9 @@ type PageProps = {
 
 /**
  * Keep the same shell-to-hydration boundary as the Lane route. The difference
- * begins after hydration: React Query hands ownership to its client cache,
- * while Lane's external readers continue to receive server-owned publications.
+ * is the receiving store: React Query merges each publication into one mutable
+ * browser QueryClient, while Lane's external readers keep the publication
+ * itself authoritative.
  */
 export default function Page({ searchParams }: PageProps) {
   return (
@@ -44,10 +57,12 @@ export default function Page({ searchParams }: PageProps) {
 }
 
 /**
- * Reads the durable URL state, collects the matching initial data, dehydrates
- * the React Query cache, and hands ownership to the client tree. Keeping this
- * work below the page-level Suspense boundary lets it stream into the reusable
- * shell instead of blocking navigation into the route.
+ * Reads the durable URL state, collects a tagged server generation, and
+ * dehydrates it into the browser's one QueryClient. The same boundary runs
+ * again inside a Server Action response after `updateTag`: unlike the initial
+ * handoff, that is a post-mutation merge into an already-populated store.
+ * Keeping this work below the page-level Suspense boundary lets both generations
+ * stream into the reusable shell instead of blocking navigation into the route.
  */
 async function WorkspaceHydration({ searchParams }: PageProps) {
   const queryClient = getQueryClient();
@@ -55,8 +70,8 @@ async function WorkspaceHydration({ searchParams }: PageProps) {
 
   // Resolve the mock-authenticated user (the API applies a default user when no
   // id is sent), then resolve which team this URL refers to.
-  const user = await fetchCurrentUser({ userId: "", teamId: "" });
-  const teams = await fetchTeams({ userId: user.id, teamId: "" });
+  const user = await getCachedCurrentUser("");
+  const teams = await getCachedTeams(user.id);
 
   // Canonicalize an unknown / non-member `team` param before doing anything
   // else: drop it and redirect so the URL the client sees always matches the
@@ -71,28 +86,68 @@ async function WorkspaceHydration({ searchParams }: PageProps) {
   const teamId = requested.teamId ?? user.defaultTeamId;
   const ctx = { userId: user.id, teamId };
 
-  // Seed the already-fetched session queries to avoid refetching them.
+  const [tasks, insights, projects, labels, members, selectedTask] =
+    await Promise.all([
+      getCachedTasks(ctx, requested.filters),
+      getCachedInsights(ctx),
+      getCachedProjects(ctx),
+      getCachedLabels(ctx),
+      getCachedMembers(ctx),
+      requested.selectedTaskId
+        ? getCachedTask(ctx, requested.selectedTaskId)
+        : Promise.resolve(null),
+    ]);
+
+  // `setQueryData` records this server generation's completion time as
+  // `dataUpdatedAt`. On mutation, that timestamp is later than the optimistic
+  // browser write performed before the delayed action, so HydrationBoundary
+  // queues these existing queries and applies them in its post-commit effect.
+  // If the transition is aborted, TanStack deliberately discards this update.
   queryClient.setQueryData(currentUserQueryOptions(ctx).queryKey, user);
   queryClient.setQueryData(teamsQueryOptions(ctx).queryKey, teams);
+  queryClient.setQueryData(
+    tasksQueryOptions(ctx, requested.filters).queryKey,
+    tasks,
+  );
+  queryClient.setQueryData(insightsQueryOptions(ctx).queryKey, insights);
+  queryClient.setQueryData(projectsQueryOptions(ctx).queryKey, projects);
+  queryClient.setQueryData(labelsQueryOptions(ctx).queryKey, labels);
+  queryClient.setQueryData(membersQueryOptions(ctx).queryKey, members);
 
-  const prefetches = [
-    queryClient.prefetchQuery(tasksQueryOptions(ctx, requested.filters)),
-    queryClient.prefetchQuery(insightsQueryOptions(ctx)),
-    queryClient.prefetchQuery(projectsQueryOptions(ctx)),
-    queryClient.prefetchQuery(labelsQueryOptions(ctx)),
-    queryClient.prefetchQuery(membersQueryOptions(ctx)),
-  ];
+  if (requested.selectedTaskId && selectedTask) {
+    queryClient.setQueryData(
+      taskQueryOptions(ctx, requested.selectedTaskId).queryKey,
+      selectedTask,
+    );
 
-  // Deep-linked task detail: prefetch it so the panel renders immediately.
-  if (requested.selectedTaskId) {
-    prefetches.push(
-      queryClient.prefetchQuery(
-        taskQueryOptions(ctx, requested.selectedTaskId),
-      ),
+    // Dependency queries also contain copies of tasks. Prefetch the mounted
+    // detail panel's copies into this generation so a status mutation does not
+    // need a browser GET to repair its dependency verdict.
+    const [blockedBy, blocking] = await Promise.all([
+      selectedTask.blockedBy.length > 0
+        ? fetchTasksByIds(ctx, selectedTask.blockedBy)
+        : Promise.resolve([]),
+      selectedTask.blocks.length > 0
+        ? fetchTasksByIds(ctx, selectedTask.blocks)
+        : Promise.resolve([]),
+    ]);
+    queryClient.setQueryData(
+      blockedByTasksQueryOptions(
+        ctx,
+        requested.selectedTaskId,
+        selectedTask.blockedBy,
+      ).queryKey,
+      blockedBy,
+    );
+    queryClient.setQueryData(
+      blockingTasksQueryOptions(
+        ctx,
+        requested.selectedTaskId,
+        selectedTask.blocks,
+      ).queryKey,
+      blocking,
     );
   }
-
-  await Promise.all(prefetches);
 
   return (
     <WorkspaceProvider initialUser={user} initialTeamId={teamId}>

@@ -8,9 +8,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { getQueryClient } from "@/app/react-query/get-query-client";
 
 /**
- * Route-level providers for the TanStack Query variant: a per-request/singleton
- * QueryClient (filled by the page's HydrationBoundary), plus Tooltip + Toaster.
- * Each variant owns its providers so the two are fully self-contained.
+ * Route-level providers for the TanStack Query variant: one long-lived browser
+ * QueryClient (repeatedly filled by the page's HydrationBoundary), plus Tooltip
+ * + Toaster. Each variant owns its providers so the two are self-contained.
  */
 export default function ReactQueryLayout({ children }: { children: ReactNode }) {
   const queryClient = getQueryClient();

@@ -32,9 +32,9 @@ const VARIANTS: Variant[] = [
   {
     href: "/react-query",
     name: "TanStack Query",
-    badge: "client-owned baseline",
+    badge: "Next-converged hybrid",
     tagline:
-      "The server prepares the same instant workspace shell and hydration boundary as the Lane route; after hydration, the browser QueryClient owns fetching, freshness, invalidation, and optimistic patches.",
+      "The same instant hydration boundary, but each Server Action invalidates Next tags and dehydrates a new generation back into one long-lived browser QueryClient. Optimistic writes happen in that store before the RSC merge.",
   },
   {
     href: "/relay",
@@ -67,8 +67,8 @@ export default function Home() {
           The first pair is the honest server-owned comparison: plain App Router
           props and <span className="text-foreground">use-lane</span> share the
           same Cache Components reads, tags, actions, and latency; only
-          client-side distribution differs. The remaining variants compare
-          client-owned approaches.
+          client-side distribution differs. The other variants explore hybrid
+          and client-owned cache boundaries.
         </p>
       </header>
 

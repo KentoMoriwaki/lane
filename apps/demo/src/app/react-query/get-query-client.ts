@@ -6,9 +6,10 @@ import {
 
 /**
  * One QueryClient per request on the server, and a single long-lived client in
- * the browser. This is the standard Next App Router + React Query setup: the
- * server prefetches and dehydrates, the browser hydrates and then owns the
- * cache for the rest of the session.
+ * the browser. Initial navigation and Next-converged mutation responses each
+ * dehydrate a short-lived server client into that same browser store; ordinary
+ * client reads still carry query functions for focus, retries, and uncached URL
+ * states.
  */
 function makeQueryClient() {
   return new QueryClient({
@@ -16,9 +17,10 @@ function makeQueryClient() {
       queries: {
         // Hydrated data is fresh enough for the first render, and most of the
         // cache is catalogue data (teams, projects, labels, members) that only
-        // changes when someone edits it — so the default is to refetch on demand
-        // (refresh control, mutations, team switches) rather than on mount or
-        // focus. The board's own reads opt back in; see `query-options.ts`.
+        // changes when someone edits it. Mutations and manual refresh converge
+        // through RSC hydration; browser queryFns remain available for retries
+        // and uncached URL states. Board reads also opt into focus revalidation;
+        // see `query-options.ts`.
         staleTime: 30_000,
         gcTime: 5 * 60_000,
         retry: 1,

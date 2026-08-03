@@ -366,7 +366,10 @@ function TaskDetail({
 
         <DependencyStatus task={task} onSelectTask={onSelectTask} />
 
-        <p className="pt-1 text-xs text-muted-foreground">
+        <p
+          className="pt-1 text-xs text-muted-foreground"
+          data-task-updated-at={task.updatedAt}
+        >
           Updated {formatRelative(task.updatedAt)}
         </p>
       </div>

@@ -54,6 +54,7 @@ export function TaskRow({
     <div
       role="button"
       tabIndex={0}
+      data-task-updated-at={task.updatedAt}
       onClick={onSelect}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {

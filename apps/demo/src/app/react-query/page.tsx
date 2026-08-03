@@ -19,25 +19,37 @@ import {
 } from "@/app/react-query/api/url-state";
 import { getQueryClient } from "@/app/react-query/get-query-client";
 import { Workspace } from "@/app/react-query/workspace/workspace";
+import { WorkspaceLoadingShell } from "@/app/react-query/workspace/workspace-loading-shell";
 import { WorkspaceProvider } from "@/app/react-query/workspace/workspace-provider";
 
-// This client-owned baseline still prefetches the complete workspace before it
-// renders. Migrating that data flow is outside the server-owned Lane slice, so
-// make the existing blocking choice explicit for Instant Insights.
-export const instant = false;
+// Match the Lane route's navigation contract: a reusable workspace shell is
+// available immediately while the server prepares the hydration payload.
+export const instant = true;
 
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
 /**
- * Server Component entry point. It reads the durable view state from the URL,
- * collects the matching initial data, dehydrates the React Query cache, and
- * hands ownership to the client tree. This is what makes reload and deep-links
- * restore the same workspace; after hydration the client query cache owns the
- * data and same-workspace filter/search changes never reload this component.
+ * Keep the same shell-to-hydration boundary as the Lane route. The difference
+ * begins after hydration: React Query hands ownership to its client cache,
+ * while Lane's external readers continue to receive server-owned publications.
  */
-export default async function Page({ searchParams }: PageProps) {
+export default function Page({ searchParams }: PageProps) {
+  return (
+    <Suspense fallback={<WorkspaceLoadingShell />}>
+      <WorkspaceHydration searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+/**
+ * Reads the durable URL state, collects the matching initial data, dehydrates
+ * the React Query cache, and hands ownership to the client tree. Keeping this
+ * work below the page-level Suspense boundary lets it stream into the reusable
+ * shell instead of blocking navigation into the route.
+ */
+async function WorkspaceHydration({ searchParams }: PageProps) {
   const queryClient = getQueryClient();
   const requested = parseWorkspaceState(getterFromRecord(await searchParams));
 
@@ -83,12 +95,10 @@ export default async function Page({ searchParams }: PageProps) {
   await Promise.all(prefetches);
 
   return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      <Suspense fallback={<div className="min-h-screen bg-background" />}>
-        <WorkspaceProvider initialUser={user} initialTeamId={teamId}>
-          <Workspace />
-        </WorkspaceProvider>
-      </Suspense>
-    </HydrationBoundary>
+    <WorkspaceProvider initialUser={user} initialTeamId={teamId}>
+      <HydrationBoundary state={dehydrate(queryClient)}>
+        <Workspace />
+      </HydrationBoundary>
+    </WorkspaceProvider>
   );
 }

@@ -8,9 +8,9 @@ const APP_URL = `http://localhost:${APP_PORT}`;
  * so Cache Components, Partial Prefetching, and the prefetched App Shell are
  * exercised with their deployed behavior. The server
  * serves its own embedded team API from `/api`, backed by a local SQLite file
- * that is removed before each run. Tests exercise both server-owned variants:
- * plain `/app-router` props and `/lane` publication. A locally running dev
- * setup on the default ports is never touched.
+ * that is removed before each run. Tests exercise the two server-owned routes
+ * and React Query's server-prefetched client-owned hydration. A locally running
+ * dev setup on the default ports is never touched.
  */
 export default defineConfig({
   testDir: "./tests",
@@ -41,8 +41,8 @@ export default defineConfig({
       // A throwaway SQLite file (relative to apps/demo), re-seeded each run.
       TEAM_DB_PATH: "data/e2e-team-task.sqlite",
       // Keep source work identical and deterministic. A deliberately large
-      // browser-only transport delay verifies that both server-owned routes
-      // mark their co-located API calls; the cold-route tests fail if they do not.
+      // browser-only transport delay verifies that server-side publication and
+      // hydration calls mark their co-located API requests.
       TEAM_API_READ_DELAY_MS: "0",
       TEAM_API_WRITE_DELAY_MS: "0",
       TEAM_API_PICKER_DELAY_MS: "0",

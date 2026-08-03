@@ -32,9 +32,9 @@ const VARIANTS: Variant[] = [
   {
     href: "/react-query",
     name: "TanStack Query",
-    badge: "baseline",
+    badge: "client-owned baseline",
     tagline:
-      "The baseline: a resolved-value cache with its own query/mutation hooks, status objects, and optimistic patches.",
+      "The server prepares the same instant workspace shell and hydration boundary as the Lane route; after hydration, the browser QueryClient owns fetching, freshness, invalidation, and optimistic patches.",
   },
   {
     href: "/relay",

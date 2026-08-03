@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { instant } from "@next/playwright";
+import { getTaskUpdateDerivedImpact } from "../../demo/src/app/lane/api/cache-policy";
 
 // Seeded data from apps/demo/src/server/team/db.ts
 const ACME_TEAM = "Acme Product Team";
@@ -11,6 +12,33 @@ const ACME_COMPLETED_TASK = "Responsive navigation for small screens";
 const GROWTH_TASK = "Welcome email rewrite";
 
 const SEARCH_PLACEHOLDER = "Search tasks, labels…";
+
+test("task update invalidation follows derived-data dependencies", () => {
+  expect(getTaskUpdateDerivedImpact({ title: "Renamed" })).toEqual({
+    insights: false,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ priority: "urgent" })).toEqual({
+    insights: false,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ status: "done" })).toEqual({
+    insights: true,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ assigneeId: null })).toEqual({
+    insights: true,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ dueDate: null })).toEqual({
+    insights: true,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ projectId: null })).toEqual({
+    insights: false,
+    projects: true,
+  });
+});
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -182,6 +210,25 @@ test("creating a task shows it in the list and opens the detail", async ({
 
   // The task list converges with the new row.
   await expect(taskRow(page, title)).toBeVisible();
+});
+
+test("a title-only update republishes the task and its list row", async ({
+  page,
+}) => {
+  await gotoWorkspace(page);
+
+  const stamp = Date.now();
+  const original = `E2E rename source ${stamp}`;
+  const renamed = `E2E renamed destination ${stamp}`;
+  await createTask(page, original);
+
+  await detailTitle(page).fill(renamed);
+  await detailTitle(page).press("Enter");
+
+  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(detailTitle(page)).toHaveValue(renamed);
+  await expect(taskRow(page, renamed)).toBeVisible();
+  await expect(taskRow(page, original)).toBeHidden();
 });
 
 test("team switching swaps workspace data without leaking", async ({

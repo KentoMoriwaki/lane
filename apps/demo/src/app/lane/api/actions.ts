@@ -21,6 +21,7 @@ import {
   removeTaskLabel,
   updateTask,
 } from "./endpoints";
+import { getTaskUpdateDerivedImpact } from "./cache-policy";
 import { workspaceCacheTags } from "./cached-endpoints";
 
 /**
@@ -30,30 +31,44 @@ import { workspaceCacheTags } from "./cached-endpoints";
  * `external`, which makes them server-owned: the client may not publish to them,
  * invalidate them, or edit them in place. So a mutation cannot end at the API
  * call — it has to come back as a *publication*, and the channel for that is the
- * one the framework already owns: mutate, `updateTag`, and the RSC payload
- * re-streams into `<LaneHydration>`, which republishes every seeded key at once.
+ * one the framework already owns: mutate, expire the affected cache domains,
+ * and the RSC payload re-streams into `<LaneHydration>`, which republishes every
+ * seeded key at once.
  *
  * That is the whole trade. The client-owned variant (`/lane-spa`) pays for
  * immediacy with a cache it must keep honest by hand — publish the task, patch
  * the lists it appears in, invalidate what derives from it, and decide for each
- * of those what "derives" means. Here there is nothing to decide: one round trip
- * republishes the task, every list that contains it, the project counts, and the
- * insights, consistently, because they were all computed from the same database
- * read. What it costs is that round trip, which is why the controls that need to
- * feel instant wrap `useOptimistic` around the read value instead.
+ * of those what "derives" means. Here one round trip republishes the task, every
+ * list that contains it, the project counts, and the insights consistently.
+ * Reads unaffected by the mutation stay warm; the next publication combines
+ * those cache hits with the freshly recomputed domains. What it costs is that
+ * round trip, which is why the controls that need to feel instant wrap
+ * `useOptimistic` around the read value instead.
  *
  * The tags are not a duplicate of Lane's keys. They name server coherence
- * domains: a task mutation expires the board and its derived values together,
- * while leaving membership and reference data alone. `updateTag` gives the
- * mutating user read-your-own-writes behavior on the next publication.
+ * domains. The mutation input tells us which derived reads can change, while
+ * `updateTag` gives the mutating user read-your-own-writes behavior on the next
+ * publication.
  */
+
+function expire(...tags: string[]) {
+  for (const tag of tags) {
+    updateTag(tag);
+  }
+}
 
 export async function createTaskAction(
   ctx: WorkspaceCtx,
   input: CreateTaskInput,
 ): Promise<Task> {
   const task = await createTask(ctx, input);
-  updateTag(workspaceCacheTags.board(ctx.teamId));
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.insights(ctx.teamId),
+  );
+  if (input.projectId) {
+    updateTag(workspaceCacheTags.projects(ctx.teamId));
+  }
   return task;
 }
 
@@ -63,7 +78,17 @@ export async function updateTaskAction(
   input: UpdateTaskInput,
 ): Promise<Task> {
   const task = await updateTask(ctx, taskId, input);
-  updateTag(workspaceCacheTags.board(ctx.teamId));
+  const derived = getTaskUpdateDerivedImpact(input);
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+  );
+  if (derived.insights) {
+    updateTag(workspaceCacheTags.insights(ctx.teamId));
+  }
+  if (derived.projects) {
+    updateTag(workspaceCacheTags.projects(ctx.teamId));
+  }
   return task;
 }
 
@@ -72,7 +97,12 @@ export async function deleteTaskAction(
   taskId: string,
 ): Promise<void> {
   await deleteTask(ctx, taskId);
-  updateTag(workspaceCacheTags.board(ctx.teamId));
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+    workspaceCacheTags.projects(ctx.teamId),
+    workspaceCacheTags.insights(ctx.teamId),
+  );
 }
 
 export async function addTaskLabelAction(
@@ -81,7 +111,10 @@ export async function addTaskLabelAction(
   labelId: string,
 ): Promise<Task> {
   const task = await addTaskLabel(ctx, taskId, labelId);
-  updateTag(workspaceCacheTags.board(ctx.teamId));
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+  );
   return task;
 }
 
@@ -91,7 +124,10 @@ export async function removeTaskLabelAction(
   labelId: string,
 ): Promise<Task> {
   const task = await removeTaskLabel(ctx, taskId, labelId);
-  updateTag(workspaceCacheTags.board(ctx.teamId));
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+  );
   return task;
 }
 
@@ -100,7 +136,7 @@ export async function createLabelAction(
   input: CreateLabelInput,
 ): Promise<TeamLabel> {
   const label = await createLabel(ctx, input);
-  updateTag(workspaceCacheTags.reference(ctx.teamId));
+  updateTag(workspaceCacheTags.labels(ctx.teamId));
   return label;
 }
 
@@ -109,7 +145,7 @@ export async function createProjectAction(
   input: CreateProjectInput,
 ): Promise<Project> {
   const project = await createProject(ctx, input);
-  updateTag(workspaceCacheTags.board(ctx.teamId));
+  updateTag(workspaceCacheTags.projects(ctx.teamId));
   return project;
 }
 
@@ -126,8 +162,14 @@ export async function createProjectAction(
  */
 export async function refreshWorkspaceAction(ctx: WorkspaceCtx): Promise<void> {
   await fetchInsights(ctx);
-  updateTag(workspaceCacheTags.board(ctx.teamId));
-  updateTag(workspaceCacheTags.reference(ctx.teamId));
-  updateTag(workspaceCacheTags.teamMembership(ctx.teamId));
-  updateTag(workspaceCacheTags.userMembership(ctx.userId));
+  expire(
+    workspaceCacheTags.currentUser(),
+    workspaceCacheTags.teams(ctx.userId),
+    workspaceCacheTags.members(ctx.teamId),
+    workspaceCacheTags.labels(ctx.teamId),
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.taskDetails(ctx.teamId),
+    workspaceCacheTags.projects(ctx.teamId),
+    workspaceCacheTags.insights(ctx.teamId),
+  );
 }

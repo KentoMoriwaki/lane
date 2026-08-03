@@ -17,21 +17,27 @@ import {
  * the browser. These tags are deliberately coherence domains rather than a
  * mirror of every Lane key.
  *
- * - membership: which teams and people the current context can see
- * - reference: stable picker data that has its own mutations
- * - board: tasks and every value derived from those tasks
+ * Task lists, task details, project counts, and insights have different
+ * dependencies. Keeping them separate lets a mutation expire only the reads it
+ * can actually change while Lane still publishes one coherent workspace.
  */
 export const workspaceCacheTags = {
-  userMembership: (userId: string) => `lane:membership:user:${userId}`,
-  teamMembership: (teamId: string) => `lane:membership:team:${teamId}`,
-  reference: (teamId: string) => `lane:reference:${teamId}`,
-  board: (teamId: string) => `lane:board:${teamId}`,
+  currentUser: () => "lane:current-user",
+  teams: (userId: string) => `lane:teams:${userId}`,
+  members: (teamId: string) => `lane:members:${teamId}`,
+  labels: (teamId: string) => `lane:labels:${teamId}`,
+  taskLists: (teamId: string) => `lane:task-lists:${teamId}`,
+  taskDetails: (teamId: string) => `lane:task-details:${teamId}`,
+  task: (teamId: string, taskId: string) =>
+    `lane:task:${teamId}:${taskId}`,
+  projects: (teamId: string) => `lane:projects:${teamId}`,
+  insights: (teamId: string) => `lane:insights:${teamId}`,
 };
 
 export async function getCachedCurrentUser(userId: string) {
   "use cache";
   cacheLife("max");
-  cacheTag(workspaceCacheTags.userMembership(userId || "default"));
+  cacheTag(workspaceCacheTags.currentUser());
 
   return fetchCurrentUser({ userId, teamId: "" });
 }
@@ -39,7 +45,7 @@ export async function getCachedCurrentUser(userId: string) {
 export async function getCachedTeams(userId: string) {
   "use cache";
   cacheLife("max");
-  cacheTag(workspaceCacheTags.userMembership(userId));
+  cacheTag(workspaceCacheTags.teams(userId));
 
   return fetchTeams({ userId, teamId: "" });
 }
@@ -47,7 +53,7 @@ export async function getCachedTeams(userId: string) {
 export async function getCachedMembers(ctx: WorkspaceCtx) {
   "use cache";
   cacheLife("max");
-  cacheTag(workspaceCacheTags.teamMembership(ctx.teamId));
+  cacheTag(workspaceCacheTags.members(ctx.teamId));
 
   return fetchMembers(ctx);
 }
@@ -55,7 +61,7 @@ export async function getCachedMembers(ctx: WorkspaceCtx) {
 export async function getCachedLabels(ctx: WorkspaceCtx) {
   "use cache";
   cacheLife("max");
-  cacheTag(workspaceCacheTags.reference(ctx.teamId));
+  cacheTag(workspaceCacheTags.labels(ctx.teamId));
 
   return fetchLabels(ctx);
 }
@@ -63,7 +69,7 @@ export async function getCachedLabels(ctx: WorkspaceCtx) {
 export async function getCachedTasks(ctx: WorkspaceCtx, filters: TaskFilters) {
   "use cache";
   cacheLife("max");
-  cacheTag(workspaceCacheTags.board(ctx.teamId));
+  cacheTag(workspaceCacheTags.taskLists(ctx.teamId));
 
   return fetchTasks(ctx, filters);
 }
@@ -71,7 +77,10 @@ export async function getCachedTasks(ctx: WorkspaceCtx, filters: TaskFilters) {
 export async function getCachedTask(ctx: WorkspaceCtx, taskId: string) {
   "use cache";
   cacheLife("max");
-  cacheTag(workspaceCacheTags.board(ctx.teamId));
+  cacheTag(
+    workspaceCacheTags.taskDetails(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+  );
 
   return fetchTask(ctx, taskId);
 }
@@ -79,7 +88,7 @@ export async function getCachedTask(ctx: WorkspaceCtx, taskId: string) {
 export async function getCachedProjects(ctx: WorkspaceCtx) {
   "use cache";
   cacheLife("max");
-  cacheTag(workspaceCacheTags.board(ctx.teamId));
+  cacheTag(workspaceCacheTags.projects(ctx.teamId));
 
   return fetchProjects(ctx);
 }
@@ -87,7 +96,7 @@ export async function getCachedProjects(ctx: WorkspaceCtx) {
 export async function getCachedInsights(ctx: WorkspaceCtx) {
   "use cache";
   cacheLife("max");
-  cacheTag(workspaceCacheTags.board(ctx.teamId));
+  cacheTag(workspaceCacheTags.insights(ctx.teamId));
 
   return fetchInsights(ctx);
 }

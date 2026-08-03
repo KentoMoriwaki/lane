@@ -97,7 +97,7 @@ async function WorkspacePublication({ searchParams }: PageProps) {
     getCachedLabels(ctx),
     getCachedMembers(ctx),
     requested.selectedTaskId
-      ? getCachedTask(ctx, requested.selectedTaskId).catch(() => null)
+      ? getCachedTask(ctx, requested.selectedTaskId)
       : Promise.resolve(null),
   ]);
   const snapshots = workspaceSnapshots({

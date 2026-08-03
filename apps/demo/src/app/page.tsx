@@ -9,9 +9,16 @@ type Variant = {
 
 const VARIANTS: Variant[] = [
   {
+    href: "/app-router",
+    name: "Plain App Router",
+    badge: "server-owned baseline",
+    tagline:
+      "Cache Components, scoped tags, and Server Actions own the data lifecycle; the route resolves ordinary values and threads them through the client workspace as props. No Lane and no client data cache.",
+  },
+  {
     href: "/lane",
     name: "use-lane",
-    badge: "server-owned",
+    badge: "server-owned + Lane",
     tagline:
       "The RSC route is the only supplier: it seeds every key, reads are `external` (they wait for the publication instead of fetching), and mutations are server actions that revalidate — so one payload updates the task, the lists, and the insights together. useOptimistic covers the round trip.",
   },
@@ -53,15 +60,15 @@ export default function Home() {
           use-lane · live demo
         </p>
         <h1 className="text-balance text-4xl font-semibold tracking-tight">
-          One team-task workspace, five implementations.
+          One team-task workspace, six implementations.
         </h1>
         <p className="text-pretty text-lg text-muted-foreground">
-          The same UI and the same backend, built five ways —{" "}
-          <span className="text-foreground">use-lane</span> server-owned,
-          use-lane client-owned, the TanStack Query baseline, a Relay GraphQL
-          variant, and plain jotai atoms — so you can feel the difference. Switch
-          by changing the route. The first two are the same library on opposite
-          sides of one question: who owns the data the screen is reading?
+          The same workspace behavior and backend across two ownership models.
+          The first pair is the honest server-owned comparison: plain App Router
+          props and <span className="text-foreground">use-lane</span> share the
+          same Cache Components reads, tags, actions, and latency; only
+          client-side distribution differs. The remaining variants compare
+          client-owned approaches.
         </p>
       </header>
 

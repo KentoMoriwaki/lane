@@ -8,9 +8,9 @@ const APP_URL = `http://localhost:${APP_PORT}`;
  * so Cache Components, Partial Prefetching, and the prefetched App Shell are
  * exercised with their deployed behavior. The server
  * serves its own embedded team API from `/api`, backed by a local SQLite file
- * that is removed before each run. Tests exercise the /lane route (the
- * use-lane, RSC-seeded variant). A locally running dev setup on the default
- * ports is never touched.
+ * that is removed before each run. Tests exercise both server-owned variants:
+ * plain `/app-router` props and `/lane` publication. A locally running dev
+ * setup on the default ports is never touched.
  */
 export default defineConfig({
   testDir: "./tests",

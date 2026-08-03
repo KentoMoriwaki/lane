@@ -1,5 +1,6 @@
 import { cacheLife, cacheTag } from "next/cache";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
+import { ApiError } from "./client";
 import {
   fetchCurrentUser,
   fetchInsights,
@@ -82,7 +83,18 @@ export async function getCachedTask(ctx: WorkspaceCtx, taskId: string) {
     workspaceCacheTags.task(ctx.teamId, taskId),
   );
 
-  return fetchTask(ctx, taskId);
+  try {
+    return await fetchTask(ctx, taskId);
+  } catch (error) {
+    // Deleting the task selected in the URL can rerender that URL in the same
+    // Server Action response, before the client clears the selection. Missing
+    // is an ordinary snapshot state here; keeping it inside the cached read
+    // also avoids reporting an expected 404 as a rejected Cache Component.
+    if (error instanceof ApiError && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function getCachedProjects(ctx: WorkspaceCtx) {

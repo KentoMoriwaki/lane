@@ -1,5 +1,6 @@
 import type { AppType } from "@/server/api";
 import { hc } from "hono/client";
+import { SERVER_CACHE_READ_HEADER } from "@/lib/team-api";
 
 /**
  * The single place the frontend touches the backend. Everything goes through
@@ -49,7 +50,13 @@ export function requestOptions(ctx: WorkspaceCtx) {
   // very first server request, before the current user is known.
   if (ctx.userId) headers["x-user-id"] = ctx.userId;
   if (ctx.teamId) headers["x-team-id"] = ctx.teamId;
-  if (typeof window === "undefined") headers["x-random-fail-bypass"] = "1";
+  if (typeof window === "undefined") {
+    headers["x-random-fail-bypass"] = "1";
+    // These reads populate Next's tagged server cache. Preserve a small cold
+    // delay, but do not inherit the much larger latency used to demonstrate
+    // client-side pending states in the other workspace variants.
+    headers[SERVER_CACHE_READ_HEADER] = "1";
+  }
 
   return {
     headers,

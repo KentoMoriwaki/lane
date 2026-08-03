@@ -1,4 +1,10 @@
 import { Hono } from "hono";
+import { SERVER_CACHE_READ_HEADER } from "@/lib/team-api";
+import {
+  capServerCacheReadDelay,
+  delay,
+  readMilliseconds,
+} from "./latency";
 import { teamRoutes } from "./routes";
 
 /**
@@ -12,7 +18,8 @@ import { teamRoutes } from "./routes";
  *
  * Artificial latency and random failures are kept (env-configurable) so the
  * pending / optimistic / error states the demo exists to show stay observable.
- * The Playwright suite sets the delays to 0.
+ * Server-owned cache fills opt into a separate, shorter latency cap so those
+ * client-side teaching aids do not dominate the initial publication.
  */
 
 /**
@@ -26,16 +33,23 @@ import { teamRoutes } from "./routes";
  * becomes visible — a filtered list with joins is slower than a label lookup, and
  * an aggregate over the whole board is slower again.
  *
- * All four are env-configurable, and the Playwright suite sets them to 0.
+ * The client-facing delays are env-configurable. Marked server cache reads cap
+ * each delay with TEAM_API_SERVER_CACHE_READ_DELAY_MS instead.
  */
-const readDelayMs = readMs(process.env.TEAM_API_READ_DELAY_MS, 100);
-const writeDelayMs = readMs(process.env.TEAM_API_WRITE_DELAY_MS, 100);
+const readDelayMs = readMilliseconds(process.env.TEAM_API_READ_DELAY_MS, 100);
+const writeDelayMs = readMilliseconds(process.env.TEAM_API_WRITE_DELAY_MS, 100);
 // Selectors behind type-ahead pickers stay snappy.
-const pickerDelayMs = readMs(process.env.TEAM_API_PICKER_DELAY_MS, 100);
+const pickerDelayMs = readMilliseconds(
+  process.env.TEAM_API_PICKER_DELAY_MS,
+  100,
+);
 // The filtered task list: a join and a sort.
-const listDelayMs = readMs(process.env.TEAM_API_LIST_DELAY_MS, 260);
+const listDelayMs = readMilliseconds(process.env.TEAM_API_LIST_DELAY_MS, 260);
 // Insights: a scan of every task in the team.
-const aggregateDelayMs = readMs(process.env.TEAM_API_AGGREGATE_DELAY_MS, 560);
+const aggregateDelayMs = readMilliseconds(
+  process.env.TEAM_API_AGGREGATE_DELAY_MS,
+  560,
+);
 
 const randomFailRate = readRatio(process.env.API_RANDOM_FAIL_RATE);
 const randomFailStatus = readStatus(process.env.API_RANDOM_FAIL_STATUS);
@@ -44,7 +58,18 @@ const randomFailPathPrefixes = readPathPrefixes(process.env.API_RANDOM_FAIL_PATH
 const app = new Hono();
 
 app.use("*", async (context, next) => {
-  await delay(readRequestDelay(context.req.method, context.req.path));
+  const configuredDelay = readRequestDelay(
+    context.req.method,
+    context.req.path,
+  );
+  const requestDelay =
+    context.req.method === "GET"
+      ? capServerCacheReadDelay(
+          configuredDelay,
+          context.req.header(SERVER_CACHE_READ_HEADER),
+        )
+      : configuredDelay;
+  await delay(requestDelay);
 
   if (
     shouldRandomlyFail(
@@ -67,14 +92,6 @@ export const routes = app.route("/api", teamRoutes);
 export type AppType = typeof routes;
 
 export { app };
-
-async function delay(milliseconds: number) {
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) {
-    return;
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
 
 function readRequestDelay(method: string, path: string) {
   if (method !== "GET") {
@@ -120,11 +137,6 @@ function shouldRandomlyFail(
   }
 
   return Math.random() < randomFailRate;
-}
-
-function readMs(value: string | undefined, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function readRatio(value: string | undefined) {

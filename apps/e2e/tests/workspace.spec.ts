@@ -76,6 +76,16 @@ async function createTask(page: Page, title: string) {
   await expect(detailTitle(page)).toHaveValue(title);
 }
 
+test("a cold server-owned publication skips client-demo latency", async ({
+  page,
+}) => {
+  const startedAt = Date.now();
+  await gotoWorkspace(page);
+
+  expect(Date.now() - startedAt).toBeLessThan(3_000);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+});
+
 test("the server-owned route exposes a workspace shell instantly", async ({
   page,
 }) => {

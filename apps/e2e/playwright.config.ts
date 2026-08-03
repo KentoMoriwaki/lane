@@ -40,12 +40,15 @@ export default defineConfig({
       NEXT_PUBLIC_SITE_URL: APP_URL,
       // A throwaway SQLite file (relative to apps/demo), re-seeded each run.
       TEAM_DB_PATH: "data/e2e-team-task.sqlite",
-      // No artificial latency so the suite stays fast and deterministic.
-      TEAM_API_READ_DELAY_MS: "0",
+      // Deliberately large client-demo latency: /lane marks server cache fills,
+      // which must use the separate zero-delay profile below. The cold-route
+      // timing test fails if that marker is lost.
+      TEAM_API_READ_DELAY_MS: "5000",
       TEAM_API_WRITE_DELAY_MS: "0",
-      TEAM_API_PICKER_DELAY_MS: "0",
-      TEAM_API_LIST_DELAY_MS: "0",
-      TEAM_API_AGGREGATE_DELAY_MS: "0",
+      TEAM_API_PICKER_DELAY_MS: "5000",
+      TEAM_API_LIST_DELAY_MS: "5000",
+      TEAM_API_AGGREGATE_DELAY_MS: "5000",
+      TEAM_API_SERVER_CACHE_READ_DELAY_MS: "0",
       // Compile Next's production-only navigation lock used by `instant()`.
       NEXT_INSTANT_TEST: "1",
     },

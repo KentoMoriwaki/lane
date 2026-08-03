@@ -23,7 +23,7 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { readOrCreate } from "../core";
+import { readOrCreate } from "./test-utils";
 import { createLane, LaneHydration, LaneProvider, useLane } from "../index";
 import type {
   Lane,

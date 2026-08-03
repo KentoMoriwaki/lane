@@ -8,7 +8,6 @@ import { replaceEqualDeep } from "./structural";
 import type {
   Lane,
   LaneEntryInfo,
-  LaneHydrationSnapshots,
   LaneInvalidateOptions,
   LaneKey,
   LaneLoader,
@@ -55,7 +54,7 @@ type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
 // When to revalidate (focus / reconnect / mount / stale) is the reader's
 // concern, expressed as per-read invalidations; the store only notifies. Even
 // focus / reconnect stay out of here — they are DOM concerns the provider owns.
-type LaneSubscriber = {
+export type LaneSubscriber = {
   onInvalidate?: LaneSubscription;
   onRemove?: LaneRemoveSubscription;
 };
@@ -172,7 +171,7 @@ export function createLane(options: LaneOptions = {}): Lane {
         );
       }
 
-      return readOrCreate<T, C>(lane, read.key, read.loader, {
+      return readOrCreate<T, C>(lane, serializeKey(read.key), read.key, read.loader, {
         // Same precedence as a hook read: the read's own override wins over the
         // value supplied alongside it.
         loaderMeta: read.loaderMeta ?? args[0]?.loaderMeta,
@@ -313,15 +312,23 @@ function markExternal(entry: LaneEntry): void {
   }
 }
 
+/**
+ * Addressed by canonical id, like every internal entry API — the id is what a
+ * hook's effects hold and depend on, so it is what they hand over. The key
+ * object rides along as creation material only: the entry may not exist (or may
+ * have been removed) and a shell without its key could never answer a prefix
+ * match or hand its loader real arguments. `keyId` must be `serializeKey(key)`;
+ * callers hold both already, so the pair travels instead of being re-derived.
+ */
 export function readOrCreate<T, C = T>(
   lane: Lane,
+  keyId: string,
   key: LaneKey,
   loader: LaneLoader<T, C>,
   options?: LaneReadOptions,
   gate?: Promise<void>,
 ): Promise<LaneRead<T>> {
   const state = getLaneState(lane);
-  const keyId = serializeKey(key);
   const entry = getOrCreateEntry(state, key, keyId);
 
   // The one place the store asks *which* loader it was handed: reading a key
@@ -482,13 +489,17 @@ export function updateEntry<T>(
   return updateLaneEntry(state, entry, updater);
 }
 
+/**
+ * Same id-plus-key contract as {@link readOrCreate}: the id addresses, the key
+ * is the material for the entry this subscribe may have to (re)create.
+ */
 export function subscribeLane(
   lane: Lane,
+  keyId: string,
   key: LaneKey,
   subscriber: LaneSubscriber,
 ): () => void {
   const state = getLaneState(lane);
-  const keyId = serializeKey(key);
   const entry = getOrCreateEntry(state, key, keyId);
 
   entry.subscribers.add(subscriber);
@@ -549,7 +560,7 @@ export function onInvalidate(
   key: LaneKey,
   listener: LaneSubscription,
 ): () => void {
-  return subscribeLane(lane, key, { onInvalidate: listener });
+  return subscribeLane(lane, serializeKey(key), key, { onInvalidate: listener });
 }
 
 export function onRemove(
@@ -557,7 +568,7 @@ export function onRemove(
   key: LaneKey,
   listener: LaneRemoveSubscription,
 ): () => void {
-  return subscribeLane(lane, key, { onRemove: listener });
+  return subscribeLane(lane, serializeKey(key), key, { onRemove: listener });
 }
 
 function invalidateLaneEntry(

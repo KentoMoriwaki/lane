@@ -76,7 +76,7 @@ async function createTask(page: Page, title: string) {
   await expect(detailTitle(page)).toHaveValue(title);
 }
 
-test("a cold server-owned publication skips client-demo latency", async ({
+test("a cold server-owned publication skips browser transport latency", async ({
   page,
 }) => {
   const startedAt = Date.now();

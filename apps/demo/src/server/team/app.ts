@@ -1,9 +1,9 @@
 import { Hono } from "hono";
-import { SERVER_CACHE_READ_HEADER } from "@/lib/team-api";
+import { COLOCATED_SERVER_REQUEST_HEADER } from "@/lib/team-api";
 import {
-  capServerCacheReadDelay,
   delay,
   readMilliseconds,
+  requestTransportDelay,
 } from "./latency";
 import { teamRoutes } from "./routes";
 
@@ -18,8 +18,8 @@ import { teamRoutes } from "./routes";
  *
  * Artificial latency and random failures are kept (env-configurable) so the
  * pending / optimistic / error states the demo exists to show stay observable.
- * Server-owned cache fills opt into a separate, shorter latency cap so those
- * client-side teaching aids do not dominate the initial publication.
+ * Transport latency depends on whether the caller is a browser or the
+ * co-located Next server; endpoint source work is identical for both.
  */
 
 /**
@@ -33,22 +33,22 @@ import { teamRoutes } from "./routes";
  * becomes visible — a filtered list with joins is slower than a label lookup, and
  * an aggregate over the whole board is slower again.
  *
- * The client-facing delays are env-configurable. Marked server cache reads cap
- * each delay with TEAM_API_SERVER_CACHE_READ_DELAY_MS instead.
+ * These source-work delays are env-configurable and origin-independent.
+ * Transport is added separately by the middleware below.
  */
-const readDelayMs = readMilliseconds(process.env.TEAM_API_READ_DELAY_MS, 100);
-const writeDelayMs = readMilliseconds(process.env.TEAM_API_WRITE_DELAY_MS, 100);
+const readDelayMs = readMilliseconds(process.env.TEAM_API_READ_DELAY_MS, 20);
+const writeDelayMs = readMilliseconds(process.env.TEAM_API_WRITE_DELAY_MS, 40);
 // Selectors behind type-ahead pickers stay snappy.
 const pickerDelayMs = readMilliseconds(
   process.env.TEAM_API_PICKER_DELAY_MS,
-  100,
+  15,
 );
 // The filtered task list: a join and a sort.
-const listDelayMs = readMilliseconds(process.env.TEAM_API_LIST_DELAY_MS, 260);
+const listDelayMs = readMilliseconds(process.env.TEAM_API_LIST_DELAY_MS, 50);
 // Insights: a scan of every task in the team.
 const aggregateDelayMs = readMilliseconds(
   process.env.TEAM_API_AGGREGATE_DELAY_MS,
-  560,
+  80,
 );
 
 const randomFailRate = readRatio(process.env.API_RANDOM_FAIL_RATE);
@@ -58,18 +58,11 @@ const randomFailPathPrefixes = readPathPrefixes(process.env.API_RANDOM_FAIL_PATH
 const app = new Hono();
 
 app.use("*", async (context, next) => {
-  const configuredDelay = readRequestDelay(
-    context.req.method,
-    context.req.path,
+  const sourceDelay = readRequestDelay(context.req.method, context.req.path);
+  const transportDelay = requestTransportDelay(
+    context.req.header(COLOCATED_SERVER_REQUEST_HEADER),
   );
-  const requestDelay =
-    context.req.method === "GET"
-      ? capServerCacheReadDelay(
-          configuredDelay,
-          context.req.header(SERVER_CACHE_READ_HEADER),
-        )
-      : configuredDelay;
-  await delay(requestDelay);
+  await delay(sourceDelay + transportDelay);
 
   if (
     shouldRandomlyFail(

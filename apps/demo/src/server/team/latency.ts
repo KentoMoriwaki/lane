@@ -1,19 +1,20 @@
-const serverCacheReadDelayMs = readMilliseconds(
-  process.env.TEAM_API_SERVER_CACHE_READ_DELAY_MS,
-  40,
+const browserTransportDelayMs = readMilliseconds(
+  process.env.TEAM_API_BROWSER_TRANSPORT_DELAY_MS,
+  80,
 );
 
-/**
- * Keep a small, visible cold-cache delay without carrying the deliberately slow
- * client-demo latency into a server cache fill.
- */
-export function capServerCacheReadDelay(
-  milliseconds: number,
-  cacheReadHeader: string | undefined,
+const colocatedServerTransportDelayMs = readMilliseconds(
+  process.env.TEAM_API_SERVER_TRANSPORT_DELAY_MS,
+  5,
+);
+
+/** Transport varies by caller location; endpoint source work does not. */
+export function requestTransportDelay(
+  colocatedServerHeader: string | undefined,
 ) {
-  return isEnabled(cacheReadHeader)
-    ? Math.min(milliseconds, serverCacheReadDelayMs)
-    : milliseconds;
+  return isEnabled(colocatedServerHeader)
+    ? colocatedServerTransportDelayMs
+    : browserTransportDelayMs;
 }
 
 export async function delay(milliseconds: number) {

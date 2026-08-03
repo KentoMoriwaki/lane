@@ -1,6 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
-import { SERVER_CACHE_READ_HEADER } from "@/lib/team-api";
 import {
   DEFAULT_USER_ID,
   addTaskLabel,
@@ -21,7 +20,7 @@ import {
   removeTaskLabel,
   updateTask,
 } from "./db";
-import { capServerCacheReadDelay, delay } from "./latency";
+import { delay, readMilliseconds } from "./latency";
 import {
   addTaskLabelInputSchema,
   createLabelInputSchema,
@@ -116,7 +115,10 @@ const validationHook = (
   }
 };
 
-const DERIVED_DATA_DELAY_MS = 200;
+const DERIVED_DATA_DELAY_MS = readMilliseconds(
+  process.env.TEAM_API_DERIVED_DELAY_MS,
+  30,
+);
 
 export const teamRoutes = team
   .get("/me", async (context) => {
@@ -234,12 +236,7 @@ export const teamRoutes = team
     return context.json(task, 200);
   })
   .get("/projects", async (context) => {
-    await delay(
-      capServerCacheReadDelay(
-        DERIVED_DATA_DELAY_MS,
-        context.req.header(SERVER_CACHE_READ_HEADER),
-      ),
-    );
+    await delay(DERIVED_DATA_DELAY_MS);
     return context.json(await listProjects(context.get("teamId")), 200);
   })
   .post(
@@ -301,12 +298,7 @@ export const teamRoutes = team
     },
   )
   .get("/insights", async (context) => {
-    await delay(
-      capServerCacheReadDelay(
-        DERIVED_DATA_DELAY_MS,
-        context.req.header(SERVER_CACHE_READ_HEADER),
-      ),
-    );
+    await delay(DERIVED_DATA_DELAY_MS);
     return context.json(
       await getInsights(context.get("teamId"), context.get("userId")),
       200,

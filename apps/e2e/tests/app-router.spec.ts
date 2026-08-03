@@ -37,7 +37,7 @@ async function createTask(page: Page, title: string) {
   await expect(detailTitle(page)).toHaveValue(title);
 }
 
-test("the cold props baseline converges without client-demo latency", async ({
+test("the cold props baseline converges without browser transport latency", async ({
   page,
 }) => {
   const startedAt = Date.now();

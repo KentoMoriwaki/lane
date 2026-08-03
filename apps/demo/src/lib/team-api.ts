@@ -1,2 +1,3 @@
-/** Marks an API read that will populate the server-owned workspace cache. */
-export const SERVER_CACHE_READ_HEADER = "x-demo-server-cache-read";
+/** Marks an API request issued by the co-located Next.js server. */
+export const COLOCATED_SERVER_REQUEST_HEADER =
+  "x-demo-colocated-server-request";

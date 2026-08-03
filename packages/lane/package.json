@@ -64,6 +64,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "lint": "oxlint",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "size": "size-limit",
     "skills:sync": "node ../../scripts/project-docs.mjs skill",
@@ -79,6 +80,7 @@
     "@types/react-dom": "^19.2.3",
     "esbuild-plugin-file-path-extensions": "^2.1.4",
     "jsdom": "^29.1.1",
+    "oxlint": "^1.75.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "size-limit": "^12.1.0",

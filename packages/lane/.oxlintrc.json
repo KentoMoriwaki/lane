@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "ignorePatterns": ["dist"],
+  "plugins": ["react"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "error",
+    "react/react-compiler": "error",
+    // The tests (and the library) build elements with `createElement` in plain
+    // .ts files, where `children` is necessarily an ordinary prop.
+    "react/no-children-prop": "off"
+  },
+  "overrides": [
+    {
+      "files": ["src/__tests__/**"],
+      "rules": {
+        // Tests deliberately violate the Rules of React (e.g. the tearing
+        // tests read refs and mutate during render on purpose), and type-only
+        // `typeExpectations` helpers call hooks outside components.
+        "react/react-compiler": "off",
+        "react/rules-of-hooks": "off"
+      }
+    }
+  ]
+}

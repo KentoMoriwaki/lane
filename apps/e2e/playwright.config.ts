@@ -4,7 +4,9 @@ const APP_PORT = 3102;
 const APP_URL = `http://localhost:${APP_PORT}`;
 
 /**
- * The suite runs against a dedicated apps/demo dev server (port 3102) that
+ * The suite runs against a dedicated apps/demo production server (port 3102)
+ * so Cache Components, Partial Prefetching, and the prefetched App Shell are
+ * exercised with their deployed behavior. The server
  * serves its own embedded team API from `/api`, backed by a local SQLite file
  * that is removed before each run. Tests exercise the /lane route (the
  * use-lane, RSC-seeded variant). A locally running dev setup on the default
@@ -29,7 +31,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "rm -f apps/demo/data/e2e-team-task.sqlite && pnpm --filter @lane/demo exec next dev -p 3102",
+      "rm -f apps/demo/data/e2e-team-task.sqlite && pnpm --filter @lane/demo build && pnpm --filter @lane/demo exec next start -p 3102",
     cwd: "../..",
     url: APP_URL,
     env: {
@@ -44,6 +46,8 @@ export default defineConfig({
       TEAM_API_PICKER_DELAY_MS: "0",
       TEAM_API_LIST_DELAY_MS: "0",
       TEAM_API_AGGREGATE_DELAY_MS: "0",
+      // Compile Next's production-only navigation lock used by `instant()`.
+      NEXT_INSTANT_TEST: "1",
     },
     reuseExistingServer: false,
     timeout: 120_000,

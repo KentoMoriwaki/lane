@@ -8,10 +8,8 @@ import { yoga } from "@/server/graphql/yoga";
  * app. graphql-yoga is a Web `fetch` handler; we hand each method straight to it.
  */
 
-// libSQL/Turso + the seed run in Node, never the Edge runtime.
-export const runtime = "nodejs";
-// The workspace is per-request, seeded from a database; never prerender it.
-export const dynamic = "force-dynamic";
+// Cache Components uses the Node runtime and executes Route Handlers at request
+// time by default, so the legacy `runtime` / `dynamic` config is unnecessary.
 // The first request after a cold start runs the one-time schema init + seed.
 export const maxDuration = 30;
 

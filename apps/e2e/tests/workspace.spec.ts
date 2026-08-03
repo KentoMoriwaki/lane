@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { instant } from "@next/playwright";
 
 // Seeded data from apps/demo/src/server/team/db.ts
 const ACME_TEAM = "Acme Product Team";
@@ -45,6 +46,21 @@ async function createTask(page: Page, title: string) {
   // The created task opens in the detail panel.
   await expect(detailTitle(page)).toHaveValue(title);
 }
+
+test("the server-owned route exposes a workspace shell instantly", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await instant(page, async () => {
+    await page.locator('a[href="/lane"]').click();
+    await expect(page.getByTestId("lane-workspace-shell")).toBeVisible();
+    await expect(page.getByLabel("Loading workspace")).toBeVisible();
+  });
+
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await expect(page.getByTestId("lane-workspace-shell")).toBeHidden();
+});
 
 test("loads the seeded workspace", async ({ page }) => {
   await gotoWorkspace(page);

@@ -1,5 +1,6 @@
 import { LaneHydration } from "use-lane";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import {
   fetchCurrentUser,
   fetchInsights,
@@ -17,11 +18,12 @@ import {
   parseWorkspaceState,
 } from "@/app/lane/api/url-state";
 import { Workspace } from "@/app/lane/workspace/workspace";
+import { WorkspaceLoadingShell } from "@/app/lane/workspace/workspace-loading-shell";
 import { WorkspaceProvider } from "@/app/lane/workspace/workspace-provider";
 
-// The workspace is seeded per request from the embedded API, so it can never be
-// statically prerendered (there is no server to fetch from at build time).
-export const dynamic = "force-dynamic";
+// Keep Instant Insights focused on this migration target. The dynamic workspace
+// publication must stream into the reusable shell rather than blocking it.
+export const instant = true;
 
 type PageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -53,7 +55,21 @@ type PageProps = {
  * `/lane-spa` is the same workspace with the opposite answer: no seeding, client
  * loaders, and the cache maintenance that comes with owning your own data.
  */
-export default async function Page({ searchParams }: PageProps) {
+export default function Page({ searchParams }: PageProps) {
+  return (
+    <Suspense fallback={<WorkspaceLoadingShell />}>
+      <WorkspacePublication searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+/**
+ * The publication is intentionally below the page-level Suspense boundary.
+ * `searchParams` and the embedded API are request-time inputs, so this subtree
+ * streams after navigation while the workspace-shaped App Shell is available
+ * immediately. A later slice will decide which reads belong in `use cache`.
+ */
+async function WorkspacePublication({ searchParams }: PageProps) {
   const requested = parseWorkspaceState(getterFromRecord(await searchParams));
   const user = await fetchCurrentUser({ userId: "", teamId: "" });
   const teams = await fetchTeams({ userId: user.id, teamId: "" });

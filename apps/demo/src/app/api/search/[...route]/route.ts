@@ -11,10 +11,9 @@ import { searchRoutes } from "@/server/search/app";
  * its own timing exactly.
  */
 
-// The dataset and the request counters live in module scope.
-export const runtime = "nodejs";
-// Nothing about this endpoint is static.
-export const dynamic = "force-dynamic";
+// Cache Components uses the Node runtime and executes Route Handlers at request
+// time by default. The module-scoped dataset and counters stay request-driven
+// without segment config.
 
 const handler = handle(searchRoutes);
 

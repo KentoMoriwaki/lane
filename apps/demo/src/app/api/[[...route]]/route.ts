@@ -10,10 +10,8 @@ import { routes } from "@/server/team/app";
  * against the routes mounted in `@/server/team/app`.
  */
 
-// libSQL/Turso and the seed run in Node, not the Edge runtime.
-export const runtime = "nodejs";
-// The workspace is per-request, seeded from a database; never prerender it.
-export const dynamic = "force-dynamic";
+// Cache Components uses the Node runtime and executes Route Handlers at request
+// time by default, so the legacy `runtime` / `dynamic` config is unnecessary.
 // The first request after a cold start runs the one-time schema init + seed
 // against Turso; give it headroom beyond the default function timeout.
 export const maxDuration = 30;

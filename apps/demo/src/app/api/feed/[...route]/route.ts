@@ -11,10 +11,9 @@ import { feedRoutes } from "@/server/feed/app";
  * own timing. Mounting here keeps the two apps completely independent.
  */
 
-// The lab dataset lives in module scope, and the encoder uses `Buffer`.
-export const runtime = "nodejs";
-// Nothing about this endpoint is static; it is a live, mutable dataset.
-export const dynamic = "force-dynamic";
+// Cache Components uses the Node runtime and executes Route Handlers at request
+// time by default. The live, module-scoped dataset therefore needs no segment
+// config.
 
 const handler = handle(feedRoutes);
 

@@ -13,25 +13,26 @@ import type {
 import {
   type QueryClient,
   keepPreviousData,
-  useIsFetching,
   useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import * as React from "react";
-import { useWorkspaceCtx } from "@/app/react-query/workspace/workspace-provider";
+import { useWorkspaceCtx } from "@/app/react-query-rsc/workspace/workspace-provider";
 import {
-  addTaskLabel,
-  createLabel,
-  createProject,
-  createTask,
-  deleteTask,
-  fetchTasksByIds,
-  removeTaskLabel,
-  updateTask,
-} from "./endpoints";
+  addTaskLabelAction,
+  createLabelAction,
+  createProjectAction,
+  createTaskAction,
+  deleteTaskAction,
+  refreshWorkspaceAction,
+  removeTaskLabelAction,
+  updateTaskAction,
+} from "./actions";
 import type { TaskFilters } from "./endpoints";
 import {
+  blockedByTasksQueryOptions,
+  blockingTasksQueryOptions,
   currentUserQueryOptions,
   insightsQueryOptions,
   labelsQueryOptions,
@@ -43,7 +44,6 @@ import {
   teamsQueryOptions,
 } from "./query-options";
 import {
-  replaceTaskInList,
   type TaskCacheStrategy,
   taskCacheStrategies,
   taskFiltersFromQueryKey,
@@ -102,20 +102,16 @@ export function useInsights() {
 export function useBlockedByTasks(taskId: string, ids: string[]) {
   const ctx = useWorkspaceCtx();
   return useQuery({
-    queryKey: queryKeys.taskBlockedBy(taskId),
-    queryFn: () => fetchTasksByIds(ctx, ids),
+    ...blockedByTasksQueryOptions(ctx, taskId, ids),
     enabled: ids.length > 0,
-    staleTime: 5_000,
   });
 }
 
 export function useBlockingTasks(taskId: string, ids: string[]) {
   const ctx = useWorkspaceCtx();
   return useQuery({
-    queryKey: queryKeys.taskBlocking(taskId),
-    queryFn: () => fetchTasksByIds(ctx, ids),
+    ...blockingTasksQueryOptions(ctx, taskId, ids),
     enabled: ids.length > 0,
-    staleTime: 5_000,
   });
 }
 
@@ -220,101 +216,34 @@ function restoreTask(
   queryClient.setQueryData(queryKeys.task(taskId), snapshot.detail);
 }
 
-function publishTask(
-  queryClient: QueryClient,
-  task: Task,
-  strategy: TaskCacheStrategy,
-) {
-  queryClient.setQueryData(queryKeys.task(task.id), task);
-
-  for (const [key, list] of queryClient.getQueriesData<Task[]>({
-    queryKey: ["tasks"],
-  })) {
-    const filters = taskFiltersFromQueryKey(key);
-    if (!list || !filters || strategy.shouldInvalidateTaskList(filters)) {
-      continue;
-    }
-
-    queryClient.setQueryData(key, replaceTaskInList(list, task));
-  }
-}
-
-function invalidateAllTaskLists(queryClient: QueryClient) {
-  queryClient.invalidateQueries({ queryKey: ["tasks"] });
-}
-
-function invalidateTaskLists(
-  queryClient: QueryClient,
-  strategy: TaskCacheStrategy,
-) {
-  queryClient.invalidateQueries({
-    predicate: (query) => {
-      const filters = taskFiltersFromQueryKey(query.queryKey);
-      return Boolean(filters && strategy.shouldInvalidateTaskList(filters));
-    },
-  });
-}
-
-function invalidateDerivedTaskViews(
-  queryClient: QueryClient,
-  refresh: { insights: boolean; projects: boolean },
-) {
-  if (refresh.insights) {
-    queryClient.invalidateQueries({ queryKey: queryKeys.insights });
-  }
-
-  if (refresh.projects) {
-    queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-  }
-}
-
-// Dependency reads cache a copy of the edge's task (including its status), so a
-// status change anywhere must refresh them to keep the verdict honest.
-function invalidateDependencyViews(queryClient: QueryClient) {
-  queryClient.invalidateQueries({ queryKey: ["task-blocked-by"] });
-  queryClient.invalidateQueries({ queryKey: ["task-blocking"] });
-}
-
-function invalidateTaskViews(
-  queryClient: QueryClient,
-  strategy: TaskCacheStrategy,
-) {
-  invalidateTaskLists(queryClient, strategy);
-  invalidateDerivedTaskViews(queryClient, {
-    insights: strategy.refreshInsights,
-    projects: strategy.refreshProjects,
-  });
-  invalidateDependencyViews(queryClient);
-}
-
 function removeTaskFromTaskLists(queryClient: QueryClient, taskId: string) {
   queryClient.setQueriesData<Task[]>({ queryKey: ["tasks"] }, (list) =>
     list?.filter((task) => task.id !== taskId),
   );
 }
 
-function invalidateWorkspaceTaskViews(queryClient: QueryClient) {
-  invalidateAllTaskLists(queryClient);
-  queryClient.invalidateQueries({ queryKey: queryKeys.insights });
-  queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-}
-
 /* ------------------------------ Mutations ------------------------------ */
+
+/**
+ * Next recognizes an imported Server Function as an action when it is invoked
+ * in a transition. TanStack starts `mutationFn` after `onMutate` resolves, so
+ * establish the action transition here instead of relying on the event that
+ * originally called `mutate`.
+ */
+function invokeAction<T>(action: () => Promise<T>): Promise<T> {
+  let result!: Promise<T>;
+  React.startTransition(() => {
+    result = action();
+  });
+  return result;
+}
 
 export function useCreateTask() {
   const ctx = useWorkspaceCtx();
-  const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (input: CreateTaskInput) => createTask(ctx, input),
-    onSuccess: (task) => {
-      queryClient.setQueryData(queryKeys.task(task.id), task);
-      invalidateAllTaskLists(queryClient);
-      invalidateDerivedTaskViews(queryClient, {
-        insights: true,
-        projects: Boolean(task.project),
-      });
-    },
+    mutationFn: (input: CreateTaskInput) =>
+      invokeAction(() => createTaskAction(ctx, input)),
   });
 }
 
@@ -324,7 +253,7 @@ export function useUpdateTask(taskId: string) {
 
   return useMutation({
     mutationFn: ({ input }: UpdateTaskMutation) =>
-      updateTask(ctx, taskId, input),
+      invokeAction(() => updateTaskAction(ctx, taskId, input)),
     onMutate: async ({ input, strategy }) => {
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       await queryClient.cancelQueries({ queryKey: queryKeys.task(taskId) });
@@ -337,9 +266,9 @@ export function useUpdateTask(taskId: string) {
     },
     onError: (_error, _variables, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSuccess: (task, { strategy }) => publishTask(queryClient, task, strategy),
-    onSettled: (_task, _error, { strategy }) =>
-      invalidateTaskViews(queryClient, strategy),
+    // Do not publish the returned Task or invalidate queries here. The action's
+    // same-response RSC render has a later `dataUpdatedAt` than this optimistic
+    // write; HydrationBoundary applies that server generation after commit.
   });
 }
 
@@ -348,7 +277,8 @@ export function useDeleteTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (taskId: string) => deleteTask(ctx, taskId),
+    mutationFn: (taskId: string) =>
+      invokeAction(() => deleteTaskAction(ctx, taskId)),
     onMutate: async (taskId) => {
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       await queryClient.cancelQueries({ queryKey: queryKeys.task(taskId) });
@@ -359,12 +289,10 @@ export function useDeleteTask() {
     onError: (_error, taskId, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
     onSuccess: (_data, taskId) => {
+      // A deleted selected task is intentionally omitted from dehydration: a
+      // missing query cannot replace an existing one. This is the one narrow
+      // client cleanup needed before the caller removes `task` from the URL.
       queryClient.removeQueries({ queryKey: queryKeys.task(taskId) });
-      invalidateDerivedTaskViews(queryClient, {
-        insights: true,
-        projects: true,
-      });
-      invalidateDependencyViews(queryClient);
     },
   });
 }
@@ -374,7 +302,8 @@ export function useAddTaskLabel(taskId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (label: TeamLabel) => addTaskLabel(ctx, taskId, label.id),
+    mutationFn: (label: TeamLabel) =>
+      invokeAction(() => addTaskLabelAction(ctx, taskId, label.id)),
     onMutate: async (label) => {
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       await queryClient.cancelQueries({ queryKey: queryKeys.task(taskId) });
@@ -394,9 +323,6 @@ export function useAddTaskLabel(taskId: string) {
     },
     onError: (_error, _label, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSuccess: (task) =>
-      publishTask(queryClient, task, taskCacheStrategies.labels),
-    onSettled: () => invalidateTaskViews(queryClient, taskCacheStrategies.labels),
   });
 }
 
@@ -405,7 +331,8 @@ export function useRemoveTaskLabel(taskId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (labelId: string) => removeTaskLabel(ctx, taskId, labelId),
+    mutationFn: (labelId: string) =>
+      invokeAction(() => removeTaskLabelAction(ctx, taskId, labelId)),
     onMutate: async (labelId) => {
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       await queryClient.cancelQueries({ queryKey: queryKeys.task(taskId) });
@@ -423,53 +350,40 @@ export function useRemoveTaskLabel(taskId: string) {
     },
     onError: (_error, _labelId, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSuccess: (task) =>
-      publishTask(queryClient, task, taskCacheStrategies.labels),
-    onSettled: () => invalidateTaskViews(queryClient, taskCacheStrategies.labels),
   });
 }
 
 export function useCreateLabel() {
   const ctx = useWorkspaceCtx();
-  const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (input: CreateLabelInput) => createLabel(ctx, input),
-    onSuccess: () => {
-      // Other label pickers should observe the new label after refresh.
-      queryClient.invalidateQueries({ queryKey: queryKeys.labels });
-    },
+    mutationFn: (input: CreateLabelInput) =>
+      invokeAction(() => createLabelAction(ctx, input)),
   });
 }
 
 export function useCreateProject() {
   const ctx = useWorkspaceCtx();
-  const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (input: CreateProjectInput) => createProject(ctx, input),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
-    },
+    mutationFn: (input: CreateProjectInput) =>
+      invokeAction(() => createProjectAction(ctx, input)),
   });
 }
 
 /* ------------------------------- Refresh ------------------------------- */
 
 /**
- * Manual workspace refresh. Invalidates the live team queries and reports
- * whether anything is currently fetching, so the top bar can show a spinner
- * while keeping the existing data on screen.
+ * Manual workspace refresh asks Next to replace every server cache domain and
+ * returns the resulting dehydrated generation in the action response. Browser
+ * query fetching is deliberately not part of this path.
  */
 export function useWorkspaceRefresh() {
-  const queryClient = useQueryClient();
-  const fetchingCount = useIsFetching();
+  const ctx = useWorkspaceCtx();
+  const { mutate, isPending } = useMutation({
+    mutationFn: () => invokeAction(() => refreshWorkspaceAction(ctx)),
+  });
+  const refresh = React.useCallback(() => mutate(), [mutate]);
 
-  const refresh = React.useCallback(() => {
-    invalidateWorkspaceTaskViews(queryClient);
-    queryClient.invalidateQueries({ queryKey: queryKeys.labels });
-    queryClient.invalidateQueries({ queryKey: queryKeys.members });
-  }, [queryClient]);
-
-  return { refresh, isRefreshing: fetchingCount > 0 };
+  return { refresh, isRefreshing: isPending };
 }

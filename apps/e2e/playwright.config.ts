@@ -9,8 +9,8 @@ const APP_URL = `http://localhost:${APP_PORT}`;
  * exercised with their deployed behavior. The server
  * serves its own embedded team API from `/api`, backed by a local SQLite file
  * that is removed before each run. Tests exercise the two server-owned routes
- * and React Query's server-prefetched client-owned hydration. A locally running
- * dev setup on the default ports is never touched.
+ * plus the browser-owned SPA pair and React Query's RSC convergence lab. A
+ * locally running dev setup on the default ports is never touched.
  */
 export default defineConfig({
   testDir: "./tests",
@@ -40,16 +40,16 @@ export default defineConfig({
       NEXT_PUBLIC_SITE_URL: APP_URL,
       // A throwaway SQLite file (relative to apps/demo), re-seeded each run.
       TEAM_DB_PATH: "data/e2e-team-task.sqlite",
-      // Keep source work identical and deterministic. A deliberately large
-      // browser-only transport delay verifies that server-side publication and
-      // hydration calls mark their co-located API requests.
+      // Keep source work identical and deterministic. Browser transport stays
+      // visibly slower than the co-located server without making the SPA
+      // ownership checks spend seconds on each bootstrap wave.
       TEAM_API_READ_DELAY_MS: "0",
       TEAM_API_WRITE_DELAY_MS: "0",
       TEAM_API_PICKER_DELAY_MS: "0",
       TEAM_API_LIST_DELAY_MS: "0",
       TEAM_API_AGGREGATE_DELAY_MS: "0",
       TEAM_API_DERIVED_DELAY_MS: "0",
-      TEAM_API_BROWSER_TRANSPORT_DELAY_MS: "5000",
+      TEAM_API_BROWSER_TRANSPORT_DELAY_MS: "100",
       TEAM_API_SERVER_TRANSPORT_DELAY_MS: "0",
       // Compile Next's production-only navigation lock used by `instant()`.
       NEXT_INSTANT_TEST: "1",

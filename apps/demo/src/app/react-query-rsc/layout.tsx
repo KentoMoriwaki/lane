@@ -5,7 +5,7 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import type { ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getQueryClient } from "@/app/react-query/get-query-client";
+import { getQueryClient } from "@/app/react-query-rsc/get-query-client";
 
 /**
  * Route-level providers for the TanStack Query variant: one long-lived browser

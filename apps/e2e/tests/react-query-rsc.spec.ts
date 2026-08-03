@@ -15,7 +15,7 @@ test("the hydrated Next-converged variant exposes an instant workspace shell", a
   await page.goto("/");
 
   await instant(page, async () => {
-    await page.locator('a[href="/react-query"]').click();
+    await page.locator('a[href="/react-query-rsc"]').click();
     await expect(page.getByTestId("react-query-workspace-shell")).toBeVisible();
     await expect(
       page.getByLabel("Loading React Query workspace"),
@@ -29,7 +29,7 @@ test("the hydrated Next-converged variant exposes an instant workspace shell", a
 test("an optimistic task update converges through RSC hydration without a browser GET", async ({
   page,
 }) => {
-  await page.goto(`/react-query?task=task_invoice_pdf`);
+  await page.goto(`/react-query-rsc?task=task_invoice_pdf`);
   await page.waitForLoadState("networkidle");
 
   const row = taskRow(page, TODO_TASK);
@@ -67,7 +67,7 @@ test("an optimistic task update converges through RSC hydration without a browse
     markActionHeld = resolve;
   });
 
-  await page.route("**/react-query**", async (route) => {
+  await page.route("**/react-query-rsc**", async (route) => {
     if (route.request().method() !== "POST") {
       await route.fallback();
       return;
@@ -142,7 +142,7 @@ test("an optimistic task update converges through RSC hydration without a browse
 test("RSC hydration removes a task from an affected filtered query", async ({
   page,
 }) => {
-  await page.goto("/react-query?status=todo&task=task_empty_states");
+  await page.goto("/react-query-rsc?status=todo&task=task_empty_states");
   await page.waitForLoadState("networkidle");
 
   const row = taskRow(page, FILTERED_TODO_TASK);

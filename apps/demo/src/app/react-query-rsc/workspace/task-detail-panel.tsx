@@ -10,8 +10,8 @@ import {
   useRemoveTaskLabel,
   useTask,
   useUpdateTask,
-} from "@/app/react-query/api/hooks";
-import { taskCacheStrategies } from "@/app/react-query/api/task-cache-sync";
+} from "@/app/react-query-rsc/api/hooks";
+import { taskCacheStrategies } from "@/app/react-query-rsc/api/task-cache-sync";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -366,7 +366,10 @@ function TaskDetail({
 
         <DependencyStatus task={task} onSelectTask={onSelectTask} />
 
-        <p className="pt-1 text-xs text-muted-foreground">
+        <p
+          className="pt-1 text-xs text-muted-foreground"
+          data-task-updated-at={task.updatedAt}
+        >
           Updated {formatRelative(task.updatedAt)}
         </p>
       </div>

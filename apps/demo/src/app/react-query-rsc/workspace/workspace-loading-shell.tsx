@@ -1,11 +1,11 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
-/** Static shell shown until the browser-owned query cache has bootstrapped. */
+/** Static App Shell shown while the server prepares the dehydrated cache. */
 export function WorkspaceLoadingShell() {
   return (
     <div
-      data-testid="react-query-spa-workspace-shell"
-      aria-label="Loading React Query SPA workspace"
+      data-testid="react-query-workspace-shell"
+      aria-label="Loading React Query workspace"
       className="flex h-screen overflow-hidden bg-background text-foreground"
     >
       <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex">

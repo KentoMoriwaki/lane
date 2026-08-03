@@ -3,8 +3,8 @@
 import type { Task } from "@/server/api";
 import { MoreHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { useDeleteTask, useUpdateTask } from "@/app/react-query/api/hooks";
-import { taskCacheStrategies } from "@/app/react-query/api/task-cache-sync";
+import { useDeleteTask, useUpdateTask } from "@/app/react-query-rsc/api/hooks";
+import { taskCacheStrategies } from "@/app/react-query-rsc/api/task-cache-sync";
 import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -54,6 +54,7 @@ export function TaskRow({
     <div
       role="button"
       tabIndex={0}
+      data-task-updated-at={task.updatedAt}
       onClick={onSelect}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {

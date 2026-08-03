@@ -23,18 +23,25 @@ const VARIANTS: Variant[] = [
       "The RSC route is the only supplier: it seeds every key, reads are `external` (they wait for the publication instead of fetching), and mutations are server actions that revalidate — so one payload updates the task, the lists, and the insights together. useOptimistic covers the round trip.",
   },
   {
+    href: "/react-query-rsc",
+    name: "TanStack Query",
+    badge: "Next-converged RSC",
+    tagline:
+      "The Lane-shaped App Router experiment: each Server Action invalidates Next tags and dehydrates a new generation back into one long-lived browser QueryClient. Optimistic writes happen in that store before the RSC merge.",
+  },
+  {
     href: "/lane-spa",
     name: "use-lane",
-    badge: "client-owned",
+    badge: "browser-owned SPA",
     tagline:
-      "The same workspace with the opposite answer: no seeding, the client fetches and owns every key from first paint, and keeps its own cache honest after a mutation — publish the task, patch the lists, invalidate what derives from it.",
+      "No RSC seed and no SSR loaders: after the static shell hydrates, the browser fetches and owns every key, then publishes task results and invalidates the derived reads after mutations.",
   },
   {
     href: "/react-query",
     name: "TanStack Query",
-    badge: "Next-converged hybrid",
+    badge: "browser-owned SPA",
     tagline:
-      "The same instant hydration boundary, but each Server Action invalidates Next tags and dehydrates a new generation back into one long-lived browser QueryClient. Optimistic writes happen in that store before the RSC merge.",
+      "The conventional SPA baseline: no QueryClient or workspace data on the server. Browser queryFns fetch from /api, optimistic writes update the single cache, and targeted invalidation converges derived data.",
   },
   {
     href: "/relay",
@@ -60,15 +67,16 @@ export default function Home() {
           use-lane · live demo
         </p>
         <h1 className="text-balance text-4xl font-semibold tracking-tight">
-          One team-task workspace, six implementations.
+          One team-task workspace, seven implementations.
         </h1>
         <p className="text-pretty text-lg text-muted-foreground">
           The same workspace behavior and backend across two ownership models.
           The first pair is the honest server-owned comparison: plain App Router
           props and <span className="text-foreground">use-lane</span> share the
           same Cache Components reads, tags, actions, and latency; only
-          client-side distribution differs. The other variants explore hybrid
-          and client-owned cache boundaries.
+          client-side distribution differs. The SPA pair removes SSR data
+          fetching entirely, while the React Query RSC variant isolates the
+          App Router integration experiment.
         </p>
       </header>
 

@@ -8,6 +8,7 @@ import {
   fetchMembers,
   fetchProjects,
   fetchTask,
+  fetchTasksByIds,
   fetchTasks,
   fetchTeams,
 } from "./endpoints";
@@ -37,6 +38,8 @@ export const queryKeys = {
 export const TEAM_SCOPED_KEYS = [
   ["tasks"],
   ["task"],
+  ["task-blocked-by"],
+  ["task-blocking"],
   ["projects"],
   ["labels"],
   ["members"],
@@ -67,10 +70,9 @@ export function teamsQueryOptions(ctx: WorkspaceCtx) {
  * refocus after a moment away actually fetches, and long enough that flicking
  * between two windows does not.
  *
- * The use-lane variant sets exactly this policy with `refetchOnFocus` /
- * `staleTime` in `lane/api/lane-reads.ts`, on the same three reads. Both spell it
- * the same way, and keeping them matched is what makes the two variants
- * comparable when you switch away and come back.
+ * This remains the client-owned half of the hybrid: Server Actions converge
+ * through RSC hydration, while focus revalidation and URL states that were not
+ * part of the latest server generation can still execute browser queryFns.
  */
 const BOARD_REVALIDATION = {
   refetchOnWindowFocus: true,
@@ -89,6 +91,30 @@ export function taskQueryOptions(ctx: WorkspaceCtx, taskId: string) {
   return queryOptions({
     queryKey: queryKeys.task(taskId),
     queryFn: () => fetchTask(ctx, taskId),
+  });
+}
+
+export function blockedByTasksQueryOptions(
+  ctx: WorkspaceCtx,
+  taskId: string,
+  ids: string[],
+) {
+  return queryOptions({
+    queryKey: queryKeys.taskBlockedBy(taskId),
+    queryFn: () => fetchTasksByIds(ctx, ids),
+    staleTime: 5_000,
+  });
+}
+
+export function blockingTasksQueryOptions(
+  ctx: WorkspaceCtx,
+  taskId: string,
+  ids: string[],
+) {
+  return queryOptions({
+    queryKey: queryKeys.taskBlocking(taskId),
+    queryFn: () => fetchTasksByIds(ctx, ids),
+    staleTime: 5_000,
   });
 }
 

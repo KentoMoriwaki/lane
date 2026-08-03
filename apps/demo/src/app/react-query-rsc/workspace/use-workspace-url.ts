@@ -1,13 +1,13 @@
 "use client";
 
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
-import { EMPTY_FILTERS, type TaskFilters } from "@/app/react-query/api/endpoints";
+import { EMPTY_FILTERS, type TaskFilters } from "@/app/react-query-rsc/api/endpoints";
 import {
   type WorkspaceUrlState,
   buildWorkspaceSearch,
   parseWorkspaceState,
-} from "@/app/react-query/api/url-state";
+} from "@/app/react-query-rsc/api/url-state";
 
 type HistoryMode = "push" | "replace";
 
@@ -15,14 +15,14 @@ type HistoryMode = "push" | "replace";
  * Reads durable view state (filters, search, selected task) from the URL and
  * writes changes back with the native History API.
  *
- * Using `window.history` rather than the App Router keeps these
- * interaction-time updates from reloading Server Components: Next syncs
- * `useSearchParams`, the derived query key changes, and React Query serves the
- * cache or fetches. (Active-team changes are a route-identity change and are
- * handled by the workspace provider with App Router navigation instead.)
+ * Filter changes use `window.history` so React Query can serve or fetch the new
+ * key without reloading Server Components. Task selection uses the App Router
+ * because its detail belongs in the dehydrated generation; active-team changes
+ * are likewise handled as route identity in the workspace provider.
  */
 export function useWorkspaceUrl() {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   // searchParams is a stable string per navigation; key the parse off it.
   const searchString = searchParams.toString();
@@ -73,10 +73,16 @@ export function useWorkspaceUrl() {
   );
 
   // Opening/closing/switching a task pushes a history entry so Back closes the
-  // detail panel — the behavior users expect.
+  // detail panel — the behavior users expect. This one uses the App Router so
+  // a newly created task's detail also arrives through server dehydration;
+  // filter-only changes remain ordinary client Query transitions above.
   const selectTask = React.useCallback(
-    (taskId: string | null) => write({ selectedTaskId: taskId }, "push"),
-    [write],
+    (taskId: string | null) => {
+      const state = { ...stateRef.current, selectedTaskId: taskId };
+      const search = buildWorkspaceSearch(state);
+      router.push(search ? `${pathname}?${search}` : pathname);
+    },
+    [pathname, router],
   );
 
   return {

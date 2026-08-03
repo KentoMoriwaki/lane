@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readOrCreate, subscribeLane } from "../core";
+import { readOrCreate, subscribeLane } from "./test-utils";
 import { createLane } from "../index";
 import type { Lane, LaneKey, LaneLoader, LaneRead } from "../types";
 import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";

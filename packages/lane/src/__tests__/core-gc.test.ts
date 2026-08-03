@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_GC_TIME, readOrCreate } from "../core";
+import { DEFAULT_GC_TIME } from "../core";
+import { readOrCreate } from "./test-utils";
 import { createLane } from "../index";
 import type { Lane, LaneLoaderContext } from "../types";
 import { resetVitest, subscribe } from "./test-utils";

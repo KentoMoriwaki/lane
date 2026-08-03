@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readOrCreate } from "../core";
+import { readOrCreate } from "./test-utils";
 import { createLane } from "../index";
 import type { LaneLoaderContext } from "../types";
 import { resetVitest, subscribe } from "./test-utils";

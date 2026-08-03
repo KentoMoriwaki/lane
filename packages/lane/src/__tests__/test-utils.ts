@@ -1,8 +1,41 @@
 import { vi } from "vitest";
-import { onInvalidate, onRemove, subscribeLane } from "../core";
-import type { Lane, LaneEntryInfo, LaneKey } from "../types";
+import {
+  onInvalidate,
+  onRemove,
+  readOrCreate as readEntry,
+  subscribeLane as subscribeEntry,
+} from "../core";
+import { serializeKey } from "../keys";
+import type {
+  Lane,
+  LaneEntryInfo,
+  LaneKey,
+  LaneLoader,
+  LaneRead,
+} from "../types";
+import type { LaneReadOptions, LaneSubscriber } from "../core";
 
 type TestSubscription = (entry: LaneEntryInfo) => void;
+
+// Key-addressed conveniences over the id-addressed core API: tests speak keys,
+// the store speaks canonical ids, and the serialization happens here once.
+export function readOrCreate<T, C = T>(
+  lane: Lane,
+  key: LaneKey,
+  loader: LaneLoader<T, C>,
+  options?: LaneReadOptions,
+  gate?: Promise<void>,
+): Promise<LaneRead<T>> {
+  return readEntry(lane, serializeKey(key), key, loader, options, gate);
+}
+
+export function subscribeLane(
+  lane: Lane,
+  key: LaneKey,
+  subscriber: LaneSubscriber,
+): () => void {
+  return subscribeEntry(lane, serializeKey(key), key, subscriber);
+}
 
 export function deferred<T>() {
   let resolve!: (value: T) => void;

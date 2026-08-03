@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { latestNotifySource, readOrCreate } from "../core";
+import { latestNotifySource } from "../core";
+import { readOrCreate } from "./test-utils";
 import { hydrateMany } from "../hydrate";
 import { createLane, LaneOwnershipError } from "../index";
 import { serializeKey } from "../keys";

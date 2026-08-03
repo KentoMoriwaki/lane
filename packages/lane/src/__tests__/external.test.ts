@@ -18,7 +18,8 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
-import { readOrCreate, setExternalRefFactory } from "../core";
+import { setExternalRefFactory } from "../core";
+import { readOrCreate } from "./test-utils";
 import {
   createLane,
   external,

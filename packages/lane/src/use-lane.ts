@@ -97,7 +97,9 @@ export function useLane<T, C = T>(
   // source: a republish is a new source the same way a new key is.
   const hydrationSource = useContext(LaneHydrationSourceContext);
   const [promise, setPromise] = useState<Promise<LaneRead<T>> | undefined>(() =>
-    loader !== undefined ? readOrCreate(lane, key, loader, readOptions) : undefined,
+    loader !== undefined
+      ? readOrCreate(lane, keyId, key, loader, readOptions)
+      : undefined,
   );
   // Deliberately state and not a ref, because the switch branch below only fires
   // while this has *not* committed. A transition that suspends throws its render
@@ -107,9 +109,15 @@ export function useLane<T, C = T>(
   // would survive the discarded render and leave the branch already satisfied, so
   // the retry would commit the *previous* key's promise and wait for the
   // post-subscribe catch-up to repair it.
+  //
+  // `key` rides along as the key object of record for the current source: it is
+  // replaced only when the source switches, so its identity follows `keyId` —
+  // which is what lets the effects below depend on a key *object* without
+  // re-firing on a caller's structurally re-created array.
   const [prevSource, setPrevSource] = useState(() => ({
     enabled,
     hydration: hydrationSource,
+    key,
     keyId,
     lane,
   }));
@@ -135,16 +143,22 @@ export function useLane<T, C = T>(
   ) {
     const nextPromise =
       loader !== undefined
-        ? readOrCreate(lane, key, loader, readOptions)
+        ? readOrCreate(lane, keyId, key, loader, readOptions)
         : undefined;
     effectivePromise = nextPromise;
 
-    setPrevSource({ enabled, hydration: hydrationSource, keyId, lane });
+    setPrevSource({ enabled, hydration: hydrationSource, key, keyId, lane });
     setPromise(nextPromise);
   }
 
+  // The reactive form of the key, for effects: one object identity per source.
+  // Committed renders always see it in agreement with `keyId` — the switch
+  // above replaces both in the same render.
+  const sourceKey = prevSource.key;
+
   const onInvalidate = useEffectEvent((
     targetLane: Lane,
+    targetKeyId: string,
     targetKey: LaneKey,
     source: LaneInvalidationSource,
     gate: Promise<void> | undefined,
@@ -156,7 +170,9 @@ export function useLane<T, C = T>(
     }
 
     const updatePromise = () => {
-      setPromise(readOrCreate(targetLane, targetKey, loader, readOptions, gate));
+      setPromise(
+        readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions, gate),
+      );
     };
 
     if (source === "background") {
@@ -167,12 +183,22 @@ export function useLane<T, C = T>(
     startTransition(updatePromise);
   });
 
-  const onRemove = useEffectEvent((targetLane: Lane, targetKey: LaneKey) => {
+  const onRemove = useEffectEvent((
+    targetLane: Lane,
+    targetKeyId: string,
+    targetKey: LaneKey,
+  ) => {
     if (loader === undefined) {
       return;
     }
 
-    const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
+    const nextPromise = readOrCreate(
+      targetLane,
+      targetKeyId,
+      targetKey,
+      loader,
+      readOptions,
+    );
     setPromise(nextPromise);
   });
 
@@ -193,13 +219,20 @@ export function useLane<T, C = T>(
   // reconciliation and the hydration source switch above.
   const syncAfterSubscribe = useEffectEvent((
     targetLane: Lane,
+    targetKeyId: string,
     targetKey: LaneKey,
   ) => {
     if (loader === undefined) {
       return;
     }
 
-    const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
+    const nextPromise = readOrCreate(
+      targetLane,
+      targetKeyId,
+      targetKey,
+      loader,
+      readOptions,
+    );
 
     if (nextPromise === promise) {
       return;
@@ -213,9 +246,7 @@ export function useLane<T, C = T>(
     // reader was not subscribed in time to receive, so siblings of one key agree
     // on which pending flag the update sets. Nothing recorded means nothing
     // user-driven to join: stay in the background.
-    if (
-      latestNotifySource(targetLane, serializeKey(targetKey)) === "transition"
-    ) {
+    if (latestNotifySource(targetLane, targetKeyId) === "transition") {
       startTransition(apply);
       return;
     }
@@ -296,26 +327,40 @@ export function useLane<T, C = T>(
   // would on a remount.
   const reconcileOnReveal = useEffectEvent((
     targetLane: Lane,
+    targetKeyId: string,
     targetKey: LaneKey,
   ) => {
     if (loader === undefined) {
       return;
     }
 
-    const nextPromise = readOrCreate(targetLane, targetKey, loader, readOptions);
+    const nextPromise = readOrCreate(
+      targetLane,
+      targetKeyId,
+      targetKey,
+      loader,
+      readOptions,
+    );
 
     if (nextPromise !== promise) {
       setPromise(nextPromise);
     }
   });
 
+  // The effect depends on — and hands the event — the read's full identity:
+  // `lane`, the canonical `keyId`, and `sourceKey`, whose object identity
+  // follows it. The event exists only for what must *not* be reactive here
+  // (`promise`, `loader`, `readOptions`).
   useLayoutEffect(() => {
     if (!enabled) {
       return;
     }
 
-    reconcileOnReveal(lane, key);
-  }, [enabled, lane, keyId]);
+    // Deliberately a synchronous setState; see the commit-invariant comment
+    // above.
+    // oxlint-disable-next-line react/react-compiler
+    reconcileOnReveal(lane, keyId, sourceKey);
+  }, [enabled, lane, keyId, sourceKey]);
 
   // Deliberately a *passive* effect. A boundary that re-suspends hides the
   // subtree it had already committed and tears down its layout effects while
@@ -335,19 +380,22 @@ export function useLane<T, C = T>(
       return;
     }
 
-    const unsubscribe = subscribeLane(lane, key, {
+    // The subscription is plainly reactive — `sourceKey` is the key object
+    // whose identity is the source's — so it lives in the effect, not behind an
+    // event: anything new it comes to read is forced into the deps.
+    const unsubscribe = subscribeLane(lane, keyId, sourceKey, {
       onInvalidate: (entry, source, gate) => {
-        onInvalidate(lane, entry.key, source, gate);
+        onInvalidate(lane, entry.keyId, entry.key, source, gate);
       },
       onRemove: (entry) => {
-        onRemove(lane, entry.key);
+        onRemove(lane, entry.keyId, entry.key);
       },
     });
 
-    syncAfterSubscribe(lane, key);
+    syncAfterSubscribe(lane, keyId, sourceKey);
 
     return unsubscribe;
-  }, [enabled, lane, keyId]);
+  }, [enabled, lane, keyId, sourceKey]);
 
   useEffect(() => {
     // Focus / reconnect belong to the provider; the reader just registers its

@@ -178,7 +178,7 @@ export function useLanesAll<T, C = T>(
       added.add(keyId);
       active.set(
         keyId,
-        subscribeLane(lane, key, {
+        subscribeLane(lane, keyId, key, {
           onInvalidate: (_entry, _source, gate) => refresh(false, gate),
           onRemove: () => refresh(true),
         }),
@@ -297,6 +297,7 @@ function computeAggregate<T, C>(
     descriptors.map((d) =>
       readOrCreate(
         lane,
+        d.keyId,
         d.key,
         d.loader,
         toReadOptions(optionsFor(options, d), loaderMeta),

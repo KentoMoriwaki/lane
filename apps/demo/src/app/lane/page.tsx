@@ -2,15 +2,15 @@ import { LaneHydration } from "use-lane";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import {
-  fetchCurrentUser,
-  fetchInsights,
-  fetchLabels,
-  fetchMembers,
-  fetchProjects,
-  fetchTask,
-  fetchTasks,
-  fetchTeams,
-} from "@/app/lane/api/endpoints";
+  getCachedInsights,
+  getCachedLabels,
+  getCachedMembers,
+  getCachedProjects,
+  getCachedTask,
+  getCachedTasks,
+  getCachedTeams,
+} from "@/app/lane/api/cached-endpoints";
+import { fetchCurrentUser } from "@/app/lane/api/endpoints";
 import { workspaceSnapshots } from "@/app/lane/api/lane-reads";
 import {
   buildWorkspaceSearch,
@@ -38,11 +38,11 @@ type PageProps = {
  * Which makes this render the *only* thing that puts data on screen, in every
  * sense. It runs again for each navigation (a filter, a selection, a team
  * switch, all of which live in the URL) and again after each server action
- * (`api/actions.ts` mutates, then `revalidatePath` brings the payload back
+ * (`api/actions.ts` mutates, then `updateTag` brings the payload back
  * through here). One publication then updates the task, the lists it appears in,
- * the project counts and the insights together, because one server read produced
- * them all — the consistency the client-owned variant has to reconstruct with
- * per-key invalidation is a property of the payload here.
+ * the project counts and the insights together. Next's tagged server caches
+ * keep those reads fresh as coherence domains; Lane publishes the resulting
+ * payload without creating a second client-owned freshness policy.
  *
  * The discipline that buys it: the client never writes to these keys. Lane
  * enforces that — `set` / `update` / `invalidate` / `remove` throw on a key a
@@ -65,14 +65,15 @@ export default function Page({ searchParams }: PageProps) {
 
 /**
  * The publication is intentionally below the page-level Suspense boundary.
- * `searchParams` and the embedded API are request-time inputs, so this subtree
- * streams after navigation while the workspace-shaped App Shell is available
- * immediately. A later slice will decide which reads belong in `use cache`.
+ * `searchParams` and the current-user check are request-time inputs, so this
+ * subtree streams after navigation while the workspace-shaped App Shell is
+ * available immediately. The remaining reads are cached by coherence domain in
+ * `api/cached-endpoints.ts`, keyed by their serializable user/team/filter input.
  */
 async function WorkspacePublication({ searchParams }: PageProps) {
   const requested = parseWorkspaceState(getterFromRecord(await searchParams));
   const user = await fetchCurrentUser({ userId: "", teamId: "" });
-  const teams = await fetchTeams({ userId: user.id, teamId: "" });
+  const teams = await getCachedTeams(user.id);
 
   if (requested.teamId && !teams.some((team) => team.id === requested.teamId)) {
     const search = buildWorkspaceSearch({ ...requested, teamId: null });
@@ -89,13 +90,13 @@ async function WorkspacePublication({ searchParams }: PageProps) {
     members,
     selectedTask,
   ] = await Promise.all([
-    fetchTasks(ctx, requested.filters),
-    fetchInsights(ctx),
-    fetchProjects(ctx),
-    fetchLabels(ctx),
-    fetchMembers(ctx),
+    getCachedTasks(ctx, requested.filters),
+    getCachedInsights(ctx),
+    getCachedProjects(ctx),
+    getCachedLabels(ctx),
+    getCachedMembers(ctx),
     requested.selectedTaskId
-      ? fetchTask(ctx, requested.selectedTaskId).catch(() => null)
+      ? getCachedTask(ctx, requested.selectedTaskId).catch(() => null)
       : Promise.resolve(null),
   ]);
   const snapshots = workspaceSnapshots({

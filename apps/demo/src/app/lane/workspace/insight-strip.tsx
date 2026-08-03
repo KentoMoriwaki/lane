@@ -5,8 +5,9 @@ import { useInsights } from "@/app/lane/api/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { accent, type AccentToken } from "@/lib/accent";
 import { cn } from "@/lib/utils";
-import Link, { useLinkStatus } from "next/link";
+import { useLinkStatus } from "next/link";
 import * as React from "react";
+import { IntentPrefetchLink } from "./intent-prefetch-link";
 
 type InsightCard = {
   key: string;
@@ -71,14 +72,13 @@ function InsightCardButton({
   isActive: boolean;
 }) {
   return (
-    <Link
+    <IntentPrefetchLink
       href={href}
       scroll={false}
-      prefetch={false}
       className="group min-w-[124px] flex-1 rounded-lg"
     >
       <InsightCardContent card={card} isActive={isActive} />
-    </Link>
+    </IntentPrefetchLink>
   );
 }
 

@@ -7,6 +7,7 @@ const GROWTH_TEAM = "Growth Pod";
 const ACME_TASK = "Review billing webhook retry behavior";
 const ACME_TASK_ID = "task_webhook";
 const ACME_INVOICE_TASK = "Generate downloadable invoice PDFs";
+const ACME_COMPLETED_TASK = "Responsive navigation for small screens";
 const GROWTH_TASK = "Welcome email rewrite";
 
 const SEARCH_PLACEHOLDER = "Search tasks, labels…";
@@ -60,6 +61,45 @@ test("the server-owned route exposes a workspace shell instantly", async ({
 
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
   await expect(page.getByTestId("lane-workspace-shell")).toBeHidden();
+});
+
+test("intent prefetch resolves a filtered publication before the click", async ({
+  page,
+}) => {
+  await gotoWorkspace(page);
+
+  const completedLink = page
+    .locator("aside")
+    .getByRole("link", { name: /Completed/ });
+  const prefetchResponse = page.waitForResponse((response) => {
+    const headers = response.request().headers();
+    return (
+      response.url().includes("status=done") &&
+      headers["next-router-prefetch"] === "2"
+    );
+  });
+
+  await completedLink.hover();
+  await prefetchResponse;
+
+  const navigationRequests: string[] = [];
+  page.on("request", (request) => {
+    const headers = request.headers();
+    if (
+      request.url().includes("status=done") &&
+      headers.rsc === "1" &&
+      !headers["next-router-prefetch"]
+    ) {
+      navigationRequests.push(request.url());
+    }
+  });
+
+  await completedLink.click();
+  await expect(page).toHaveURL(/status=done/);
+  await expect(taskRow(page, ACME_COMPLETED_TASK)).toBeVisible();
+  await expect(taskRow(page, ACME_TASK)).toBeHidden();
+  await expect(page.getByTestId("lane-workspace-shell")).toBeHidden();
+  expect(navigationRequests).toEqual([]);
 });
 
 test("loads the seeded workspace", async ({ page }) => {

@@ -11,6 +11,9 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   experimental: {
+    // Keep viewport prefetching bounded to one App Shell per route, then let
+    // selected workspace links upgrade to a full runtime prefetch on intent.
+    dynamicOnHover: true,
     // `@next/playwright` needs the navigation lock compiled into production.
     // Keep it out of deployed builds; the E2E server opts in explicitly.
     exposeTestingApiInProductionBuild:

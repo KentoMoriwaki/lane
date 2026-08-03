@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, ListFilter, RotateCw, X } from "lucide-react";
-import Link, { useLinkStatus } from "next/link";
+import { useLinkStatus } from "next/link";
 import * as React from "react";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { useLabels, useProjects, useTasks } from "@/app/lane/api/hooks";
@@ -22,6 +22,7 @@ import {
   STATUS_ORDER,
 } from "@/lib/task-meta";
 import { cn } from "@/lib/utils";
+import { IntentPrefetchLink } from "./intent-prefetch-link";
 
 export function FilterBar({
   filters,
@@ -184,14 +185,13 @@ export function FilterBar({
           size="xs"
           className="text-muted-foreground"
         >
-          <Link
+          <IntentPrefetchLink
             href={resetHref}
-            prefetch={false}
             scroll={false}
             onClick={() => applyPatch(EMPTY_FILTERS)}
           >
             <ClearLabel />
-          </Link>
+          </IntentPrefetchLink>
         </Button>
       ) : null}
 
@@ -233,15 +233,14 @@ function ScopeLink({
   children: React.ReactNode;
 }) {
   return (
-    <Link
+    <IntentPrefetchLink
       href={href}
-      prefetch={false}
       scroll={false}
       className="rounded-md"
       onClick={onNavigate}
     >
       <ScopeLinkContent isActive={isActive}>{children}</ScopeLinkContent>
-    </Link>
+    </IntentPrefetchLink>
   );
 }
 
@@ -292,9 +291,9 @@ function FilterOptionLink({
       onSelect={(event) => event.preventDefault()}
       className="gap-2.5"
     >
-      <Link href={href} prefetch={false} scroll={false} onClick={onNavigate}>
+      <IntentPrefetchLink href={href} scroll={false} onClick={onNavigate}>
         <FilterOptionContent checked={checked} icon={icon} label={label} />
-      </Link>
+      </IntentPrefetchLink>
     </DropdownMenuItem>
   );
 }
@@ -375,16 +374,15 @@ function Chip({
         <span className={cn("size-2 rounded-full", dotClass)} />
       ) : null}
       {label}
-      <Link
+      <IntentPrefetchLink
         href={removeHref}
-        prefetch={false}
         scroll={false}
         onClick={onNavigate}
         className="rounded-full p-0.5 text-muted-foreground hover:text-rose"
         aria-label={`Remove ${label} filter`}
       >
         <ChipRemoveIcon />
-      </Link>
+      </IntentPrefetchLink>
     </span>
   );
 }

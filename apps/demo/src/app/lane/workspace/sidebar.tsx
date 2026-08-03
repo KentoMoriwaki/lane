@@ -11,7 +11,7 @@ import {
   UserCircle2,
   UserX,
 } from "lucide-react";
-import Link, { useLinkStatus } from "next/link";
+import { useLinkStatus } from "next/link";
 import * as React from "react";
 import type { TaskFilters } from "@/app/lane/api/endpoints";
 import {
@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { accent } from "@/lib/accent";
 import { cn } from "@/lib/utils";
+import { IntentPrefetchLink } from "./intent-prefetch-link";
 import { TeamSwitcher } from "./team-switcher";
 import { useWorkspace } from "./workspace-provider";
 
@@ -237,9 +238,8 @@ function NavItem({
   href: string;
 }) {
   return (
-    <Link
+    <IntentPrefetchLink
       href={href}
-      prefetch={false}
       scroll={false}
       className="block w-full rounded-md"
     >
@@ -251,7 +251,7 @@ function NavItem({
         tone={tone}
         isActive={isActive}
       />
-    </Link>
+    </IntentPrefetchLink>
   );
 }
 

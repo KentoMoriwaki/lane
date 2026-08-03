@@ -2,6 +2,7 @@ import { LaneHydration } from "use-lane";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import {
+  getCachedCurrentUser,
   getCachedInsights,
   getCachedLabels,
   getCachedMembers,
@@ -10,7 +11,6 @@ import {
   getCachedTasks,
   getCachedTeams,
 } from "@/app/lane/api/cached-endpoints";
-import { fetchCurrentUser } from "@/app/lane/api/endpoints";
 import { workspaceSnapshots } from "@/app/lane/api/lane-reads";
 import {
   buildWorkspaceSearch,
@@ -65,14 +65,15 @@ export default function Page({ searchParams }: PageProps) {
 
 /**
  * The publication is intentionally below the page-level Suspense boundary.
- * `searchParams` and the current-user check are request-time inputs, so this
- * subtree streams after navigation while the workspace-shaped App Shell is
- * available immediately. The remaining reads are cached by coherence domain in
- * `api/cached-endpoints.ts`, keyed by their serializable user/team/filter input.
+ * `searchParams` is URL data, so this subtree streams after a direct navigation
+ * while the workspace-shaped App Shell is available immediately. Every lookup
+ * behind it is cached by coherence domain in `api/cached-endpoints.ts`, which
+ * also lets an intent-prefetched Link resolve this whole publication before the
+ * click.
  */
 async function WorkspacePublication({ searchParams }: PageProps) {
   const requested = parseWorkspaceState(getterFromRecord(await searchParams));
-  const user = await fetchCurrentUser({ userId: "", teamId: "" });
+  const user = await getCachedCurrentUser("");
   const teams = await getCachedTeams(user.id);
 
   if (requested.teamId && !teams.some((team) => team.id === requested.teamId)) {

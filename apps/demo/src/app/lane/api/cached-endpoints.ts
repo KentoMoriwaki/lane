@@ -1,6 +1,7 @@
 import { cacheLife, cacheTag } from "next/cache";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
 import {
+  fetchCurrentUser,
   fetchInsights,
   fetchLabels,
   fetchMembers,
@@ -26,6 +27,14 @@ export const workspaceCacheTags = {
   reference: (teamId: string) => `lane:reference:${teamId}`,
   board: (teamId: string) => `lane:board:${teamId}`,
 };
+
+export async function getCachedCurrentUser(userId: string) {
+  "use cache";
+  cacheLife("max");
+  cacheTag(workspaceCacheTags.userMembership(userId || "default"));
+
+  return fetchCurrentUser({ userId, teamId: "" });
+}
 
 export async function getCachedTeams(userId: string) {
   "use cache";

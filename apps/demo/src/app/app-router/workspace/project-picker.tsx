@@ -1,0 +1,173 @@
+"use client";
+
+import type { Project } from "@/server/api";
+import { Check, ChevronsUpDown, FolderPlus, Hash } from "lucide-react";
+import * as React from "react";
+import { toast } from "sonner";
+import { createProjectAction } from "@/app/lane/api/actions";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { InlineSpinner } from "@/app/lane/workspace/feedback";
+import { accent } from "@/lib/accent";
+import { cn } from "@/lib/utils";
+import type { WorkspaceContext } from "./workspace";
+
+const PROJECT_COLORS = ["cobalt", "sage", "amber", "rose", "slate"];
+
+export function ProjectPicker({
+  ctx,
+  projects,
+  value,
+  changeAction,
+  pending,
+  disabled,
+}: {
+  ctx: WorkspaceContext;
+  projects: Project[];
+  value: string | null;
+  changeAction: (projectId: string | null) => void;
+  pending?: boolean;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
+  const [isCreating, startCreateTransition] = React.useTransition();
+  const selected = projects.find((project) => project.id === value) ?? null;
+  const trimmed = search.trim();
+  const exactMatch = projects.some(
+    (project) => project.name.toLowerCase() === trimmed.toLowerCase(),
+  );
+
+  function handleCreate() {
+    const color = PROJECT_COLORS[projects.length % PROJECT_COLORS.length];
+    startCreateTransition(async () => {
+      try {
+        const project = await createProjectAction(ctx, {
+          name: trimmed,
+          color,
+        });
+        changeAction(project.id);
+        setSearch("");
+        setOpen(false);
+        toast.success(`Project “${project.name}” created`);
+      } catch (error) {
+        toast.error("Couldn't create project", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
+    });
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        disabled={disabled}
+        className={cn(
+          "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-surface px-2.5 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:opacity-50",
+          pending && "opacity-70",
+        )}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {selected ? (
+            <>
+              <span
+                className={cn(
+                  "size-2 rounded-full",
+                  accent(selected.color).dot,
+                )}
+              />
+              <span className="truncate">{selected.name}</span>
+            </>
+          ) : (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <Hash className="size-4" />
+              No project
+            </span>
+          )}
+        </span>
+        {pending ? (
+          <InlineSpinner className="text-muted-foreground" />
+        ) : (
+          <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+        )}
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-0" align="start">
+        <Command>
+          <CommandInput
+            placeholder="Search or create project…"
+            value={search}
+            onValueChange={setSearch}
+          />
+          <CommandList>
+            <CommandEmpty>No matching project.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="__no_project__"
+                onSelect={() => {
+                  changeAction(null);
+                  setOpen(false);
+                }}
+              >
+                <Hash className="size-4 text-muted-foreground" />
+                <span className="flex-1">No project</span>
+                {value === null ? (
+                  <Check className="size-4 text-cobalt" />
+                ) : null}
+              </CommandItem>
+              {projects.map((project) => (
+                <CommandItem
+                  key={project.id}
+                  value={project.name}
+                  onSelect={() => {
+                    changeAction(project.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span
+                    className={cn(
+                      "size-2 rounded-full",
+                      accent(project.color).dot,
+                    )}
+                  />
+                  <span className="flex-1 truncate">{project.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {project.taskCount}
+                  </span>
+                  {value === project.id ? (
+                    <Check className="size-4 text-cobalt" />
+                  ) : null}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            {trimmed.length > 0 && !exactMatch ? (
+              <button
+                type="button"
+                onClick={handleCreate}
+                disabled={isCreating}
+                className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-sm text-cobalt transition-colors hover:bg-accent disabled:opacity-60"
+              >
+                {isCreating ? (
+                  <InlineSpinner />
+                ) : (
+                  <FolderPlus className="size-4" />
+                )}
+                Create “{trimmed}”
+              </button>
+            ) : null}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}

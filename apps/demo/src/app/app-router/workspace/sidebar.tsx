@@ -12,15 +12,14 @@ import {
   UserX,
 } from "lucide-react";
 import { useLinkStatus } from "next/link";
-import * as React from "react";
-import type { TaskFilters } from "@/app/lane/api/endpoints";
-import {
-  useCurrentUser,
-  useInsights,
-  useLabels,
-  useProjects,
-} from "@/app/lane/api/hooks";
-import { EMPTY_FILTERS } from "@/app/lane/api/endpoints";
+import type {
+  CurrentUser,
+  Insights,
+  Project,
+  TeamLabel,
+  TeamSummary,
+} from "@/server/api";
+import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -33,55 +32,46 @@ import { accent } from "@/lib/accent";
 import { cn } from "@/lib/utils";
 import { IntentPrefetchLink } from "./intent-prefetch-link";
 import { TeamSwitcher } from "./team-switcher";
-import { useWorkspace } from "./workspace-provider";
-
-function activeKey(f: TaskFilters): string {
-  if (f.projectId) return `project:${f.projectId}`;
-  if (f.labelId) return `label:${f.labelId}`;
-  if (f.due === "overdue") return "overdue";
-  if (f.due === "week") return "due-soon";
-  if (f.status.length === 1 && f.status[0] === "done") return "completed";
-  if (f.scope === "mine") return "mine";
-  if (f.scope === "unassigned") return "unassigned";
-  if (
-    f.scope === "all" &&
-    f.status.length === 0 &&
-    !f.due &&
-    !f.q &&
-    f.priority.length === 0
-  ) {
-    return "all";
-  }
-  return "";
-}
 
 export function Sidebar({
+  currentUser,
+  teams,
+  activeTeamId,
   filters,
+  insights,
+  projects,
+  labels,
   viewHref,
+  onSignOut,
 }: {
+  currentUser: CurrentUser;
+  teams: TeamSummary[];
+  activeTeamId: string;
   filters: TaskFilters;
+  insights: Insights;
+  projects: Project[];
+  labels: TeamLabel[];
   viewHref: (view: Partial<TaskFilters>) => string;
+  onSignOut: () => void;
 }) {
   const active = activeKey(filters);
-  const user = React.use(useCurrentUser().promise).data;
-  const insights = React.use(useInsights().promise).data;
-  const projects = React.use(useProjects().promise).data;
-  const labels = React.use(useLabels().promise).data;
-  const { signOut } = useWorkspace();
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
       <div className="flex h-14 items-center gap-2 px-4">
-        <span className="flex size-6 items-center justify-center rounded-md bg-sage text-sm font-bold text-primary-foreground">
-          L
+        <span className="flex size-6 items-center justify-center rounded-md bg-cobalt text-sm font-bold text-primary-foreground">
+          A
         </span>
         <span className="text-sm font-semibold tracking-tight text-foreground">
-          Lane
+          App Router
+        </span>
+        <span className="ml-auto rounded-full border px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
+          props
         </span>
       </div>
 
       <div className="px-3 pb-2">
-        <TeamSwitcher />
+        <TeamSwitcher teams={teams} activeTeamId={activeTeamId} />
       </div>
 
       <nav className="scrollbar-calm flex-1 space-y-5 overflow-y-auto px-2 py-2">
@@ -170,28 +160,31 @@ export function Sidebar({
 
       <div className="border-t border-border p-2">
         <DropdownMenu>
-            <DropdownMenuTrigger className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
-              <Avatar size="md" initials={user.initials} color={user.color} />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-sm font-medium text-foreground">
-                  {user.name}
-                </span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {user.email}
-                </span>
+          <DropdownMenuTrigger className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
+            <Avatar
+              size="md"
+              initials={currentUser.initials}
+              color={currentUser.color}
+            />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm font-medium text-foreground">
+                {currentUser.name}
               </span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[14rem]">
-              <DropdownMenuItem disabled>{user.email}</DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={signOut}
-                className="text-rose focus:bg-rose/10 focus:text-rose [&_svg]:text-rose"
-              >
-                <LogOut className="size-4" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
+              <span className="truncate text-xs text-muted-foreground">
+                {currentUser.email}
+              </span>
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-[14rem]">
+            <DropdownMenuItem disabled>{currentUser.email}</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={onSignOut}
+              className="text-rose focus:bg-rose/10 focus:text-rose [&_svg]:text-rose"
+            >
+              <LogOut className="size-4" /> Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
         </DropdownMenu>
       </div>
     </aside>
@@ -212,8 +205,7 @@ function NavSection({
   return (
     <div className="space-y-0.5">
       <p className="flex items-center gap-1.5 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <Tag className="size-3" />
-        {title}
+        <Tag className="size-3" /> {title}
       </p>
       {children}
     </div>
@@ -272,7 +264,6 @@ function NavItemContent({
 }) {
   const { pending } = useLinkStatus();
   const active = Boolean(isActive || pending);
-
   return (
     <span
       className={cn(
@@ -300,4 +291,24 @@ function NavItemContent({
       ) : null}
     </span>
   );
+}
+
+function activeKey(filters: TaskFilters): string {
+  if (filters.projectId) return `project:${filters.projectId}`;
+  if (filters.labelId) return `label:${filters.labelId}`;
+  if (filters.due === "overdue") return "overdue";
+  if (filters.due === "week") return "due-soon";
+  if (filters.status.length === 1 && filters.status[0] === "done")
+    return "completed";
+  if (filters.scope === "mine") return "mine";
+  if (filters.scope === "unassigned") return "unassigned";
+  if (
+    filters.scope === "all" &&
+    filters.status.length === 0 &&
+    !filters.due &&
+    !filters.q &&
+    filters.priority.length === 0
+  )
+    return "all";
+  return "";
 }

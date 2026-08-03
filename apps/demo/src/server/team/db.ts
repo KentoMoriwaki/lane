@@ -1115,7 +1115,14 @@ export async function getTask(
     [taskId, teamId],
   );
 
-  return row ? await toTask(row) : null;
+  // Keep the not-found branch explicit. This path is exercised when a Server
+  // Action deletes the task selected in the current URL: the same response can
+  // rerender that URL before the client clears its selection.
+  if (row === undefined) {
+    return null;
+  }
+
+  return toTask(row);
 }
 
 export async function createTask(

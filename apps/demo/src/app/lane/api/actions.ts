@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { updateTag } from "next/cache";
 import type {
   CreateLabelInput,
   CreateProjectInput,
@@ -21,6 +21,8 @@ import {
   removeTaskLabel,
   updateTask,
 } from "./endpoints";
+import { getTaskUpdateDerivedImpact } from "./cache-policy";
+import { workspaceCacheTags } from "./cached-endpoints";
 
 /**
  * **The only way this workspace changes.**
@@ -29,30 +31,44 @@ import {
  * `external`, which makes them server-owned: the client may not publish to them,
  * invalidate them, or edit them in place. So a mutation cannot end at the API
  * call — it has to come back as a *publication*, and the channel for that is the
- * one the framework already owns: mutate, `revalidatePath`, and the RSC payload
- * re-streams into `<LaneHydration>`, which republishes every seeded key at once.
+ * one the framework already owns: mutate, expire the affected cache domains,
+ * and the RSC payload re-streams into `<LaneHydration>`, which republishes every
+ * seeded key at once.
  *
  * That is the whole trade. The client-owned variant (`/lane-spa`) pays for
  * immediacy with a cache it must keep honest by hand — publish the task, patch
  * the lists it appears in, invalidate what derives from it, and decide for each
- * of those what "derives" means. Here there is nothing to decide: one round trip
- * republishes the task, every list that contains it, the project counts, and the
- * insights, consistently, because they were all computed from the same database
- * read. What it costs is that round trip, which is why the controls that need to
- * feel instant wrap `useOptimistic` around the read value instead.
+ * of those what "derives" means. Here one round trip republishes the task, every
+ * list that contains it, the project counts, and the insights consistently.
+ * Reads unaffected by the mutation stay warm; the next publication combines
+ * those cache hits with the freshly recomputed domains. What it costs is that
+ * round trip, which is why the controls that need to feel instant wrap
+ * `useOptimistic` around the read value instead.
  *
- * `revalidatePath` rather than `revalidateTag`: the seeded set *is* this route's
- * payload, so the route is the unit of republication.
+ * The tags are not a duplicate of Lane's keys. They name server coherence
+ * domains. The mutation input tells us which derived reads can change, while
+ * `updateTag` gives the mutating user read-your-own-writes behavior on the next
+ * publication.
  */
 
-const ROUTE = "/lane";
+function expire(...tags: string[]) {
+  for (const tag of tags) {
+    updateTag(tag);
+  }
+}
 
 export async function createTaskAction(
   ctx: WorkspaceCtx,
   input: CreateTaskInput,
 ): Promise<Task> {
   const task = await createTask(ctx, input);
-  revalidatePath(ROUTE);
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.insights(ctx.teamId),
+  );
+  if (input.projectId) {
+    updateTag(workspaceCacheTags.projects(ctx.teamId));
+  }
   return task;
 }
 
@@ -62,7 +78,17 @@ export async function updateTaskAction(
   input: UpdateTaskInput,
 ): Promise<Task> {
   const task = await updateTask(ctx, taskId, input);
-  revalidatePath(ROUTE);
+  const derived = getTaskUpdateDerivedImpact(input);
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+  );
+  if (derived.insights) {
+    updateTag(workspaceCacheTags.insights(ctx.teamId));
+  }
+  if (derived.projects) {
+    updateTag(workspaceCacheTags.projects(ctx.teamId));
+  }
   return task;
 }
 
@@ -71,7 +97,12 @@ export async function deleteTaskAction(
   taskId: string,
 ): Promise<void> {
   await deleteTask(ctx, taskId);
-  revalidatePath(ROUTE);
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+    workspaceCacheTags.projects(ctx.teamId),
+    workspaceCacheTags.insights(ctx.teamId),
+  );
 }
 
 export async function addTaskLabelAction(
@@ -80,7 +111,10 @@ export async function addTaskLabelAction(
   labelId: string,
 ): Promise<Task> {
   const task = await addTaskLabel(ctx, taskId, labelId);
-  revalidatePath(ROUTE);
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+  );
   return task;
 }
 
@@ -90,7 +124,10 @@ export async function removeTaskLabelAction(
   labelId: string,
 ): Promise<Task> {
   const task = await removeTaskLabel(ctx, taskId, labelId);
-  revalidatePath(ROUTE);
+  expire(
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.task(ctx.teamId, taskId),
+  );
   return task;
 }
 
@@ -99,7 +136,7 @@ export async function createLabelAction(
   input: CreateLabelInput,
 ): Promise<TeamLabel> {
   const label = await createLabel(ctx, input);
-  revalidatePath(ROUTE);
+  updateTag(workspaceCacheTags.labels(ctx.teamId));
   return label;
 }
 
@@ -108,7 +145,7 @@ export async function createProjectAction(
   input: CreateProjectInput,
 ): Promise<Project> {
   const project = await createProject(ctx, input);
-  revalidatePath(ROUTE);
+  updateTag(workspaceCacheTags.projects(ctx.teamId));
   return project;
 }
 
@@ -116,15 +153,23 @@ export async function createProjectAction(
  * The manual refresh, expressed as what it now is: a request to the owner to
  * publish again.
  *
- * It reads something first, and that is not ceremony. `revalidatePath` cannot
- * fail — it marks the route stale and returns — so an action that only
- * revalidated would report success even with the data source flat on its back,
- * and the user would be left watching an old screen with no indication that the
- * refresh they asked for never happened. Touching the source is what gives the
- * refresh an outcome to report; the chip in the task list shows the rejection,
- * and the publication on screen stays exactly as it was.
+ * It reads something first, and that is not ceremony. Cache invalidation itself
+ * cannot report whether the data source is reachable. Touching the source gives
+ * the refresh an outcome to report; the chip in the task list shows the
+ * rejection, and the publication on screen stays exactly as it was. An explicit
+ * refresh expires every domain because the user asked for the whole
+ * workspace, unlike a mutation with a known impact.
  */
 export async function refreshWorkspaceAction(ctx: WorkspaceCtx): Promise<void> {
   await fetchInsights(ctx);
-  revalidatePath(ROUTE);
+  expire(
+    workspaceCacheTags.currentUser(),
+    workspaceCacheTags.teams(ctx.userId),
+    workspaceCacheTags.members(ctx.teamId),
+    workspaceCacheTags.labels(ctx.teamId),
+    workspaceCacheTags.taskLists(ctx.teamId),
+    workspaceCacheTags.taskDetails(ctx.teamId),
+    workspaceCacheTags.projects(ctx.teamId),
+    workspaceCacheTags.insights(ctx.teamId),
+  );
 }

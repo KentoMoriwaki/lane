@@ -1,9 +1,9 @@
 "use client";
 
+import type { TeamSummary } from "@/server/api";
 import { Check, ChevronsUpDown, Users } from "lucide-react";
 import { usePathname } from "next/navigation";
 import * as React from "react";
-import { useTeams } from "@/app/lane/api/hooks";
 import { buildWorkspaceHref, EMPTY_VIEW_STATE } from "@/app/lane/api/url-state";
 import {
   DropdownMenu,
@@ -14,7 +14,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { IntentPrefetchLink } from "./intent-prefetch-link";
-import { useWorkspace } from "./workspace-provider";
 
 function teamInitials(name: string) {
   return name
@@ -25,23 +24,20 @@ function teamInitials(name: string) {
     .toUpperCase();
 }
 
-export function TeamSwitcher() {
+export function TeamSwitcher({
+  teams,
+  activeTeamId,
+}: {
+  teams: TeamSummary[];
+  activeTeamId: string;
+}) {
   const pathname = usePathname();
-  const { activeTeamId } = useWorkspace();
-  const teams = React.use(useTeams().promise).data;
-
   const active = teams.find((team) => team.id === activeTeamId) ?? teams[0];
   const hrefForTeam = React.useCallback(
     (teamId: string) =>
       buildWorkspaceHref(pathname, EMPTY_VIEW_STATE, { teamId }),
     [pathname],
   );
-  // No eviction step. Every workspace key is published by the route, so the
-  // navigation this link performs re-renders the route for the new team and the
-  // publication that follows overwrites all of them at once. The client-owned
-  // variants have to drop those keys by hand here — and have to do it *after*
-  // the new team is in scope, or the readers they wake up refetch under the team
-  // being left. Owning none of it removes the ordering problem with the code.
 
   return (
     <DropdownMenu>
@@ -63,15 +59,8 @@ export function TeamSwitcher() {
         <DropdownMenuLabel>Switch team</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {teams.map((team) => (
-          <DropdownMenuItem
-            key={team.id}
-            asChild
-            className="gap-2.5"
-          >
-            <IntentPrefetchLink
-              href={hrefForTeam(team.id)}
-              scroll={false}
-            >
+          <DropdownMenuItem key={team.id} asChild className="gap-2.5">
+            <IntentPrefetchLink href={hrefForTeam(team.id)} scroll={false}>
               <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-sage/15 text-[11px] font-bold text-sage">
                 {teamInitials(team.name)}
               </span>

@@ -1,5 +1,6 @@
 import type { AppType } from "@/server/api";
 import { hc } from "hono/client";
+import { COLOCATED_SERVER_REQUEST_HEADER } from "@/lib/team-api";
 
 /**
  * The single place the frontend touches the backend. Everything goes through
@@ -47,6 +48,9 @@ export function requestOptions(ctx: WorkspaceCtx) {
   // very first server request, before the current user is known.
   if (ctx.userId) headers["x-user-id"] = ctx.userId;
   if (ctx.teamId) headers["x-team-id"] = ctx.teamId;
+  if (typeof window === "undefined") {
+    headers[COLOCATED_SERVER_REQUEST_HEADER] = "1";
+  }
 
   return {
     headers,

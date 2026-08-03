@@ -5,6 +5,20 @@ import { fileURLToPath } from "node:url";
 const appDir = dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  // Keep these explicit while the 16.3 APIs are in preview. Cache Components
+  // extracts each route's reusable shell; Partial Prefetching lets visible
+  // links fetch that shared shell without resolving URL-dependent data.
+  cacheComponents: true,
+  partialPrefetching: true,
+  experimental: {
+    // Keep viewport prefetching bounded to one App Shell per route, then let
+    // selected workspace links upgrade to a full runtime prefetch on intent.
+    dynamicOnHover: true,
+    // `@next/playwright` needs the navigation lock compiled into production.
+    // Keep it out of deployed builds; the E2E server opts in explicitly.
+    exposeTestingApiInProductionBuild:
+      process.env.NEXT_INSTANT_TEST === "1",
+  },
   turbopack: {
     root: resolve(appDir, "../.."),
   },

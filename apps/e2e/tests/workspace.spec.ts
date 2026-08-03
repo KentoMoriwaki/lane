@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { instant } from "@next/playwright";
+import { getTaskUpdateDerivedImpact } from "../../demo/src/app/lane/api/cache-policy";
 
 // Seeded data from apps/demo/src/server/team/db.ts
 const ACME_TEAM = "Acme Product Team";
@@ -6,9 +8,37 @@ const GROWTH_TEAM = "Growth Pod";
 const ACME_TASK = "Review billing webhook retry behavior";
 const ACME_TASK_ID = "task_webhook";
 const ACME_INVOICE_TASK = "Generate downloadable invoice PDFs";
+const ACME_COMPLETED_TASK = "Responsive navigation for small screens";
 const GROWTH_TASK = "Welcome email rewrite";
 
 const SEARCH_PLACEHOLDER = "Search tasks, labels…";
+
+test("task update invalidation follows derived-data dependencies", () => {
+  expect(getTaskUpdateDerivedImpact({ title: "Renamed" })).toEqual({
+    insights: false,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ priority: "urgent" })).toEqual({
+    insights: false,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ status: "done" })).toEqual({
+    insights: true,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ assigneeId: null })).toEqual({
+    insights: true,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ dueDate: null })).toEqual({
+    insights: true,
+    projects: false,
+  });
+  expect(getTaskUpdateDerivedImpact({ projectId: null })).toEqual({
+    insights: false,
+    projects: true,
+  });
+});
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -45,6 +75,70 @@ async function createTask(page: Page, title: string) {
   // The created task opens in the detail panel.
   await expect(detailTitle(page)).toHaveValue(title);
 }
+
+test("a cold server-owned publication skips browser transport latency", async ({
+  page,
+}) => {
+  const startedAt = Date.now();
+  await gotoWorkspace(page);
+
+  expect(Date.now() - startedAt).toBeLessThan(3_000);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+});
+
+test("the server-owned route exposes a workspace shell instantly", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await instant(page, async () => {
+    await page.locator('a[href="/lane"]').click();
+    await expect(page.getByTestId("lane-workspace-shell")).toBeVisible();
+    await expect(page.getByLabel("Loading workspace")).toBeVisible();
+  });
+
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await expect(page.getByTestId("lane-workspace-shell")).toBeHidden();
+});
+
+test("intent prefetch resolves a filtered publication before the click", async ({
+  page,
+}) => {
+  await gotoWorkspace(page);
+
+  const completedLink = page
+    .locator("aside")
+    .getByRole("link", { name: /Completed/ });
+  const prefetchResponse = page.waitForResponse((response) => {
+    const headers = response.request().headers();
+    return (
+      response.url().includes("status=done") &&
+      headers["next-router-prefetch"] === "2"
+    );
+  });
+
+  await completedLink.hover();
+  await prefetchResponse;
+
+  const navigationRequests: string[] = [];
+  page.on("request", (request) => {
+    const headers = request.headers();
+    if (
+      request.url().includes("status=done") &&
+      headers.rsc === "1" &&
+      !headers["next-router-prefetch"]
+    ) {
+      navigationRequests.push(request.url());
+    }
+  });
+
+  await completedLink.click();
+  await expect(page).toHaveURL(/status=done/);
+  await expect(taskRow(page, ACME_COMPLETED_TASK)).toBeVisible();
+  await expect(taskRow(page, ACME_TASK)).toBeHidden();
+  await expect(page.getByTestId("lane-workspace-shell")).toBeHidden();
+  expect(navigationRequests).toEqual([]);
+});
 
 test("loads the seeded workspace", async ({ page }) => {
   await gotoWorkspace(page);
@@ -126,6 +220,25 @@ test("creating a task shows it in the list and opens the detail", async ({
 
   // The task list converges with the new row.
   await expect(taskRow(page, title)).toBeVisible();
+});
+
+test("a title-only update republishes the task and its list row", async ({
+  page,
+}) => {
+  await gotoWorkspace(page);
+
+  const stamp = Date.now();
+  const original = `E2E rename source ${stamp}`;
+  const renamed = `E2E renamed destination ${stamp}`;
+  await createTask(page, original);
+
+  await detailTitle(page).fill(renamed);
+  await detailTitle(page).press("Enter");
+
+  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(detailTitle(page)).toHaveValue(renamed);
+  await expect(taskRow(page, renamed)).toBeVisible();
+  await expect(taskRow(page, original)).toBeHidden();
 });
 
 test("team switching swaps workspace data without leaking", async ({

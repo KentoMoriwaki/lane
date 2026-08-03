@@ -20,6 +20,7 @@ import {
   removeTaskLabel,
   updateTask,
 } from "./db";
+import { delay, readMilliseconds } from "./latency";
 import {
   addTaskLabelInputSchema,
   createLabelInputSchema,
@@ -114,13 +115,10 @@ const validationHook = (
   }
 };
 
-const DERIVED_DATA_DELAY_MS = 200;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
+const DERIVED_DATA_DELAY_MS = readMilliseconds(
+  process.env.TEAM_API_DERIVED_DELAY_MS,
+  30,
+);
 
 export const teamRoutes = team
   .get("/me", async (context) => {

@@ -1,12 +1,10 @@
 "use client";
 
+import type { Insights } from "@/server/api";
+import { useLinkStatus } from "next/link";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
-import { useInsights } from "@/app/lane/api/hooks";
-import { Skeleton } from "@/components/ui/skeleton";
 import { accent, type AccentToken } from "@/lib/accent";
 import { cn } from "@/lib/utils";
-import { useLinkStatus } from "next/link";
-import * as React from "react";
 import { IntentPrefetchLink } from "./intent-prefetch-link";
 
 type InsightCard = {
@@ -18,67 +16,83 @@ type InsightCard = {
 };
 
 export function InsightStrip({
+  insights,
   filters,
   viewHref,
 }: {
+  insights: Insights;
   filters: TaskFilters;
   viewHref: (view: Partial<TaskFilters>) => string;
 }) {
-  const { promise } = useInsights();
-  const { data } = React.use(promise);
-
   const cards: InsightCard[] = [
-    { key: "in_progress", label: "In progress", value: data.inProgress, tone: "amber", view: { status: ["in_progress"] } },
-    { key: "in_review", label: "In review", value: data.inReview, tone: "cobalt", view: { status: ["in_review"] } },
-    { key: "overdue", label: "Overdue", value: data.overdue, tone: "rose", view: { due: "overdue" } },
-    { key: "due_soon", label: "Due soon", value: data.dueSoon, tone: "amber", view: { due: "week" } },
-    { key: "unassigned", label: "Unassigned", value: data.unassigned, tone: "slate", view: { scope: "unassigned" } },
-    { key: "completed", label: "Completed", value: data.completed, tone: "sage", view: { status: ["done"] } },
+    {
+      key: "in_progress",
+      label: "In progress",
+      value: insights.inProgress,
+      tone: "amber",
+      view: { status: ["in_progress"] },
+    },
+    {
+      key: "in_review",
+      label: "In review",
+      value: insights.inReview,
+      tone: "cobalt",
+      view: { status: ["in_review"] },
+    },
+    {
+      key: "overdue",
+      label: "Overdue",
+      value: insights.overdue,
+      tone: "rose",
+      view: { due: "overdue" },
+    },
+    {
+      key: "due_soon",
+      label: "Due soon",
+      value: insights.dueSoon,
+      tone: "amber",
+      view: { due: "week" },
+    },
+    {
+      key: "unassigned",
+      label: "Unassigned",
+      value: insights.unassigned,
+      tone: "slate",
+      view: { scope: "unassigned" },
+    },
+    {
+      key: "completed",
+      label: "Completed",
+      value: insights.completed,
+      tone: "sage",
+      view: { status: ["done"] },
+    },
   ];
 
   return (
     <div className="border-b border-border">
-      {/* No chip here. These numbers are computed by the same server read that
-          produced the task list, in the same publication, so there is no state
-          in which they are separately stale — the one notice the workspace can
-          give sits with the list. */}
       <div className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3">
         {cards.map((card) => (
-          <InsightCardButton
+          <IntentPrefetchLink
             key={card.key}
-            card={card}
             href={viewHref(card.view)}
-            isActive={isInsightViewActive(filters, card.view)}
-          />
+            scroll={false}
+            className="group min-w-[124px] flex-1 rounded-lg"
+          >
+            <InsightCardContent
+              card={card}
+              isActive={isInsightViewActive(filters, card.view)}
+            />
+          </IntentPrefetchLink>
         ))}
         <OpenTrend
-          open={data.open}
-          inProgress={data.inProgress}
-          inReview={data.inReview}
-          completed={data.completed}
+          open={insights.open}
+          inProgress={insights.inProgress}
+          inReview={insights.inReview}
+          completed={insights.completed}
         />
       </div>
     </div>
-  );
-}
-
-function InsightCardButton({
-  card,
-  href,
-  isActive,
-}: {
-  card: InsightCard;
-  href: string;
-  isActive: boolean;
-}) {
-  return (
-    <IntentPrefetchLink
-      href={href}
-      scroll={false}
-      className="group min-w-[124px] flex-1 rounded-lg"
-    >
-      <InsightCardContent card={card} isActive={isActive} />
-    </IntentPrefetchLink>
   );
 }
 
@@ -90,13 +104,11 @@ function InsightCardContent({
   isActive: boolean;
 }) {
   const { pending } = useLinkStatus();
-  const active = isActive || pending;
-
   return (
     <span
       className={cn(
         "flex flex-col gap-1 rounded-lg border px-3 py-2 text-left transition",
-        active
+        isActive || pending
           ? "border-foreground/20 bg-accent/65"
           : "border-border bg-surface group-hover:border-foreground/20 group-hover:bg-accent/50",
       )}
@@ -112,10 +124,7 @@ function InsightCardContent({
   );
 }
 
-function isInsightViewActive(
-  filters: TaskFilters,
-  view: Partial<TaskFilters>,
-): boolean {
+function isInsightViewActive(filters: TaskFilters, view: Partial<TaskFilters>) {
   const target = { ...EMPTY_FILTERS, ...view };
   return (
     filters.scope === target.scope &&
@@ -123,25 +132,8 @@ function isInsightViewActive(
     filters.projectId === target.projectId &&
     filters.labelId === target.labelId &&
     filters.due === target.due &&
-    sameValues(filters.status, target.status) &&
-    sameValues(filters.priority, target.priority)
-  );
-}
-
-function sameValues<T>(left: T[], right: T[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every((value, index) => value === right[index])
-  );
-}
-
-export function InsightStripSkeleton() {
-  return (
-    <div className="flex gap-2 overflow-hidden border-b border-border px-4 py-3">
-      {Array.from({ length: 6 }).map((_, index) => (
-        <Skeleton key={index} className="h-[58px] w-32 shrink-0 rounded-lg" />
-      ))}
-    </div>
+    filters.status.join(",") === target.status.join(",") &&
+    filters.priority.join(",") === target.priority.join(",")
   );
 }
 
@@ -157,13 +149,15 @@ function OpenTrend({
   completed: number;
 }) {
   const bars = [
-    { tone: "slate" as const, value: Math.max(open - inProgress - inReview, 0) },
+    {
+      tone: "slate" as const,
+      value: Math.max(open - inProgress - inReview, 0),
+    },
     { tone: "amber" as const, value: inProgress },
     { tone: "cobalt" as const, value: inReview },
     { tone: "sage" as const, value: completed },
   ];
   const max = Math.max(1, ...bars.map((bar) => bar.value));
-
   return (
     <div className="hidden min-w-[150px] flex-col justify-between rounded-lg border border-border bg-surface px-3 py-2 xl:flex">
       <span className="text-xs font-medium text-muted-foreground">

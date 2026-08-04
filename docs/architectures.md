@@ -214,16 +214,22 @@ publishes it into a store the client reads but does not write.
 ## Examples
 
 The repository's [`apps/demo`](https://github.com/KentoMoriwaki/lane/tree/main/apps/demo)
-is a runnable Next.js app that builds the same team-task workspace several ways
-against one backend, switchable by route. The two that answer this page's
-question differently are worth reading side by side:
+is a runnable Next.js app that builds the same team-task workspace seven ways
+against one backend. Its landing page groups the routes by the owner whose
+freshness policy they follow:
 
-- **`/lane` — server-owned.** Every workspace key is published by the RSC route
-  and read with `external`; mutations are Server Actions that `revalidatePath`,
-  and `useOptimistic` covers the round trip.
-- **`/lane-spa` — client-owned.** No seeding; the client fetches every key and
-  keeps its own cache honest after a mutation.
-- **`/react-query`, `/relay`, `/jotai`** — the same workspace in other libraries.
+- **App Router-owned:** `/app-router` is the plain-props baseline; `/lane` uses
+  the exact same Cache Component reads, tags, Server Actions, and latency, then
+  publishes that generation for `external` readers. Mutations call `updateTag`,
+  and optimistic UI covers the server round trip.
+- **Browser-owned:** `/lane-spa` and `/react-query` ship no workspace data in
+  SSR. Browser loaders fetch every key, mutation results patch the entries they
+  can determine, and targeted invalidation converges derived data.
+- **Integration lab:** `/react-query-rsc` instead dehydrates each App Router
+  generation into one browser `QueryClient`, making the extra ownership bridge
+  explicit without presenting it as the canonical React Query baseline.
+- **Other client stores:** `/relay` and `/jotai` keep the same workspace as
+  normalized-store and async-atom reference points.
 - **`/lane-router`** — a React Router Data-mode island where the *client* router's
   loaders are the publisher, which is the same server-owned shape with no server
   in it.

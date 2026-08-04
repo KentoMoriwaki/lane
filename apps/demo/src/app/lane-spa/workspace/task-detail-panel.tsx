@@ -342,7 +342,7 @@ function TaskDetail({
   const handleDelete = () => {
     startSaving(async () => {
       try {
-        await remove(task.id);
+        await remove(task);
         React.startTransition(() => {
           toast.success("Task deleted");
           onClose();

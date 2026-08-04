@@ -43,6 +43,7 @@ import {
   teamsQueryOptions,
 } from "./query-options";
 import {
+  insertTaskIntoMatchingList,
   replaceTaskInList,
   type TaskCacheStrategy,
   taskCacheStrategies,
@@ -260,31 +261,49 @@ function invalidateDerivedTaskViews(
   refresh: { insights: boolean; projects: boolean },
 ) {
   if (refresh.insights) {
-    queryClient.invalidateQueries({ queryKey: queryKeys.insights });
+    queryClient.invalidateQueries(
+      { queryKey: queryKeys.insights },
+      { cancelRefetch: false },
+    );
   }
 
   if (refresh.projects) {
-    queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    queryClient.invalidateQueries(
+      { queryKey: queryKeys.projects },
+      { cancelRefetch: false },
+    );
   }
 }
 
-// Dependency reads cache a copy of the edge's task (including its status), so a
-// status change anywhere must refresh them to keep the verdict honest.
-function invalidateDependencyViews(queryClient: QueryClient) {
-  queryClient.invalidateQueries({ queryKey: ["task-blocked-by"] });
-  queryClient.invalidateQueries({ queryKey: ["task-blocking"] });
+function invalidateDependencyViews(queryClient: QueryClient, task: Task) {
+  for (const ownerTaskId of task.blocks) {
+    queryClient.invalidateQueries(
+      { queryKey: queryKeys.taskBlockedBy(ownerTaskId) },
+      { cancelRefetch: false },
+    );
+  }
+
+  for (const ownerTaskId of task.blockedBy) {
+    queryClient.invalidateQueries(
+      { queryKey: queryKeys.taskBlocking(ownerTaskId) },
+      { cancelRefetch: false },
+    );
+  }
 }
 
 function invalidateTaskViews(
   queryClient: QueryClient,
   strategy: TaskCacheStrategy,
+  task: Task,
 ) {
   invalidateTaskLists(queryClient, strategy);
   invalidateDerivedTaskViews(queryClient, {
     insights: strategy.refreshInsights,
     projects: strategy.refreshProjects,
   });
-  invalidateDependencyViews(queryClient);
+  if (strategy.refreshDependencies) {
+    invalidateDependencyViews(queryClient, task);
+  }
 }
 
 function removeTaskFromTaskLists(queryClient: QueryClient, taskId: string) {
@@ -299,6 +318,25 @@ function invalidateWorkspaceTaskViews(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: queryKeys.projects });
 }
 
+function publishCreatedTask(
+  queryClient: QueryClient,
+  task: Task,
+  currentUserId: string,
+) {
+  queryClient.setQueryData(queryKeys.task(task.id), task);
+  for (const [key, tasks] of queryClient.getQueriesData<Task[]>({
+    queryKey: ["tasks"],
+  })) {
+    const filters = taskFiltersFromQueryKey(key);
+    if (tasks && filters) {
+      queryClient.setQueryData(
+        key,
+        insertTaskIntoMatchingList(tasks, task, filters, currentUserId),
+      );
+    }
+  }
+}
+
 /* ------------------------------ Mutations ------------------------------ */
 
 export function useCreateTask() {
@@ -308,8 +346,7 @@ export function useCreateTask() {
   return useMutation({
     mutationFn: (input: CreateTaskInput) => createTask(ctx, input),
     onSuccess: (task) => {
-      queryClient.setQueryData(queryKeys.task(task.id), task);
-      invalidateAllTaskLists(queryClient);
+      publishCreatedTask(queryClient, task, ctx.userId);
       invalidateDerivedTaskViews(queryClient, {
         insights: true,
         projects: Boolean(task.project),
@@ -337,9 +374,10 @@ export function useUpdateTask(taskId: string) {
     },
     onError: (_error, _variables, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSuccess: (task, { strategy }) => publishTask(queryClient, task, strategy),
-    onSettled: (_task, _error, { strategy }) =>
-      invalidateTaskViews(queryClient, strategy),
+    onSuccess: (task, { strategy }) => {
+      publishTask(queryClient, task, strategy);
+      invalidateTaskViews(queryClient, strategy, task);
+    },
   });
 }
 
@@ -348,23 +386,24 @@ export function useDeleteTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (taskId: string) => deleteTask(ctx, taskId),
-    onMutate: async (taskId) => {
+    mutationFn: (task: Task) => deleteTask(ctx, task.id),
+    onMutate: async (task) => {
+      const taskId = task.id;
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       await queryClient.cancelQueries({ queryKey: queryKeys.task(taskId) });
       const snapshot = snapshotTask(queryClient, taskId);
       removeTaskFromTaskLists(queryClient, taskId);
       return snapshot;
     },
-    onError: (_error, taskId, snapshot) =>
-      restoreTask(queryClient, taskId, snapshot),
-    onSuccess: (_data, taskId) => {
-      queryClient.removeQueries({ queryKey: queryKeys.task(taskId) });
+    onError: (_error, task, snapshot) =>
+      restoreTask(queryClient, task.id, snapshot),
+    onSuccess: (_data, task) => {
+      queryClient.removeQueries({ queryKey: queryKeys.task(task.id) });
       invalidateDerivedTaskViews(queryClient, {
         insights: true,
         projects: true,
       });
-      invalidateDependencyViews(queryClient);
+      invalidateDependencyViews(queryClient, task);
     },
   });
 }
@@ -394,9 +433,10 @@ export function useAddTaskLabel(taskId: string) {
     },
     onError: (_error, _label, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSuccess: (task) =>
-      publishTask(queryClient, task, taskCacheStrategies.labels),
-    onSettled: () => invalidateTaskViews(queryClient, taskCacheStrategies.labels),
+    onSuccess: (task) => {
+      publishTask(queryClient, task, taskCacheStrategies.labels);
+      invalidateTaskViews(queryClient, taskCacheStrategies.labels, task);
+    },
   });
 }
 
@@ -423,9 +463,10 @@ export function useRemoveTaskLabel(taskId: string) {
     },
     onError: (_error, _labelId, snapshot) =>
       restoreTask(queryClient, taskId, snapshot),
-    onSuccess: (task) =>
-      publishTask(queryClient, task, taskCacheStrategies.labels),
-    onSettled: () => invalidateTaskViews(queryClient, taskCacheStrategies.labels),
+    onSuccess: (task) => {
+      publishTask(queryClient, task, taskCacheStrategies.labels);
+      invalidateTaskViews(queryClient, taskCacheStrategies.labels, task);
+    },
   });
 }
 

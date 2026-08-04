@@ -61,10 +61,24 @@ for (const variant of SPA_VARIANTS) {
 
     await expect(taskRow(page, ACME_TASK)).toBeVisible();
     await expect(page.getByTestId(variant.shellTestId)).toBeHidden();
-    expect(browserApiGets).toContain("/api/me");
-    expect(browserApiGets.some((url) => url.startsWith("/api/tasks"))).toBe(
-      true,
+    await page.waitForLoadState("networkidle");
+
+    const requestCounts = browserApiGets.reduce<Record<string, number>>(
+      (counts, url) => {
+        const path = url.split("?")[0] ?? url;
+        counts[path] = (counts[path] ?? 0) + 1;
+        return counts;
+      },
+      {},
     );
+    expect(requestCounts).toEqual({
+      "/api/insights": 1,
+      "/api/labels": 1,
+      "/api/me": 1,
+      "/api/projects": 1,
+      "/api/tasks": 1,
+      "/api/teams": 1,
+    });
   });
 
   test(`${variant.path} refreshes the open detail editor when the tab regains focus`, async ({
@@ -107,6 +121,49 @@ for (const variant of SPA_VARIANTS) {
 
     await expect(taskRow(page, updatedTitle)).toBeVisible();
     await expect(detailTitle(page)).toHaveValue(updatedTitle);
+  });
+
+  test(`${variant.path} inserts a created task into matching cached lists without refetching them`, async ({
+    page,
+  }) => {
+    const marker = `${variant.path.slice(1)}-created-${Date.now()}`;
+    await page.goto(variant.path);
+    await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
+
+    const search = page.getByPlaceholder("Search tasks, labels…");
+    await search.fill(marker);
+    const filteredTasks = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "GET" &&
+        url.pathname === "/api/tasks" &&
+        url.searchParams.get("q") === marker
+      );
+    });
+    await search.press("Enter");
+    await filteredTasks;
+    await page.waitForLoadState("networkidle");
+
+    const browserApiGets: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (request.method() === "GET" && url.pathname.startsWith("/api/")) {
+        browserApiGets.push(url.pathname + url.search);
+      }
+    });
+
+    await page.getByRole("button", { name: "New task" }).click();
+    await page.getByPlaceholder("Task title").fill(marker);
+    await page.getByRole("button", { name: "Create task" }).click();
+
+    await expect(taskRow(page, marker)).toBeVisible();
+    await expect(detailTitle(page)).toHaveValue(marker);
+    await expect
+      .poll(() => browserApiGets.includes("/api/insights"))
+      .toBe(true);
+    expect(browserApiGets.some((url) => url.startsWith("/api/tasks"))).toBe(
+      false,
+    );
   });
 }
 

@@ -156,7 +156,7 @@ function TaskDetail({
     });
 
   const handleDelete = () => {
-    remove.mutate(task.id, {
+    remove.mutate(task, {
       onSuccess: () => {
         toast.success("Task deleted");
         onClose();

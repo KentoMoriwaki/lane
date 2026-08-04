@@ -149,9 +149,9 @@ export const taskLanes = {
   segment from cache (mirroring bfcache) rather than refetching, so there is no
   suspend and no flash. Lane only needs matching keys; a republication on
   navigation overwrites and mounted readers converge.
-- **Mutations** are Server Actions that mutate the source and `revalidatePath` /
-  `revalidateTag`; the action's response carries the re-rendered payload, which
-  republishes every seeded key at once. Do not reach for `lane.set` or
+- **Mutations** are Server Actions that mutate the source and `updateTag` for the
+  affected Cache Component coherence domains; the action's response carries the
+  re-rendered payload, which republishes every seeded key at once. Do not reach for `lane.set` or
   `lane.invalidate` afterwards — on a published key they
   [throw](./api-reference.md#laneownershiperror). Cover the round trip with
   `useOptimistic` over the read value.

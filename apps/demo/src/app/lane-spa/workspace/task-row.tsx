@@ -62,7 +62,7 @@ export function TaskRow({
     startDeleteTransition(async () => {
       addOptimisticTask({ type: "delete" });
       try {
-        await remove(task.id);
+        await remove(task);
         setDeleteConfirmed(true);
         toast.success("Task deleted");
         deleteAction?.(task.id);

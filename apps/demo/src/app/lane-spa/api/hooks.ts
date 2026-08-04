@@ -23,6 +23,7 @@ import {
 import type { TaskFilters } from "./endpoints";
 import { TEAM_SCOPED_KEYS, workspaceReads } from "./lane-reads";
 import {
+  insertTaskIntoMatchingList,
   replaceTaskInList,
   type TaskCacheStrategy,
   taskCacheStrategies,
@@ -97,7 +98,12 @@ export function useCreateTask() {
     // The key carries what its entry holds, so the publication is checked
     // against `Task` — and needs nothing but the key.
     lane.set(workspaceReads.task(task.id).key, task);
-    lane.invalidateAll(["tasks"]);
+    lane.updateAll<Task[]>(["tasks"], (tasks, entry) => {
+      const filters = taskFiltersFromEntry(entry);
+      return filters
+        ? insertTaskIntoMatchingList(tasks, task, filters, ctx.userId)
+        : tasks;
+    });
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
       projects: Boolean(task.project),
@@ -124,15 +130,15 @@ export function useDeleteTask() {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
-  return React.useCallback(async (taskId: string): Promise<void> => {
-    await deleteTask(ctx, taskId);
-    lane.remove(workspaceReads.task(taskId).key);
-    removeTaskFromTaskLists(lane, taskId);
+  return React.useCallback(async (task: Task): Promise<void> => {
+    await deleteTask(ctx, task.id);
+    lane.remove(workspaceReads.task(task.id).key);
+    removeTaskFromTaskLists(lane, task.id);
     scheduleDerivedWorkspaceRefresh(lane, {
       insights: true,
       projects: true,
     });
-    invalidateDependencyEntries(lane);
+    invalidateDependencyEntries(lane, task);
   }, [ctx, lane]);
 }
 
@@ -224,14 +230,28 @@ function publishTask(
     insights: strategy.refreshInsights,
     projects: strategy.refreshProjects,
   });
-  invalidateDependencyEntries(lane);
+  if (strategy.refreshDependencies) {
+    invalidateDependencyEntries(lane, task);
+  }
 }
 
-// Dependency reads cache a copy of the edge's task (with its status), so any
-// task change must refresh them to keep the verdict honest.
-function invalidateDependencyEntries(lane: Lane) {
-  lane.invalidateAll(["task-blocked-by"]);
-  lane.invalidateAll(["task-blocking"]);
+// Dependency reads cache copies of related tasks. The returned task tells us
+// exactly which owners contain that copy, so unrelated dependency panels stay
+// settled.
+function invalidateDependencyEntries(lane: Lane, task: Task) {
+  for (const ownerTaskId of task.blocks) {
+    lane.invalidate(
+      workspaceReads.blockedBy(ownerTaskId, [task.id]).key,
+      { onlyIf: "settled" },
+    );
+  }
+
+  for (const ownerTaskId of task.blockedBy) {
+    lane.invalidate(
+      workspaceReads.blocking(ownerTaskId, [task.id]).key,
+      { onlyIf: "settled" },
+    );
+  }
 }
 
 function removeTaskFromTaskLists(
@@ -251,15 +271,14 @@ function scheduleDerivedWorkspaceRefresh(
     return;
   }
 
-  React.startTransition(() => {
-    if (refresh.insights) {
-      lane.invalidate(workspaceReads.insights().key);
-    }
+  const options = { background: true, onlyIf: "settled" } as const;
+  if (refresh.insights) {
+    lane.invalidate(workspaceReads.insights().key, options);
+  }
 
-    if (refresh.projects) {
-      lane.invalidate(workspaceReads.projects().key);
-    }
-  });
+  if (refresh.projects) {
+    lane.invalidate(workspaceReads.projects().key, options);
+  }
 }
 
 export function clearTeamScopedLaneEntries(

@@ -192,6 +192,9 @@ export function createLane(options: LaneOptions = {}): Lane {
         whenStale: "revalidate",
       });
     },
+    startInvalidationTransition(scope) {
+      announceScope(state, scope);
+    },
     invalidate(key, options = {}) {
       const entry = state.entries.get(serializeKey(key));
 
@@ -763,8 +766,8 @@ function notifyInvalidate(
 }
 
 /**
- * Tell a scope's readers that an invalidation is coming, without touching a
- * cache. The whole point is that nothing is stored: a notification that
+ * Open the invalidation transition of every reader in a scope, without touching
+ * a cache. The whole point is that nothing is stored: a notification that
  * *replaced* the cache would make readers re-read now, against a source the
  * caller has not changed yet, which is the pre-mutation data. So this schedules
  * no work and answers no question about the entry — it only reaches subscribers,
@@ -780,11 +783,10 @@ function notifyInvalidate(
  * rather than half-applied. Announcing one is the same claim `invalidate` makes
  * and cannot back — the client does not know whether a publication is coming.
  */
-export function announceAll(lane: Lane, scope: LaneScope): void {
-  const state = getLaneState(lane);
+function announceScope(state: LaneState, scope: LaneScope): void {
   const entries = matchingEntries(state.entries, scope);
 
-  assertScopeClientOwned(entries, "announce");
+  assertScopeClientOwned(entries, "startInvalidationTransition");
 
   for (const entry of entries) {
     const info = entryInfo(entry);

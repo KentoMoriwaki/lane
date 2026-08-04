@@ -519,10 +519,7 @@ type LaneResult<T> = {
   isInvalidationPending: boolean;
   isBackgroundPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
-  startInvalidationTransition: {
-    (action: () => unknown): void;
-    (scopes: readonly LaneScope[], action: () => unknown): void;
-  };
+  startInvalidationTransition: (action: () => unknown) => void;
 };
 ```
 
@@ -558,23 +555,34 @@ the re-read it triggers, and clears when the new data commits — one window, no
 two. The reader keeps its current value on screen throughout, because that is
 what a transition does.
 
-**Pass extra scopes for the keys a mutation touches beyond this one.** Their
-readers are told to open their transitions in the same synchronous fan-out, so
-every reader in the window goes pending in one tick rather than one screen at a
-time:
+**For the other keys a mutation touches, call
+[`lane.startInvalidationTransition(scope)`](#mutation-convergence--the-lane-instance)
+inside the action.** Their readers are told to open their transitions in the same
+synchronous fan-out, so every reader in the window goes pending in one tick
+rather than one screen at a time:
 
 ```ts
-startInvalidationTransition([["insights"], ["projects"]], async () => {
+// The component runs the action and knows nothing about its reach:
+startInvalidationTransition(async () => {
   await saveTask(patch);
   invalidate();
-  lane.invalidate(["insights"]);
-  lane.invalidate(["projects"]);
 });
+
+// …and the mutation announces its own, wherever it lives:
+export async function saveTask(patch: Patch) {
+  lane.startInvalidationTransition(["insights"]);
+  await api.saveTask(patch);
+  lane.invalidate(["insights"]);
+}
 ```
 
-That list is deliberately *not* derived from what the action goes on to
-invalidate, because they answer different questions. What converges is what
-changed; what is announced is what should look busy — usually the smaller set. A
+Inside the action rather than as an argument, because that is where the
+knowledge is: a mutation helper knows which keys it touches and its caller does
+not. Passing them in would hoist that list to every call site and freeze it
+there — it could not be built conditionally, or by the helper itself.
+
+What you announce is not what you converge. What converges is what changed; what
+is announced is what should look busy, which is usually the smaller set — a
 `background: true` refresh is explicitly asking not to be one of them.
 
 #### What to know
@@ -598,6 +606,11 @@ changed; what is announced is what should look busy — usually the smaller set.
 - **Announcing a published key throws** [`LaneOwnershipError`](#laneownershiperror),
   and the scope is checked before anything is announced, so a scope that reaches
   one is refused rather than half-applied.
+- **`lane.startInvalidationTransition` outside any transition is close to a
+  no-op.** Each reader opens an empty transition that commits immediately, so
+  nothing shows pending — which is the thing you called it for, making the
+  symptom its own diagnosis. It is documented rather than guarded because there
+  is no way to ask React whether a transition is in progress.
 
 ### `LaneRead<T>`
 
@@ -1234,6 +1247,9 @@ under [Reading data](#prefetch).
 type Lane = {
   prefetch<T>(key: LaneKey, loader: LaneLoader<T>, options?: LanePrefetchOptions): Promise<LaneRead<T>>;
   prefetch<T>(spec: LaneReadSpec<T>): Promise<LaneRead<T>>;
+  // Opens the *readers'* transitions in a scope. Call it inside an action that
+  // is already running in one — see `startInvalidationTransition` above.
+  startInvalidationTransition(scope: LaneScope): void;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
   // A `LaneKeyOf<T>` decides the value's type; a plain key lets the value decide it.

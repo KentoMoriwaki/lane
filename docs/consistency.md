@@ -228,15 +228,15 @@ order:
    already shows the new state, so pending is not the right signal at all.
 3. **Neither** → [`startInvalidationTransition`](./api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action),
    for the action that refreshes a list, a counter, and a detail view it returns
-   none of. Run the action in the reader's transition and name the other keys
-   that should look busy; they are announced in the same synchronous fan-out, so
-   the whole set goes pending in one tick and converges in one commit:
+   none of. Run the action in the reader's transition; the other keys that should
+   look busy join with `lane.startInvalidationTransition(scope)` from inside it,
+   in the same synchronous fan-out, so the whole set goes pending in one tick and
+   converges in one commit:
 
 ```ts
-startInvalidationTransition([["counters"]], async () => {
-  await saveTodo(patch);
+startInvalidationTransition(async () => {
+  await saveTodo(patch);   // announces ["counters"] from inside, and converges it
   invalidate();
-  lane.invalidate(["counters"]);
 });
 ```
 

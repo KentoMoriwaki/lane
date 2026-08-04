@@ -10,7 +10,6 @@ import {
   useTransition,
 } from "react";
 import {
-  announceAll,
   invalidateEntry,
   invalidationSource,
   latestNotifySource,
@@ -36,8 +35,6 @@ import type {
   LaneRead,
   LaneReadSpec,
   LaneResult,
-  LaneScope,
-  LaneStartInvalidationTransition,
   LaneUseOptions,
 } from "./types";
 
@@ -443,34 +440,20 @@ export function useLane<T, C = T>(
     [lane, keyId],
   );
 
+  // Only this reader's own transition, which needs no announcement:
+  // `startTransition` here *is* what `isInvalidationPending` reports. Other keys
+  // join through `lane.startInvalidationTransition(scope)`, called inside the
+  // action — which is where the knowledge of what a mutation touches lives, and
+  // where it composes: a helper announces its own reach without its caller
+  // having to enumerate it.
   const startInvalidationTransition = useCallback(
-    (
-      scopesOrAction: readonly LaneScope[] | (() => unknown),
-      maybeAction?: () => unknown,
-    ) => {
-      const action =
-        typeof scopesOrAction === "function" ? scopesOrAction : maybeAction;
-      const scopes = typeof scopesOrAction === "function" ? [] : scopesOrAction;
-
-      if (!action) {
-        return;
-      }
-
+    (action: () => unknown) => {
       startTransition(async () => {
-        // This reader's own flag needs no announcement — `startTransition` above
-        // *is* the transition `isInvalidationPending` reports. The extra scopes
-        // are other readers', so they are told to open theirs, synchronously and
-        // before the first await, which is what puts every one of them in this
-        // transition's lane rather than one of their own.
-        for (const scope of scopes) {
-          announceAll(lane, scope);
-        }
-
         await action();
       });
     },
-    [lane],
-  ) as LaneStartInvalidationTransition;
+    [],
+  );
 
   return {
     invalidate,

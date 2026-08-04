@@ -372,6 +372,38 @@ export type Lane = {
     read: LaneReadSpec<T, C>,
     ...args: LaneLoaderMetaArgs
   ): Promise<LaneRead<T>>;
+  /**
+   * Open the invalidation transition of every reader in a scope — the scoped
+   * form of {@link LaneResult.startInvalidationTransition}, and the one to call
+   * from inside a mutation for the keys it touches:
+   *
+   * ```ts
+   * startInvalidationTransition(async () => {
+   *   await saveTask(patch);   // the helper announces its own reach
+   *   invalidate();
+   * });
+   *
+   * // …inside the helper
+   * lane.startInvalidationTransition(["insights"]);
+   * ```
+   *
+   * It starts the *readers'* transitions, not the caller's, so it composes the
+   * way React's own `startTransition` nests: called inside one, those readers
+   * join that scope and stay pending for as long as it runs. Called outside any
+   * transition it is close to a no-op — each reader opens an empty transition
+   * that commits immediately — and the symptom is the thing you called it for
+   * not happening, so it is documented rather than guarded (there is no way to
+   * ask React whether a transition is in progress).
+   *
+   * Nothing is stored and no read is scheduled. A notification that replaced the
+   * cache would make readers re-read *now*, against a source the caller has not
+   * changed yet. Converging is still the action's job.
+   *
+   * Throws {@link LaneOwnershipError} on a published key, checked across the
+   * whole match first: announcing one promises an invalidation the client cannot
+   * make.
+   */
+  startInvalidationTransition(scope: LaneScope): void;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
   /**
@@ -464,18 +496,12 @@ export type LaneRead<T> = {
  * action, with whatever `invalidate` / `set` / `update` calls the change actually
  * needs, and handle the failure where you would have anyway.
  *
- * Pass extra scopes when a mutation touches keys beyond this one: their readers
- * are told to open their transitions too, in the same synchronous fan-out, so
- * every reader in the window flips together rather than one screen at a time.
- * The list is deliberately not derived from what the action goes on to
- * invalidate — those are different decisions. What converges is what changed;
- * what is announced is what should look busy, which is usually smaller (a
- * `background: true` refresh is *asking* not to be one of them).
+ * It opens **this reader's** transition and nothing else. Keys a mutation
+ * touches beyond this one join by calling {@link Lane.startInvalidationTransition}
+ * *inside* the action — which is where that knowledge belongs, because a
+ * mutation helper knows its own reach and its caller does not.
  */
-export type LaneStartInvalidationTransition = {
-  (action: () => unknown): void;
-  (scopes: readonly LaneScope[], action: () => unknown): void;
-};
+export type LaneStartInvalidationTransition = (action: () => unknown) => void;
 
 export type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;

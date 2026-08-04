@@ -343,8 +343,12 @@ describe("transition entanglement", () => {
     // `startInvalidationTransition` to run the action in.
     function Tasks() {
       const lane = useLaneInstance();
-      const { invalidate, isInvalidationPending, promise, startInvalidationTransition } =
-        useLane({ key: ["tasks"], loader: () => tasksReload.promise });
+      const {
+        invalidate,
+        isInvalidationPending,
+        promise,
+        startInvalidationTransition,
+      } = useLane({ key: ["tasks"], loader: () => tasksReload.promise });
       const { data } = use(promise);
 
       return React.createElement(
@@ -353,7 +357,10 @@ describe("transition entanglement", () => {
         React.createElement("button", {
           "data-testid": "save",
           onClick: () => {
-            startInvalidationTransition([["insights"]], async () => {
+            startInvalidationTransition(async () => {
+              // Stands in for a mutation helper announcing its own reach: the
+              // component running the action does not enumerate the keys.
+              lane.startInvalidationTransition(["insights"]);
               await mutation.promise;
               invalidate();
               lane.invalidate(["insights"]);

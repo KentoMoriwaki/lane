@@ -322,7 +322,7 @@ export type LaneInvalidateOptions = {
   staleTime?: number;
   /**
    * Converge through the background transition (surfaces as `isBackgroundPending`)
-   * instead of the default explicit one (`isTransitionPending`). Use it for
+   * instead of the default explicit one (`isInvalidationPending`). Use it for
    * automatic refreshes — e.g. a self-scheduled poll — so they don't read as a
    * user-driven invalidation.
    */
@@ -441,7 +441,7 @@ export type LaneRead<T> = {
 export type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;
   isBackgroundPending: boolean;
-  isTransitionPending: boolean;
+  isInvalidationPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
 };
 

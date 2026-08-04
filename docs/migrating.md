@@ -25,7 +25,7 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `isLoading` (no data yet) | a **`Suspense` fallback** — there is no flag |
 | `isError` / `error` (initial) | an **Error Boundary** — an initial load rejects |
 | `error` *over existing data* | `refreshError` from `use(promise)` — render it inline |
-| `isFetching` / `isRefetching` | `isTransitionPending` (explicit) / `isBackgroundPending` (auto) |
+| `isFetching` / `isRefetching` | `isInvalidationPending` (explicit) / `isBackgroundPending` (auto) |
 | `keepPreviousData` / `placeholderData` | **transitions** — wrap the key change, or `useDeferredValue` |
 | `invalidateQueries(key)` | `invalidate(key)` exact, `invalidate(prefix)`, or a predicate |
 | `setQueryData(key, v)` | `set(key, v)` — for confirmed data you already have |
@@ -158,7 +158,7 @@ To keep call-site churn small in a large codebase, it is reasonable to wrap
   Boundary and never reaches a field. Expose `refreshError` — a failed refresh
   *over* existing data — not a general `error`.
 - **`isPending` / `isFetching` mean "refreshing over data,"** not "no data yet."
-  Map them to `isBackgroundPending` / `isTransitionPending`.
+  Map them to `isBackgroundPending` / `isInvalidationPending`.
 - **Pass the key straight to `useLane`.** Lane canonicalizes keys internally — no
   `useMemo` / `JSON.stringify` wrapper needed. (If the key *also* feeds an effect
   dependency array — e.g. a poll — see [step 5](#step-5--revalidation-and-polling).)
@@ -168,7 +168,7 @@ To keep call-site churn small in a large codebase, it is reasonable to wrap
 Once reads suspend, a data widget composes into a few layers:
 
 - **Initial load** → a `Suspense` boundary (per widget or per section).
-- **Refreshing over data** → an `isBackgroundPending` / `isTransitionPending`
+- **Refreshing over data** → an `isBackgroundPending` / `isInvalidationPending`
   affordance (an overlay or a subtle bar), *not* a fallback.
 - **A failed refresh** → render the stale `data` **and** the `refreshError` as a
   small inline hint. Don't throw it; don't blank the panel.
@@ -272,7 +272,7 @@ one entry per list, holding every page:
 | `getNextPageParam(lastPage, pages)` | `nextCursor(page, cursor)` — `null` ends the list |
 | `initialPageParam` | `initialCursor` |
 | `fetchNextPage()` | `loadMore()` |
-| `isFetchingNextPage` | `isTransitionPending` — it also covers a full re-read |
+| `isFetchingNextPage` | `isInvalidationPending` — it also covers a full re-read |
 | `hasNextPage` | `data.hasNext` — **in the value**, not on the hook |
 
 ```tsx

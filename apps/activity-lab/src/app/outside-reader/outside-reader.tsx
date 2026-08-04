@@ -26,7 +26,7 @@ const CHANNEL = "outside:reader";
 function OutsideReaderInner() {
   const result = useLane(outsideReads.topic());
   const bg = result.isBackgroundPending;
-  const tr = result.isTransitionPending;
+  const tr = result.isInvalidationPending;
 
   labLog.push(CHANNEL, "render", `bg:${bg ? 1 : 0} tr:${tr ? 1 : 0}`);
 

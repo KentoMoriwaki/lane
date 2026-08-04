@@ -24,7 +24,7 @@ disagreeing.
 
 **Readers of one key agree on which pending flag is set.** A reader that
 subscribes a moment too late to receive a notification still converges through
-the same kind of transition it missed, so it reports `isTransitionPending` or
+the same kind of transition it missed, so it reports `isInvalidationPending` or
 `isBackgroundPending` to match its siblings rather than always the latter.
 
 **An uncommitted mount is never pinned to a superseded promise.** A suspended

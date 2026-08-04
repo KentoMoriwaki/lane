@@ -79,7 +79,7 @@ export type InfiniteLaneResult<P, C> = {
    * read rejected).
    */
   loadMore: () => Promise<LaneRead<InfiniteLaneValue<P, C>>> | undefined;
-  isTransitionPending: boolean;
+  isInvalidationPending: boolean;
   isBackgroundPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
 };
@@ -114,7 +114,7 @@ export type InfiniteLaneResult<P, C> = {
  * deliberately not papered over.
  *
  * ```tsx
- * const { promise, loadMore, isTransitionPending } = useInfiniteLane({
+ * const { promise, loadMore, isInvalidationPending } = useInfiniteLane({
  *   key: ["feed", filters],
  *   initialCursor: null as string | null,
  *   fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
@@ -137,7 +137,7 @@ export function useInfiniteLane<P, C>(
   const keyId = serializeKey(key);
   const loaderMeta = read.loaderMeta ?? laneMeta;
 
-  const { invalidate, isBackgroundPending, isTransitionPending, promise } =
+  const { invalidate, isBackgroundPending, isInvalidationPending, promise } =
     // The read options pass straight through; the pagination fields ride along
     // inert (a read only ever looks at the four it knows).
     useLane<InfiniteLaneValue<P, C>>({
@@ -230,7 +230,7 @@ export function useInfiniteLane<P, C>(
   return {
     invalidate,
     isBackgroundPending,
-    isTransitionPending,
+    isInvalidationPending,
     loadMore,
     promise,
   };

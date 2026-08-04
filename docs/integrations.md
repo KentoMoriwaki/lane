@@ -266,7 +266,7 @@ TanStack Router is Suspense- and transition-oriented and has loaders, so the
 **Data-mode recipe applies unchanged**: load in the route loader, return a
 `LaneHydration` snapshot, read with `useLane`. Its typed search params are a natural
 fit for `key = f(search)`. As with any History-API router, the `popstate` caveat
-holds; prefer Lane's own pending (`isTransitionPending` / `isBackgroundPending`) and
+holds; prefer Lane's own pending (`isInvalidationPending` / `isBackgroundPending`) and
 the router's loader-pending over relying on a single navigation flag.
 
 ## Plain SPA, or embedding inside another router

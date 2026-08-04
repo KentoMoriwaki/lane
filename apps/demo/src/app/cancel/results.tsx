@@ -24,7 +24,7 @@ export function SearchResults({
   topic: string;
   whenStale: "revalidate" | "refetch";
 }) {
-  const { promise, isTransitionPending } = useLane({
+  const { promise, isInvalidationPending } = useLane({
     key: searchKey(topic),
     loader: searchLoader(topic),
     whenStale,
@@ -38,7 +38,7 @@ export function SearchResults({
         <p className="text-[11px] text-muted-foreground">
           showing: <span className="font-mono text-foreground">{data.q}</span> ·
           served #{data.seq}
-          {isTransitionPending ? " · transition pending" : ""}
+          {isInvalidationPending ? " · transition pending" : ""}
         </p>
       </header>
 

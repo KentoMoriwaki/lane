@@ -26,7 +26,7 @@ export function InsightStrip({
   viewHref?: (view: Partial<TaskFilters>) => string | undefined;
   onViewChange?: (view: Partial<TaskFilters>) => void;
 }) {
-  const { promise, invalidate, isTransitionPending } =
+  const { promise, invalidate, isInvalidationPending } =
     useInsights();
   const { data, refreshError } = React.use(promise);
 
@@ -44,7 +44,7 @@ export function InsightStrip({
       <RefreshErrorChip
         refreshError={refreshError}
         onRetry={invalidate}
-        isRetrying={isTransitionPending}
+        isRetrying={isInvalidationPending}
         className="mx-4 mt-3"
       />
       <div className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3">

@@ -90,7 +90,7 @@ export function useLane<T, C = T>(
   const enabled = loader !== undefined;
   const keyId = serializeKey(key);
   const readOptions = toReadOptions(read, loaderMeta);
-  const [isTransitionPending, startTransition] = useTransition();
+  const [isInvalidationPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
   // The publication this render is happening under (nearest LaneHydration
   // boundary, or the stable `undefined` outside one). Part of the read's
@@ -429,7 +429,7 @@ export function useLane<T, C = T>(
   return {
     invalidate,
     isBackgroundPending,
-    isTransitionPending,
+    isInvalidationPending,
     promise: effectivePromise,
   };
 }

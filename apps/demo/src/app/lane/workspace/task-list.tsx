@@ -28,10 +28,10 @@ export function TaskList({
 }) {
   const { userId } = useWorkspace();
   const { refresh, isRefreshing, refreshError } = useWorkspaceRefresh();
-  const { promise, isTransitionPending } = useTasks(filters);
+  const { promise, isInvalidationPending } = useTasks(filters);
   const { data: tasks } = React.use(promise);
 
-  const dimmed = isTransitionPending || isRefreshing;
+  const dimmed = isInvalidationPending || isRefreshing;
   // The read cannot fail here — it is served by the publication — so what the
   // chip reports is the *refresh* that failed: the last one the user asked for
   // never reached the owner, and what is on screen is the publication before it.

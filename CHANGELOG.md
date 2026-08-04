@@ -8,6 +8,22 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
+- **Breaking: `isTransitionPending` is now `isInvalidationPending`.** Both pending
+  flags a reader returns come from `useTransition()`, so "transition" named what
+  they share rather than what tells them apart — the field said nothing. What
+  separates them is the cause: an explicit invalidation against an automatic
+  revalidation, and only the second half already had the name it needed
+  (`isBackgroundPending`). `set` and `update` set it too, which is not a stretch of
+  the word — both are [prefilled
+  invalidations](docs/design-notes.md#authoritative-publication-is-secondary), and
+  so is the `update` behind `useInfiniteLane`'s `loadMore`.
+
+  Rename the field at each read site; nothing else changes. `useLane` and
+  `useInfiniteLane` return it (`useLanesAll` resolves to values and never had it).
+  The noun form is deliberate: an invalidation is instantaneous, so `isInvalidating`
+  would claim a duration the verb does not have — what lasts is the convergence
+  that is *pending*.
+
 - **Breaking: `staleTime` defaults to `Infinity`, not `0`.** Nothing is stale until
   an app says what stale means. The old `0` was inherited from react-query, where
   it is safe because a mount fetch and a stale refetch are one mechanism; in Lane
@@ -253,7 +269,7 @@ All notable changes to `use-lane` are documented here. The format is based on
 - **`useInfiniteLane(read)`** — a cursor-paginated list as
   one key holding the whole accumulated list, with the page depth read back out
   of the cached value. `{ initialCursor, fetchPage, nextCursor }` in, `{ promise,
-  loadMore, isTransitionPending, isBackgroundPending, invalidate }` out, and
+  loadMore, isInvalidationPending, isBackgroundPending, invalidate }` out, and
   `{ pages, params, hasNext }` under the key. `loadMore` appends one page through
   `update`, so the key never changes and the list converges through a transition
   with no `useTransition` of your own; any refresh re-walks the chain as deep as
@@ -365,7 +381,7 @@ All notable changes to `use-lane` are documented here. The format is based on
   on the previous promise and only finds the change when its subscription effect
   runs — now converges through the same kind of transition that notification
   used, instead of always the background one. Siblings reading the same key no
-  longer disagree about whether an update is `isTransitionPending` or
+  longer disagree about whether an update is `isInvalidationPending` or
   `isBackgroundPending`.
 
 ### Changed
@@ -484,7 +500,7 @@ All notable changes to `use-lane` are documented here. The format is based on
   per-entry poll timer) and drops the per-subscriber `refetchInterval` option.
 - **`invalidate` / `invalidateAll` accept `{ background: true }`.** It converges
   through the background transition (`isBackgroundPending`) instead of the default
-  explicit one (`isTransitionPending`) — what a self-scheduled poll uses so an
+  explicit one (`isInvalidationPending`) — what a self-scheduled poll uses so an
   automatic refresh doesn't read as a user-driven invalidation. New field on
   `LaneInvalidateOptions`.
 
@@ -593,7 +609,7 @@ Initial public release.
 ### Added
 
 - `useLane(key, loader, options)` returning `{ promise, refreshError,
-  isTransitionPending, isBackgroundPending, invalidate }`, plus the
+  isInvalidationPending, isBackgroundPending, invalidate }`, plus the
   `useLanePromise` convenience wrapper.
 - `LaneProvider` / `useLaneInstance` and standalone `createLane()`.
 - Exact and scoped (`prefix` / predicate) `invalidate`, `set`, `update`, and

@@ -27,7 +27,7 @@ const roots: Root[] = [];
  * the way a click handler would — published from an *effect*, so it is the
  * handle of the last **committed** render.
  *
- * That distinction matters for `isTransitionPending`: inside the transition's
+ * That distinction matters for `isInvalidationPending`: inside the transition's
  * own render (the future tree, which suspends and never commits here) the flag
  * is already `false`, because that render is what the screen looks like once the
  * transition is done. The pending screen is the committed one.
@@ -161,12 +161,12 @@ describe("useInfiniteLane", () => {
     await click(() => handle?.invalidate());
     // Mid-refresh: the previous pages are still rendered, no fallback.
     expect(app.container.textContent).toBe("0,1|more");
-    expect(handle?.isTransitionPending).toBe(true);
+    expect(handle?.isInvalidationPending).toBe(true);
 
     await gated.resolveNext();
     await gated.resolveNext();
     await waitForText(app.container, "0,1|more");
-    expect(handle?.isTransitionPending).toBe(false);
+    expect(handle?.isInvalidationPending).toBe(false);
   });
 
   it("marks the reader pending while loadMore is in flight", async () => {
@@ -183,12 +183,12 @@ describe("useInfiniteLane", () => {
     });
 
     await click(() => handle?.loadMore());
-    expect(handle?.isTransitionPending).toBe(true);
+    expect(handle?.isInvalidationPending).toBe(true);
     expect(app.container.textContent).toBe("0|more");
 
     await gated.resolveNext();
     await waitForText(app.container, "0,1|more");
-    expect(handle?.isTransitionPending).toBe(false);
+    expect(handle?.isInvalidationPending).toBe(false);
   });
 
   it("treats a null initialCursor as a cursor, not as the end", async () => {

@@ -27,16 +27,16 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const { userId } = useWorkspace();
-  const { promise, isTransitionPending, invalidate } =
+  const { promise, isInvalidationPending, invalidate } =
     useTasks(filters);
   const { data: tasks, refreshError } = React.use(promise);
 
-  const dimmed = isTransitionPending;
+  const dimmed = isInvalidationPending;
   const refreshNotice = (
     <RefreshErrorChip
       refreshError={refreshError}
       onRetry={invalidate}
-      isRetrying={isTransitionPending}
+      isRetrying={isInvalidationPending}
       className="mx-4 mt-3"
     />
   );

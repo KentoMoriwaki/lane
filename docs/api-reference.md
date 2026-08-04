@@ -243,7 +243,7 @@ export const taskLanes = {
 ```
 
 ```tsx
-const { promise, isTransitionPending } = useLane(taskLanes.detail(id));
+const { promise, isInvalidationPending } = useLane(taskLanes.detail(id));
 const { data: task } = use(promise);
 ```
 
@@ -516,7 +516,7 @@ Two things to know:
 ```ts
 type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;
-  isTransitionPending: boolean;
+  isInvalidationPending: boolean;
   isBackgroundPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
 };
@@ -525,7 +525,7 @@ type LaneResult<T> = {
 | Field | Description |
 | --- | --- |
 | `promise` | The current promise for the key. Unwrap with `use(promise)` to get a [`LaneRead<T>`](#lanereadt). |
-| `isTransitionPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
+| `isInvalidationPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / reconnect / a `background: true` invalidation / subscription catch-up) is converging. |
 | `invalidate` | Invalidate this exact key and re-read. Convenience for `lane.invalidate(key, options?)`; accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll). Defaults to an explicit transition. |
 
@@ -795,7 +795,7 @@ function useInfiniteLane<P, C>(read: {
 } & LaneUseOptions): {
   promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
   loadMore: () => Promise<LaneRead<InfiniteLaneValue<P, C>>> | undefined;
-  isTransitionPending: boolean;
+  isInvalidationPending: boolean;
   isBackgroundPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
 };
@@ -847,7 +847,7 @@ type InfiniteLaneValue<P, C> = {
 ```
 
 ```tsx
-const { promise, loadMore, isTransitionPending } = useInfiniteLane(
+const { promise, loadMore, isInvalidationPending } = useInfiniteLane(
   ["feed", filters],
   {
     initialCursor: null as string | null,
@@ -885,9 +885,12 @@ Notes:
 
 - **`loadMore` appends one page** through `update`, so the key never changes: the
   reader converges through a transition with the list still on screen, and
-  `isTransitionPending` covers it with no `useTransition` of your own. It is a
-  no-op at the end of the list; gate your control on `data.hasNext` so an
-  over-eager click does not cost even a notification.
+  `isInvalidationPending` covers it with no `useTransition` of your own. The name
+  is not a mismatch — `update` is a [prefilled
+  invalidation](./design-notes.md#authoritative-publication-is-secondary), so an
+  append converges through the same surface an `invalidate` does. It is a no-op
+  at the end of the list; gate your control on `data.hasNext` so an over-eager
+  click does not cost even a notification.
 - **`fetchPage`'s `signal` is optional because it is genuinely absent on the
   append path.** A refresh runs as a read and gets the read's abort signal; an
   updater is handed the current value and no controller, so a `loadMore` in
@@ -910,7 +913,7 @@ Notes:
   ```tsx
   const { data, refreshError } = use(promise);
   // ...inside the IntersectionObserver effect:
-  if (!data.hasNext || isTransitionPending || refreshError) return;
+  if (!data.hasNext || isInvalidationPending || refreshError) return;
   ```
 
   `refreshError` clears on the next successful read, so recovery is an explicit
@@ -1260,7 +1263,7 @@ type LaneInvalidateOptions = {
 - `"settled"` → only entries with a settled promise (skips in-flight reads).
 - `background: true` → converge through the **background** transition
   (`isBackgroundPending`) instead of the default explicit one
-  (`isTransitionPending`). Use it for automatic refreshes so they don't read as a
+  (`isInvalidationPending`). Use it for automatic refreshes so they don't read as a
   user-driven invalidation — see [Polling](#polling).
 - `after: promise` → invalidate now, fetch later. See below.
 
@@ -1277,7 +1280,7 @@ startTransition(async () => {
 ```
 
 Notification is Lane's only channel to a reader, and here it fires last — so
-`isTransitionPending` only turns on once the work is already done. `after` moves
+`isInvalidationPending` only turns on once the work is already done. `after` moves
 the notification to the front:
 
 ```ts
@@ -1360,7 +1363,7 @@ function Polled({ id }: { id: string }) {
 }
 ```
 
-- **`background: true`** keeps the refresh off `isTransitionPending` (it surfaces
+- **`background: true`** keeps the refresh off `isInvalidationPending` (it surfaces
   as `isBackgroundPending`), so an automatic poll doesn't read like a user action.
 - Depending on `[promise]` makes it a **poll-after-response** loop (a fixed gap
   after each load). For a fixed **wall-clock** interval, use `setInterval` plus

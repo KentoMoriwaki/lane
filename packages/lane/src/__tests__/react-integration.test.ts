@@ -1208,7 +1208,7 @@ function Probe({
       type: "button",
     },
     `${value}|background:${flag(result.isBackgroundPending)}|transition:${flag(
-      result.isTransitionPending,
+      result.isInvalidationPending,
     )}|refresh:${refresh}`,
   );
 }

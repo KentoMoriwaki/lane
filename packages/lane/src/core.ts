@@ -1172,7 +1172,7 @@ function evictEntry(state: LaneState, entry: LaneEntry): void {
  * Public invalidations converge through a transition by default; `background:
  * true` routes them through the background transition instead (for automatic
  * refreshes like a self-scheduled poll, so they don't surface as
- * `isTransitionPending`). Polling itself is not a core feature — schedule your
+ * `isInvalidationPending`). Polling itself is not a core feature — schedule your
  * own timer and call `invalidate(key, { background: true, onlyIf: "settled" })`.
  */
 export function invalidationSource(

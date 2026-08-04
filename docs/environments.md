@@ -62,7 +62,7 @@ Ink is a React renderer for the terminal. Lane runs under it directly.
 - **Enable concurrency.** Ink's root is a legacy sync root by default; pass
   `render(<App />, { concurrent: true })` to get real `useTransition` deferral and
   concurrent Suspense. Without it, an initial read still suspends to a `Suspense`
-  fallback, but transition re-reads (`isTransitionPending`) collapse to
+  fallback, but transition re-reads (`isInvalidationPending`) collapse to
   synchronous — acceptable for a terminal, but the transition-native behavior
   needs the flag.
 - **No focus / reconnect.** A CLI has no window focus or network-reconnect

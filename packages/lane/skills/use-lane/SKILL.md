@@ -9,7 +9,7 @@ description: Use when writing or reviewing React 19 async-data code that uses us
 **promise** in React state and replaces it inside React transitions. It does
 **not** own a resolved-value cache or status flags — React owns loading
 (Suspense), errors (Error Boundaries), pending (`useTransition` /
-`isTransitionPending`), and optimistic UI (`useOptimistic`).
+`isInvalidationPending`), and optimistic UI (`useOptimistic`).
 
 **The one rule that explains every API: Lane owns _promise identity_; React owns
 _UI state_.** When something looks missing — no `isLoading`, no `useMutation`, no

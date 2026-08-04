@@ -87,21 +87,21 @@ export function FilterBar({
         <ScopeLink
           href={hrefForPatch({ scope: "all" })}
           isActive={optimisticFilters.scope === "all"}
-          onNavigate={() => applyPatch({ scope: "all" })}
+          navigateAction={() => applyPatch({ scope: "all" })}
         >
           All
         </ScopeLink>
         <ScopeLink
           href={hrefForPatch({ scope: "mine" })}
           isActive={optimisticFilters.scope === "mine"}
-          onNavigate={() => applyPatch({ scope: "mine" })}
+          navigateAction={() => applyPatch({ scope: "mine" })}
         >
           My tasks
         </ScopeLink>
         <ScopeLink
           href={hrefForPatch({ scope: "unassigned" })}
           isActive={optimisticFilters.scope === "unassigned"}
-          onNavigate={() => applyPatch({ scope: "unassigned" })}
+          navigateAction={() => applyPatch({ scope: "unassigned" })}
         >
           Unassigned
         </ScopeLink>
@@ -125,7 +125,7 @@ export function FilterBar({
               href={hrefForPatch({ status: nextStatus })}
               icon={<Icon className={cn("size-4", accent(meta.accent).text)} />}
               label={meta.label}
-              onNavigate={() => applyPatch({ status: nextStatus })}
+              navigateAction={() => applyPatch({ status: nextStatus })}
             />
           );
         })}
@@ -148,7 +148,7 @@ export function FilterBar({
               href={hrefForPatch({ priority: nextPriority })}
               icon={<Icon className={cn("size-4", accent(meta.accent).text)} />}
               label={meta.label}
-              onNavigate={() => applyPatch({ priority: nextPriority })}
+              navigateAction={() => applyPatch({ priority: nextPriority })}
             />
           );
         })}
@@ -159,7 +159,7 @@ export function FilterBar({
           dotClass={accent(project.color).dot}
           label={project.name}
           removeHref={hrefForPatch({ projectId: null })}
-          onNavigate={() => applyPatch({ projectId: null })}
+          navigateAction={() => applyPatch({ projectId: null })}
         />
       ) : null}
       {label ? (
@@ -167,14 +167,14 @@ export function FilterBar({
           dotClass={accent(label.color).dot}
           label={label.name}
           removeHref={hrefForPatch({ labelId: null })}
-          onNavigate={() => applyPatch({ labelId: null })}
+          navigateAction={() => applyPatch({ labelId: null })}
         />
       ) : null}
       {dueLabel ? (
         <Chip
           label={dueLabel}
           removeHref={hrefForPatch({ due: null })}
-          onNavigate={() => applyPatch({ due: null })}
+          navigateAction={() => applyPatch({ due: null })}
         />
       ) : null}
 
@@ -224,12 +224,12 @@ function toggleValue<T>(values: T[], value: T): T[] {
 function ScopeLink({
   href,
   isActive,
-  onNavigate,
+  navigateAction,
   children,
 }: {
   href: string;
   isActive: boolean;
-  onNavigate: () => void;
+  navigateAction: () => void;
   children: React.ReactNode;
 }) {
   return (
@@ -237,7 +237,7 @@ function ScopeLink({
       href={href}
       scroll={false}
       className="rounded-md"
-      onClick={onNavigate}
+      onClick={navigateAction}
     >
       <ScopeLinkContent isActive={isActive}>{children}</ScopeLinkContent>
     </IntentPrefetchLink>
@@ -277,13 +277,13 @@ function FilterOptionLink({
   checked,
   icon,
   label,
-  onNavigate,
+  navigateAction,
 }: {
   href: string;
   checked: boolean;
   icon: React.ReactNode;
   label: string;
-  onNavigate: () => void;
+  navigateAction: () => void;
 }) {
   return (
     <DropdownMenuItem
@@ -291,7 +291,7 @@ function FilterOptionLink({
       onSelect={(event) => event.preventDefault()}
       className="gap-2.5"
     >
-      <IntentPrefetchLink href={href} scroll={false} onClick={onNavigate}>
+      <IntentPrefetchLink href={href} scroll={false} onClick={navigateAction}>
         <FilterOptionContent checked={checked} icon={icon} label={label} />
       </IntentPrefetchLink>
     </DropdownMenuItem>
@@ -361,12 +361,12 @@ function Chip({
   dotClass,
   label,
   removeHref,
-  onNavigate,
+  navigateAction,
 }: {
   dotClass?: string;
   label: string;
   removeHref: string;
-  onNavigate: () => void;
+  navigateAction: () => void;
 }) {
   return (
     <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 text-sm text-foreground">
@@ -377,7 +377,7 @@ function Chip({
       <IntentPrefetchLink
         href={removeHref}
         scroll={false}
-        onClick={onNavigate}
+        onClick={navigateAction}
         className="rounded-full p-0.5 text-muted-foreground hover:text-rose"
         aria-label={`Remove ${label} filter`}
       >

@@ -116,7 +116,7 @@ function PriorityGroup({
             isMine={task.assignee?.id === currentUserId}
             isSelected={task.id === selectedTaskId}
             onSelect={() => onSelectTask(task.id)}
-            onDeleted={onClearSelection}
+            deleteAction={onClearSelection}
           />
         ))}
       </div>

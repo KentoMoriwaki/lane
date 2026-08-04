@@ -95,145 +95,263 @@ function TaskDetail({
   const removeLabel = useRemoveTaskLabel(taskId);
   const remove = useDeleteTask();
   const [isSavedVisible, showSavedNotice] = useSavedNotice();
+  const [titleEdit, setTitleEdit] = React.useState<TextEdit | null>(null);
+  const [descriptionEdit, setDescriptionEdit] =
+    React.useState<TextEdit | null>(null);
+  const titleRevisionRef = React.useRef(0);
+  const descriptionRevisionRef = React.useRef(0);
+  const [isSaving, startSaving] = React.useTransition();
   const [optimisticTask, addOptimisticTask] = React.useOptimistic(
     task,
     (current, change: OptimisticTaskChange) =>
       applyOptimisticTaskChange(current, change, { members, projects }),
   );
-  const [, dispatchSaveAction, isSaving] = React.useActionState(
-    async (version: number, action: SaveAction): Promise<number> => {
+
+  const isClosed = STATUS_META[optimisticTask.status].group === "closed";
+  const titleValue =
+    titleEdit && titleEdit.draft !== titleEdit.base
+      ? titleEdit.draft
+      : optimisticTask.title;
+  const descriptionValue =
+    descriptionEdit && descriptionEdit.draft !== descriptionEdit.base
+      ? descriptionEdit.draft
+      : optimisticTask.description;
+  const isStatusSaving =
+    isSaving && optimisticTask.status !== task.status;
+  const isPrioritySaving =
+    isSaving && optimisticTask.priority !== task.priority;
+  const isAssigneeSaving =
+    isSaving &&
+    (optimisticTask.assignee?.id ?? null) !== (task.assignee?.id ?? null);
+  const isProjectSaving =
+    isSaving &&
+    (optimisticTask.project?.id ?? null) !== (task.project?.id ?? null);
+
+  function changeTitleDraft(draft: string) {
+    const revision = ++titleRevisionRef.current;
+    setTitleEdit((current) => ({
+      base:
+        current && current.draft !== current.base
+          ? current.base
+          : optimisticTask.title,
+      draft,
+      revision,
+    }));
+  }
+
+  function submitTitleAction() {
+    if (!titleEdit) return;
+
+    const title = titleValue.trim();
+    if (!title) {
+      setTitleEdit(null);
+      return;
+    }
+    if (title === optimisticTask.title) {
+      setTitleEdit(null);
+      return;
+    }
+
+    const submittedRevision = titleEdit.revision;
+    const input = { title };
+    startSaving(async () => {
+      addOptimisticTask({ type: "update", input });
+
       try {
-        await action.run();
-        action.onSuccess?.();
+        const savedTask = await update(
+          input,
+          taskCacheStrategies.searchText,
+        );
+        React.startTransition(() => {
+          setTitleEdit((current) => {
+            if (!current || current.revision === submittedRevision) {
+              return null;
+            }
+
+            return { ...current, base: savedTask.title };
+          });
+          showSavedNotice();
+        });
       } catch (error) {
-        toast.error(action.errorMessage, {
+        toast.error("Couldn't save title", {
           description: error instanceof Error ? error.message : undefined,
         });
       }
-
-      return version + 1;
-    },
-    0,
-  );
-
-  const isClosed = STATUS_META[optimisticTask.status].group === "closed";
-
-  function saveTitleAction(title: string) {
-    const input = { title };
-    React.startTransition(() => {
-      addOptimisticTask({ type: "update", input });
-      dispatchSaveAction({
-        errorMessage: "Couldn't save title",
-        onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.searchText),
-      });
     });
   }
 
-  function saveDescriptionAction(description: string) {
+  function changeDescriptionDraft(draft: string) {
+    const revision = ++descriptionRevisionRef.current;
+    setDescriptionEdit((current) => ({
+      base:
+        current && current.draft !== current.base
+          ? current.base
+          : optimisticTask.description,
+      draft,
+      revision,
+    }));
+  }
+
+  function submitDescriptionAction() {
+    if (!descriptionEdit) return;
+
+    const description = descriptionValue.trim();
+    if (description === optimisticTask.description.trim()) {
+      setDescriptionEdit(null);
+      return;
+    }
+
+    const submittedRevision = descriptionEdit.revision;
     const input = { description };
-    React.startTransition(() => {
+    startSaving(async () => {
       addOptimisticTask({ type: "update", input });
-      dispatchSaveAction({
-        errorMessage: "Couldn't save description",
-        onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.searchText),
-      });
+
+      try {
+        const savedTask = await update(
+          input,
+          taskCacheStrategies.searchText,
+        );
+        React.startTransition(() => {
+          setDescriptionEdit((current) => {
+            if (!current || current.revision === submittedRevision) {
+              return null;
+            }
+
+            return { ...current, base: savedTask.description };
+          });
+          showSavedNotice();
+        });
+      } catch (error) {
+        toast.error("Couldn't save description", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   }
 
   function changeStatusAction(status: Task["status"]) {
     const input = { status };
-    React.startTransition(() => {
+    startSaving(async () => {
       addOptimisticTask({ type: "update", input });
-      dispatchSaveAction({
-        errorMessage: "Couldn't update status",
-        onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.status),
-      });
+
+      try {
+        await update(input, taskCacheStrategies.status);
+        React.startTransition(showSavedNotice);
+      } catch (error) {
+        toast.error("Couldn't update status", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   }
 
   function changePriorityAction(priority: Task["priority"]) {
     const input = { priority };
-    React.startTransition(() => {
+    startSaving(async () => {
       addOptimisticTask({ type: "update", input });
-      dispatchSaveAction({
-        errorMessage: "Couldn't update priority",
-        onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.priority),
-      });
+
+      try {
+        await update(input, taskCacheStrategies.priority);
+        React.startTransition(showSavedNotice);
+      } catch (error) {
+        toast.error("Couldn't update priority", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   }
 
   function changeAssigneeAction(assigneeId: string | null) {
     const input = { assigneeId };
-    React.startTransition(() => {
+    startSaving(async () => {
       addOptimisticTask({ type: "update", input });
-      dispatchSaveAction({
-        errorMessage: "Couldn't update assignee",
-        onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.assignee),
-      });
+
+      try {
+        await update(input, taskCacheStrategies.assignee);
+        React.startTransition(showSavedNotice);
+      } catch (error) {
+        toast.error("Couldn't update assignee", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   }
 
   function changeProjectAction(projectId: string | null) {
     const input = { projectId };
-    React.startTransition(() => {
+    startSaving(async () => {
       addOptimisticTask({ type: "update", input });
-      dispatchSaveAction({
-        errorMessage: "Couldn't move task",
-        onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.project),
-      });
+
+      try {
+        await update(input, taskCacheStrategies.project);
+        React.startTransition(showSavedNotice);
+      } catch (error) {
+        toast.error("Couldn't move task", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   }
 
   function changeDueDateAction(dueDate: string | null) {
     const input = { dueDate };
-    React.startTransition(() => {
+    startSaving(async () => {
       addOptimisticTask({ type: "update", input });
-      dispatchSaveAction({
-        errorMessage: "Couldn't update due date",
-        onSuccess: showSavedNotice,
-        run: () => update(input, taskCacheStrategies.dueDate),
-      });
+
+      try {
+        await update(input, taskCacheStrategies.dueDate);
+        React.startTransition(showSavedNotice);
+      } catch (error) {
+        toast.error("Couldn't update due date", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   }
 
   function addLabelAction(label: TeamLabel) {
-    React.startTransition(() => {
+    startSaving(async () => {
       addOptimisticTask({ type: "addLabel", label });
-      dispatchSaveAction({
-        errorMessage: "Couldn't add label",
-        onSuccess: showSavedNotice,
-        run: () => addLabel(label),
-      });
+
+      try {
+        await addLabel(label);
+        React.startTransition(showSavedNotice);
+      } catch (error) {
+        toast.error("Couldn't add label", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   }
 
   function removeLabelAction(labelId: string) {
-    React.startTransition(() => {
+    startSaving(async () => {
       addOptimisticTask({ type: "removeLabel", labelId });
-      dispatchSaveAction({
-        errorMessage: "Couldn't remove label",
-        onSuccess: showSavedNotice,
-        run: () => removeLabel(labelId),
-      });
+
+      try {
+        await removeLabel(labelId);
+        React.startTransition(showSavedNotice);
+      } catch (error) {
+        toast.error("Couldn't remove label", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   }
 
   const handleDelete = () => {
-    React.startTransition(() => {
-      dispatchSaveAction({
-        errorMessage: "Couldn't delete task",
-        run: () => remove(task.id),
-        onSuccess: () => {
+    startSaving(async () => {
+      try {
+        await remove(task.id);
+        React.startTransition(() => {
           toast.success("Task deleted");
           onClose();
-        },
-      });
+        });
+      } catch (error) {
+        toast.error("Couldn't delete task", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     });
   };
 
@@ -287,16 +405,16 @@ function TaskDetail({
 
       <div className="space-y-5 p-4">
         <TitleEditor
-          key={`title:${optimisticTask.id}`}
-          value={optimisticTask.title}
+          value={titleValue}
           isClosed={isClosed}
-          saveAction={saveTitleAction}
+          onChange={changeTitleDraft}
+          commitAction={submitTitleAction}
         />
 
         <DescriptionEditor
-          key={`desc:${optimisticTask.id}`}
-          value={optimisticTask.description}
-          saveAction={saveDescriptionAction}
+          value={descriptionValue}
+          onChange={changeDescriptionDraft}
+          commitAction={submitDescriptionAction}
         />
 
         <Separator />
@@ -306,7 +424,7 @@ function TaskDetail({
             <StatusControl
               value={optimisticTask.status}
               changeAction={changeStatusAction}
-              pending={isSaving}
+              pending={isStatusSaving}
             />
           </Field>
 
@@ -314,7 +432,7 @@ function TaskDetail({
             <PriorityControl
               value={optimisticTask.priority}
               changeAction={changePriorityAction}
-              pending={isSaving}
+              pending={isPrioritySaving}
             />
           </Field>
 
@@ -322,7 +440,7 @@ function TaskDetail({
             <AssigneePicker
               value={optimisticTask.assignee?.id ?? null}
               changeAction={changeAssigneeAction}
-              pending={isSaving}
+              pending={isAssigneeSaving}
             />
           </Field>
 
@@ -330,7 +448,7 @@ function TaskDetail({
             <ProjectPicker
               value={optimisticTask.project?.id ?? null}
               changeAction={changeProjectAction}
-              pending={isSaving}
+              pending={isProjectSaving}
             />
           </Field>
 
@@ -401,10 +519,10 @@ type OptimisticTaskChange =
   | { type: "addLabel"; label: TeamLabel }
   | { type: "removeLabel"; labelId: string };
 
-type SaveAction = {
-  errorMessage: string;
-  run: () => Promise<unknown>;
-  onSuccess?: () => void;
+type TextEdit = {
+  base: string;
+  draft: string;
+  revision: number;
 };
 
 function useSavedNotice(): [boolean, () => void] {
@@ -525,28 +643,19 @@ function Field({
 function TitleEditor({
   value,
   isClosed,
-  saveAction,
+  onChange,
+  commitAction,
 }: {
   value: string;
   isClosed: boolean;
-  saveAction: (title: string) => void;
+  onChange: (value: string) => void;
+  commitAction: () => void;
 }) {
-  const [draft, setDraft] = React.useState(value);
-
-  function commit() {
-    const next = draft.trim();
-    if (next && next !== value) {
-      saveAction(next);
-    } else if (!next) {
-      setDraft(value);
-    }
-  }
-
   return (
     <Textarea
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={commitAction}
       onKeyDown={(event) => {
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
@@ -564,24 +673,18 @@ function TitleEditor({
 
 function DescriptionEditor({
   value,
-  saveAction,
+  onChange,
+  commitAction,
 }: {
   value: string;
-  saveAction: (description: string) => void;
+  onChange: (value: string) => void;
+  commitAction: () => void;
 }) {
-  const [draft, setDraft] = React.useState(value);
-
-  function commit() {
-    if (draft.trim() !== value.trim()) {
-      saveAction(draft.trim());
-    }
-  }
-
   return (
     <Textarea
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={commitAction}
       placeholder="Add a description…"
       rows={4}
       className="resize-none border-border/70 bg-background/50 text-sm leading-relaxed"

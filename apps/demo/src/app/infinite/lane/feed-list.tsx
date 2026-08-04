@@ -130,8 +130,8 @@ export function FeedList({
     return () => observer.disconnect();
   }, [autoLoad, hasNext, isConverging, loadMore, loadMoreBurst, refreshError]);
 
-  const handleRename = (item: FeedItem) => void mutations.rename(item);
-  const handleDelete = (item: FeedItem) => void mutations.remove(item);
+  const renameAction = (item: FeedItem) => void mutations.rename(item);
+  const deleteAction = (item: FeedItem) => void mutations.remove(item);
 
   return (
     <section className="flex flex-col gap-3 rounded-xl border bg-card p-4">
@@ -195,8 +195,8 @@ export function FeedList({
                     item={item}
                     annotation={annotations[offset + itemIndex]}
                     busy={mutations.busyItemId === item.id}
-                    onRename={handleRename}
-                    onDelete={handleDelete}
+                    renameAction={renameAction}
+                    deleteAction={deleteAction}
                   />
                 ))}
               </ul>

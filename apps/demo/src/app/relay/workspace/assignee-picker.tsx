@@ -96,7 +96,7 @@ export function AssigneePicker({
               {open ? (
                 <AssigneeOptions
                   value={value}
-                  onPick={(member) => {
+                  pickAction={(member) => {
                     changeAction(member);
                     setOpen(false);
                   }}
@@ -112,10 +112,10 @@ export function AssigneePicker({
 
 function AssigneeOptions({
   value,
-  onPick,
+  pickAction,
 }: {
   value: string | null;
-  onPick: (member: PickerMember | null) => void;
+  pickAction: (member: PickerMember | null) => void;
 }) {
   const { members } = useLazyLoadQuery<assigneePickerQuery>(
     membersQuery,
@@ -129,7 +129,7 @@ function AssigneeOptions({
       <CommandGroup>
         <CommandItem
           value="unassigned no-assignee"
-          onSelect={() => onPick(null)}
+          onSelect={() => pickAction(null)}
         >
           <UserX className="size-4 text-muted-foreground" />
           <span className="flex-1">Unassigned</span>
@@ -140,7 +140,7 @@ function AssigneeOptions({
             key={member.id}
             value={`${member.name} ${member.email}`}
             onSelect={() =>
-              onPick({
+              pickAction({
                 id: member.id,
                 name: member.name,
                 initials: member.initials,

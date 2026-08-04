@@ -24,14 +24,14 @@ export function TaskRow({
   isMine,
   dimmed,
   onSelect,
-  onDeleted,
+  deleteAction,
 }: {
   task: Task;
   isSelected: boolean;
   isMine: boolean;
   dimmed?: boolean;
   onSelect: () => void;
-  onDeleted?: (taskId: string) => void;
+  deleteAction?: (taskId: string) => void;
 }) {
   const update = useUpdateTask(task.id);
   const remove = useDeleteTask();
@@ -41,7 +41,7 @@ export function TaskRow({
     remove.mutate(task.id, {
       onSuccess: () => {
         toast.success("Task deleted");
-        onDeleted?.(task.id);
+        deleteAction?.(task.id);
       },
       onError: (error) =>
         toast.error("Couldn't delete task", {
@@ -77,7 +77,7 @@ export function TaskRow({
         <StatusControl
           variant="icon"
           value={task.status}
-          onChange={(status) =>
+          changeAction={(status) =>
             update.mutate(
               { input: { status }, strategy: taskCacheStrategies.status },
               {

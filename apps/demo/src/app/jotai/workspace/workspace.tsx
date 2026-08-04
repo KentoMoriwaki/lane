@@ -218,7 +218,7 @@ function WorkspaceShell() {
       <CreateTaskDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onCreated={view.selectTask}
+        createAction={view.selectTask}
       />
     </div>
   );

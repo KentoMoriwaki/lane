@@ -88,6 +88,12 @@ function TaskDetail({
   const removeLabel = useRemoveTaskLabel(taskId);
   const remove = useDeleteTask();
   const [isSavedVisible, showSavedNotice] = useSavedNotice();
+  const [titleEdit, setTitleEdit] = React.useState<TextEdit | null>(null);
+  const [descriptionEdit, setDescriptionEdit] =
+    React.useState<TextEdit | null>(null);
+  const titleRevisionRef = React.useRef(0);
+  const descriptionRevisionRef = React.useRef(0);
+  const [isTextSaving, startTextSave] = React.useTransition();
 
   if (isPending) {
     return <DetailSkeleton />;
@@ -110,9 +116,38 @@ function TaskDetail({
     return <DetailSkeleton />;
   }
 
-  const isClosed = STATUS_META[task.status].group === "closed";
+  const loadedTask = task;
+  const isClosed = STATUS_META[loadedTask.status].group === "closed";
   const isSaving =
-    update.isPending || addLabel.isPending || removeLabel.isPending;
+    isTextSaving ||
+    update.isPending ||
+    addLabel.isPending ||
+    removeLabel.isPending;
+  const titleValue =
+    titleEdit && titleEdit.draft !== titleEdit.base
+      ? titleEdit.draft
+      : task.title;
+  const descriptionValue =
+    descriptionEdit && descriptionEdit.draft !== descriptionEdit.base
+      ? descriptionEdit.draft
+      : task.description;
+  const taskBeforeUpdate = update.context?.detail;
+  const isStatusSaving =
+    update.isPending &&
+    taskBeforeUpdate !== undefined &&
+    task.status !== taskBeforeUpdate.status;
+  const isPrioritySaving =
+    update.isPending &&
+    taskBeforeUpdate !== undefined &&
+    task.priority !== taskBeforeUpdate.priority;
+  const isAssigneeSaving =
+    update.isPending &&
+    taskBeforeUpdate !== undefined &&
+    (task.assignee?.id ?? null) !== (taskBeforeUpdate.assignee?.id ?? null);
+  const isProjectSaving =
+    update.isPending &&
+    taskBeforeUpdate !== undefined &&
+    (task.project?.id ?? null) !== (taskBeforeUpdate.project?.id ?? null);
 
   const onMutationError = (message: string) => (mutationError: unknown) =>
     toast.error(message, {
@@ -129,6 +164,102 @@ function TaskDetail({
       onError: onMutationError("Couldn't delete task"),
     });
   };
+
+  function changeTitleDraft(draft: string) {
+    const revision = ++titleRevisionRef.current;
+    setTitleEdit((current) => ({
+      base:
+        current && current.draft !== current.base
+          ? current.base
+          : loadedTask.title,
+      draft,
+      revision,
+    }));
+  }
+
+  function submitTitleAction() {
+    if (!titleEdit) return;
+
+    const title = titleValue.trim();
+    if (!title) {
+      setTitleEdit(null);
+      return;
+    }
+    if (title === loadedTask.title) {
+      setTitleEdit(null);
+      return;
+    }
+
+    const submittedRevision = titleEdit.revision;
+    startTextSave(async () => {
+      try {
+        const savedTask = await update.mutateAsync({
+          input: { title },
+          strategy: taskCacheStrategies.searchText,
+        });
+        React.startTransition(() => {
+          setTitleEdit((current) => {
+            if (!current || current.revision === submittedRevision) {
+              return null;
+            }
+
+            return { ...current, base: savedTask.title };
+          });
+          showSavedNotice();
+        });
+      } catch (error) {
+        toast.error("Couldn't save title", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
+    });
+  }
+
+  function changeDescriptionDraft(draft: string) {
+    const revision = ++descriptionRevisionRef.current;
+    setDescriptionEdit((current) => ({
+      base:
+        current && current.draft !== current.base
+          ? current.base
+          : loadedTask.description,
+      draft,
+      revision,
+    }));
+  }
+
+  function submitDescriptionAction() {
+    if (!descriptionEdit) return;
+
+    const description = descriptionValue.trim();
+    if (description === loadedTask.description.trim()) {
+      setDescriptionEdit(null);
+      return;
+    }
+
+    const submittedRevision = descriptionEdit.revision;
+    startTextSave(async () => {
+      try {
+        const savedTask = await update.mutateAsync({
+          input: { description },
+          strategy: taskCacheStrategies.searchText,
+        });
+        React.startTransition(() => {
+          setDescriptionEdit((current) => {
+            if (!current || current.revision === submittedRevision) {
+              return null;
+            }
+
+            return { ...current, base: savedTask.description };
+          });
+          showSavedNotice();
+        });
+      } catch (error) {
+        toast.error("Couldn't save description", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
+    });
+  }
 
   return (
     <div className="flex flex-col">
@@ -180,35 +311,16 @@ function TaskDetail({
 
       <div className="space-y-5 p-4">
         <TitleEditor
-          key={`title:${task.id}`}
-          value={task.title}
+          value={titleValue}
           isClosed={isClosed}
-          onSave={(title) =>
-            update.mutate(
-              { input: { title }, strategy: taskCacheStrategies.searchText },
-              {
-                onError: onMutationError("Couldn't save title"),
-                onSuccess: showSavedNotice,
-              },
-            )
-          }
+          onChange={changeTitleDraft}
+          commitAction={submitTitleAction}
         />
 
         <DescriptionEditor
-          key={`desc:${task.id}`}
-          value={task.description}
-          onSave={(description) =>
-            update.mutate(
-              {
-                input: { description },
-                strategy: taskCacheStrategies.searchText,
-              },
-              {
-                onError: onMutationError("Couldn't save description"),
-                onSuccess: showSavedNotice,
-              },
-            )
-          }
+          value={descriptionValue}
+          onChange={changeDescriptionDraft}
+          commitAction={submitDescriptionAction}
         />
 
         <Separator />
@@ -217,7 +329,7 @@ function TaskDetail({
           <Field label="Status">
             <StatusControl
               value={task.status}
-              onChange={(status) =>
+              changeAction={(status) =>
                 update.mutate(
                   { input: { status }, strategy: taskCacheStrategies.status },
                   {
@@ -226,14 +338,14 @@ function TaskDetail({
                   },
                 )
               }
-              pending={update.isPending}
+              pending={isStatusSaving}
             />
           </Field>
 
           <Field label="Priority">
             <PriorityControl
               value={task.priority}
-              onChange={(priority) =>
+              changeAction={(priority) =>
                 update.mutate(
                   {
                     input: { priority },
@@ -245,14 +357,14 @@ function TaskDetail({
                   },
                 )
               }
-              pending={update.isPending}
+              pending={isPrioritySaving}
             />
           </Field>
 
           <Field label="Assignee">
             <AssigneePicker
               value={task.assignee?.id ?? null}
-              onChange={(assigneeId) =>
+              changeAction={(assigneeId) =>
                 update.mutate(
                   {
                     input: { assigneeId },
@@ -264,14 +376,14 @@ function TaskDetail({
                   },
                 )
               }
-              pending={update.isPending}
+              pending={isAssigneeSaving}
             />
           </Field>
 
           <Field label="Project">
             <ProjectPicker
               value={task.project?.id ?? null}
-              onChange={(projectId) =>
+              changeAction={(projectId) =>
                 update.mutate(
                   {
                     input: { projectId },
@@ -283,7 +395,7 @@ function TaskDetail({
                   },
                 )
               }
-              pending={update.isPending}
+              pending={isProjectSaving}
             />
           </Field>
 
@@ -346,13 +458,13 @@ function TaskDetail({
             ))}
             <LabelPicker
               selectedIds={task.labels.map((label) => label.id)}
-              onAdd={(label) =>
+              addAction={(label) =>
                 addLabel.mutate(label, {
                   onError: onMutationError("Couldn't add label"),
                   onSuccess: showSavedNotice,
                 })
               }
-              onRemove={(labelId) =>
+              removeAction={(labelId) =>
                 removeLabel.mutate(labelId, {
                   onError: onMutationError("Couldn't remove label"),
                   onSuccess: showSavedNotice,
@@ -418,31 +530,28 @@ function useSavedNotice(): [boolean, () => void] {
   return [isVisible, show];
 }
 
+type TextEdit = {
+  base: string;
+  draft: string;
+  revision: number;
+};
+
 function TitleEditor({
   value,
   isClosed,
-  onSave,
+  onChange,
+  commitAction,
 }: {
   value: string;
   isClosed: boolean;
-  onSave: (title: string) => void;
+  onChange: (value: string) => void;
+  commitAction: () => void;
 }) {
-  const [draft, setDraft] = React.useState(value);
-
-  function commit() {
-    const next = draft.trim();
-    if (next && next !== value) {
-      onSave(next);
-    } else if (!next) {
-      setDraft(value);
-    }
-  }
-
   return (
     <Textarea
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={commitAction}
       onKeyDown={(event) => {
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
@@ -460,24 +569,18 @@ function TitleEditor({
 
 function DescriptionEditor({
   value,
-  onSave,
+  onChange,
+  commitAction,
 }: {
   value: string;
-  onSave: (description: string) => void;
+  onChange: (value: string) => void;
+  commitAction: () => void;
 }) {
-  const [draft, setDraft] = React.useState(value);
-
-  function commit() {
-    if (draft.trim() !== value.trim()) {
-      onSave(draft.trim());
-    }
-  }
-
   return (
     <Textarea
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={commitAction}
       placeholder="Add a description…"
       rows={4}
       className="resize-none border-border/70 bg-background/50 text-sm leading-relaxed"

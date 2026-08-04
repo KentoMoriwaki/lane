@@ -51,11 +51,11 @@ const emptyDraft: Draft = {
 export function CreateTaskDialog({
   open,
   onOpenChange,
-  onCreated,
+  createAction,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (taskId: string) => void;
+  createAction: (taskId: string) => void;
 }) {
   const createTask = useCreateTask();
   const { notifyMutation } = useWorkspaceRefresh();
@@ -103,7 +103,7 @@ export function CreateTaskDialog({
         // A created task isn't in any list result yet, so the list refetches;
         // the counters refresh too.
         notifyMutation("create");
-        onCreated(taskId);
+        createAction(taskId);
       } catch (error) {
         setFormError(
           error instanceof Error ? error.message : "Couldn't create task.",

@@ -19,7 +19,7 @@ const PRIMARY_GROUPS: VariantGroup[] = [
     eyebrow: "App Router integration",
     title: "The route owns each data generation",
     description:
-      "Next resolves tagged Cache Component reads and converges mutations through the Server Action payload. Plain App Router ↔ use-lane is the controlled comparison: the data lifecycle stays identical and only client-side distribution changes.",
+      "Next resolves tagged Cache Component reads and converges mutations through the Server Action payload. Plain App Router ↔ use-lane is the controlled comparison; the TanStack Query lab shows what changes when that generation is merged into a browser cache.",
     variants: [
       {
         href: "/app-router",
@@ -34,6 +34,13 @@ const PRIMARY_GROUPS: VariantGroup[] = [
         badge: "Next → external reads",
         tagline:
           "The same reads, tags, actions, and latency as the baseline. Lane only distributes the published payload through keyed external reads.",
+      },
+      {
+        href: "/react-query-rsc",
+        name: "TanStack Query + RSC",
+        badge: "integration lab",
+        tagline:
+          "Each authoritative server generation is dehydrated into one long-lived browser QueryClient, making the ownership bridge and its effect-time merge observable.",
       },
     ],
   },
@@ -60,14 +67,6 @@ const PRIMARY_GROUPS: VariantGroup[] = [
     ],
   },
 ];
-
-const INTEGRATION_VARIANT: Variant = {
-  href: "/react-query-rsc",
-  name: "TanStack Query + RSC",
-  badge: "integration lab",
-  tagline:
-    "Each authoritative server generation is dehydrated into one long-lived browser QueryClient. The lab makes that bridge and its effect-time merge observable; it is not the canonical React Query baseline.",
-};
 
 const REFERENCE_VARIANTS: Variant[] = [
   {
@@ -118,32 +117,17 @@ export default function Home() {
                 {group.description}
               </p>
             </div>
-            <ul className="grid gap-3 md:grid-cols-2">
+            <ul
+              className={`grid gap-3 md:grid-cols-2 ${
+                group.variants.length === 3 ? "lg:grid-cols-3" : ""
+              }`}
+            >
               {group.variants.map((variant) => (
                 <VariantCard key={variant.href} variant={variant} />
               ))}
             </ul>
           </section>
         ))}
-
-        <section className="space-y-5 border-t pt-10">
-          <div className="max-w-3xl space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              Integration lab
-            </p>
-            <h2 className="text-2xl font-semibold tracking-tight">
-              Bridging an App Router generation into a browser cache
-            </h2>
-            <p className="text-pretty text-sm leading-6 text-muted-foreground">
-              This isolates the ownership problem teams encounter when Next and
-              a long-lived client store both participate in mutation
-              convergence.
-            </p>
-          </div>
-          <ul className="max-w-2xl">
-            <VariantCard variant={INTEGRATION_VARIANT} />
-          </ul>
-        </section>
 
         <section className="space-y-5 border-t pt-10">
           <div className="max-w-3xl space-y-2">

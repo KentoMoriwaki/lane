@@ -240,17 +240,12 @@ startInvalidationTransition(async () => {
 });
 ```
 
-[`invalidate(key, { after })`](./api-reference.md#announcing-an-invalidation-before-the-mutation-finishes)
-reaches the same window by handing Lane the action's promise as a clock instead.
-It predates the transition form and costs one thing that form does not: the
-promise is Lane's to observe, so a rejected action still converges and its
-failure never surfaces through Lane.
-
 None of this is a default to apply everywhere. When the pending signal is
 already where the user is looking — a submit button on `useActionState` — and
-the affected reads are elsewhere, the plain shape above is the right one. See
-[when to reach for it](./api-reference.md#when-to-reach-for-it) for the rest,
-including the one place `after` costs you something.
+the affected reads are elsewhere, the plain shape above is the right one: a
+window nobody is watching costs renders and buys nothing. See
+[`startInvalidationTransition`](./api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action)
+for the rest.
 
 ### Let readers of one key agree on freshness
 

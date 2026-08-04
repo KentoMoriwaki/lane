@@ -79,10 +79,9 @@ The race that a cancel API usually exists to solve does not arise here, so
 stopping is all it is for. Elsewhere cancellation is load-bearing just before an
 optimistic update — a refetch that started before the mutation must not land after
 it and overwrite the result. Lane closes that path structurally instead: `set`
-aborts and publishes in one step, `update` chains rather than races, and
-`invalidate(key, { after })` gates the re-read on the action. A response that
-arrives late regardless writes into a cache object the entry no longer holds, and
-is ignored.
+aborts and publishes in one step, and `update` chains rather than races. A
+response that arrives late regardless writes into a cache object the entry no
+longer holds, and is ignored.
 
 **So `cancel` is for a read the caller started and can still account for.** Not
 "stop whatever is in flight under this key" — that reading is what makes it

@@ -24,9 +24,8 @@ export function readOrCreate<T, C = T>(
   key: LaneKey,
   loader: LaneLoader<T, C>,
   options?: LaneReadOptions,
-  gate?: Promise<void>,
 ): Promise<LaneRead<T>> {
-  return readEntry(lane, serializeKey(key), key, loader, options, gate);
+  return readEntry(lane, serializeKey(key), key, loader, options);
 }
 
 export function subscribeLane(

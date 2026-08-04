@@ -43,9 +43,6 @@ export type LaneReadOptions = {
 type LaneSubscription = (
   entry: LaneEntryInfo,
   source: LaneInvalidationSource,
-  // Set by `invalidate(..., { after })`: the re-read this notification triggers
-  // must wait for it before fetching. Pass it straight back to `readOrCreate`.
-  gate: Promise<void> | undefined,
 ) => void;
 
 type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
@@ -55,9 +52,9 @@ type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
  *
  * Separate from {@link LaneSubscription} because it is the one notification that
  * does not describe a cache: no source to pick a surface with (an announcement
- * is always the explicit one) and no gate to hold a re-read behind, because
- * there is no re-read. A subscriber that acts on it schedules nothing — see
- * `useLane`, where an empty `startTransition` is the whole handler.
+ * is always the explicit one), and nothing to re-read. A subscriber that acts on
+ * it schedules nothing — see `useLane`, where an empty `startTransition` is the
+ * whole handler.
  */
 type LaneAnnounceSubscription = (entry: LaneEntryInfo) => void;
 
@@ -341,7 +338,6 @@ export function readOrCreate<T, C = T>(
   key: LaneKey,
   loader: LaneLoader<T, C>,
   options?: LaneReadOptions,
-  gate?: Promise<void>,
 ): Promise<LaneRead<T>> {
   const state = getLaneState(lane);
   const entry = getOrCreateEntry(state, key, keyId);
@@ -368,10 +364,7 @@ export function readOrCreate<T, C = T>(
   // cache, not `lastFulfilled`) and is `undefined` once the entry itself is
   // gone.
   const current = entry.lastFulfilled?.value as C | undefined;
-  const load = () => runLoader(loader, key, controller.signal, options, current);
-  // A gated read is an in-flight read that has not begun: readers see it as
-  // pending and hold their last value on screen until the action lands.
-  const promise = gate ? gate.then(load) : load();
+  const promise = runLoader(loader, key, controller.signal, options, current);
 
   return setEntryCache(state, entry, promise, controller);
 }
@@ -604,35 +597,8 @@ function invalidateLaneEntry(
   // value still fails, because that is the violation.
   assertClientOwned(entry, "invalidate");
 
-  // `{ after }` rides the notification: subscribers re-read synchronously during
-  // the fan-out, the first one installs a cache whose load waits for the gate,
-  // and the rest dedupe onto it. The gate only has to outlive the fan-out, so it
-  // is an argument rather than state. Settlement is all that is observed — a
-  // rejected action still invalidates, because `after` chooses *when* to
-  // converge rather than whether the key is suspect, and swallowing it keeps a
-  // caller-owned failure from surfacing through Lane.
-  const gate = options.after?.then(noop, noop);
-
-  if (gate && entry.subscribers.size === 0) {
-    // Nobody to announce it to, and nobody to refill the cache the fan-out would
-    // empty — so emptying it would leave a reader arriving mid-action fetching
-    // straight into the pre-mutation source. Leave the entry intact and converge
-    // when the action lands, which is what `await action; invalidate(key)` does.
-    // Resolved by key, so an action outliving its entry still converges whatever
-    // occupies the slot.
-    void gate.then(() => {
-      const current = state.entries.get(entry.keyId);
-
-      if (current) {
-        invalidateLaneEntry(state, current, {}, source);
-      }
-    });
-
-    return;
-  }
-
   removeEntryCache(entry);
-  notifyInvalidate(entry, source, gate);
+  notifyInvalidate(entry, source);
   cleanupEntry(state, entry);
 }
 
@@ -754,14 +720,13 @@ function cleanupEntry(state: LaneState, entry: LaneEntry): void {
 function notifyInvalidate(
   entry: LaneEntry,
   source: LaneInvalidationSource,
-  gate?: Promise<void>,
 ): void {
   const info = entryInfo(entry);
 
   entry.lastNotifySource = source;
 
   for (const subscriber of [...entry.subscribers]) {
-    subscriber.onInvalidate?.(info, source, gate);
+    subscriber.onInvalidate?.(info, source);
   }
 }
 

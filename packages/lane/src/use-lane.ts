@@ -161,7 +161,6 @@ export function useLane<T, C = T>(
     targetKeyId: string,
     targetKey: LaneKey,
     source: LaneInvalidationSource,
-    gate: Promise<void> | undefined,
   ) => {
     // Only fires while subscribed, which never happens without a loader; the
     // guard also narrows `loader` to non-undefined for the read below.
@@ -171,7 +170,7 @@ export function useLane<T, C = T>(
 
     const updatePromise = () => {
       setPromise(
-        readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions, gate),
+        readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions),
       );
     };
 
@@ -398,8 +397,8 @@ export function useLane<T, C = T>(
       onAnnounce: () => {
         onAnnounce();
       },
-      onInvalidate: (entry, source, gate) => {
-        onInvalidate(lane, entry.keyId, entry.key, source, gate);
+      onInvalidate: (entry, source) => {
+        onInvalidate(lane, entry.keyId, entry.key, source);
       },
       onRemove: (entry) => {
         onRemove(lane, entry.keyId, entry.key);

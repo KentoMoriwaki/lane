@@ -37,11 +37,44 @@ All notable changes to `use-lane` are documented here. The format is based on
   because the source has not changed yet. External reads do not get it, for the
   reason they do not get `invalidate`.
 
-  It costs **+120 B** on the typical `LaneProvider` + `useLane` pair, so the two
-  `size-limit` budgets that cover it move with it (3.9 → 4.05 kB, 5.55 → 5.7 kB).
-  The store grows 60 B (2.47 → 2.53 kB) for the scoped form, and stays inside the
-  no-React guard: the announcement is a store notification, and the transition it
-  is called from is the caller's.
+  It costs **+120 B** on the typical `LaneProvider` + `useLane` pair on its own,
+  and removing the gate `after` needed gives 90 B of that back, so the net across
+  both changes is **+30 B** (3.84 → 3.87 kB, against an unchanged 3.9 kB budget).
+  The store is back where it started at 2.47 kB, and no `size-limit` budget
+  moves.
+
+### Removed
+
+- **Breaking: `invalidate`'s `after` option is gone**, replaced by
+  `startInvalidationTransition`. It answered the same question — how to mark
+  readers pending while a mutation runs — by taking the action's promise as a
+  clock and holding the re-reads behind it. That worked, and cost more than it
+  looked: Lane had to observe a promise that was never its own (swallowing the
+  rejection, so a failed action still converged and its failure never surfaced),
+  and the early invalidation it performed had to be undone by a gate, since
+  re-reading before the action lands fetches the pre-mutation source. Running the
+  action inside a transition needs none of that — React's entanglement holds the
+  window open, so the gate, the swallowed rejection, and the deferral path for a
+  key nobody was reading all leave with the option.
+
+  ```ts
+  // Before
+  const saved = saveTodo(patch);
+  lane.invalidateAll(["todos"], { after: saved });
+  await saved;
+
+  // After
+  startInvalidationTransition(async () => {
+    await saveTodo(patch);
+    lane.invalidateAll(["todos"]);
+  });
+  ```
+
+  One behavior does not carry over, and it was the option's own compromise: a
+  rejected action still converged, because `after` chose *when* to re-read rather
+  than whether to. Now the converge calls are yours, inside the action, so a
+  failure that should not converge simply does not reach them — and one that
+  should still can, from a `catch`.
 
 ### Changed
 

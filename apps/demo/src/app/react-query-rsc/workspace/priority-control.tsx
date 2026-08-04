@@ -14,13 +14,13 @@ import { cn } from "@/lib/utils";
 
 export function PriorityControl({
   value,
-  onChange,
+  changeAction,
   variant = "full",
   pending,
   disabled,
 }: {
   value: TaskPriority;
-  onChange: (next: TaskPriority) => void;
+  changeAction: (next: TaskPriority) => void;
   variant?: "full" | "icon";
   pending?: boolean;
   disabled?: boolean;
@@ -64,7 +64,7 @@ export function PriorityControl({
               type="button"
               onClick={() => {
                 setOpen(false);
-                if (priority !== value) onChange(priority);
+                if (priority !== value) changeAction(priority);
               }}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
             >

@@ -51,13 +51,13 @@ export function TaskRow({
   currentUserId,
   isSelected,
   onSelect,
-  onDeleted,
+  deleteAction,
 }: {
   task: taskRow_task$key;
   currentUserId: string;
   isSelected: boolean;
   onSelect: () => void;
-  onDeleted?: (taskId: string) => void;
+  deleteAction?: (taskId: string) => void;
 }) {
   const task = useFragment(taskRowFragment, taskRef);
   const update = useUpdateTask(task.id);
@@ -91,7 +91,7 @@ export function TaskRow({
       .then(() => {
         notifyMutation("delete");
         toast.success("Task deleted");
-        onDeleted?.(task.id);
+        deleteAction?.(task.id);
       })
       .catch((error) =>
         toast.error("Couldn't delete task", {

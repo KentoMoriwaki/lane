@@ -206,7 +206,7 @@ function WorkspaceScreen({
         projects={projects}
         labels={labels}
         onOpenChange={setCreateOpen}
-        onCreated={selectTask}
+        createAction={selectTask}
       />
     </div>
   );

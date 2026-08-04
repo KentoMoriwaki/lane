@@ -79,7 +79,7 @@ export function TaskList({
                 currentUserId={currentUserId}
                 isSelected={task.id === selectedTaskId}
                 onSelect={() => onSelectTask(task.id)}
-                onDeleted={onClearSelection}
+                deleteAction={onClearSelection}
               />
             ))}
           </div>

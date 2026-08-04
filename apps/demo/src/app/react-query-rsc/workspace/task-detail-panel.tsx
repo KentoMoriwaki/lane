@@ -183,7 +183,7 @@ function TaskDetail({
           key={`title:${task.id}`}
           value={task.title}
           isClosed={isClosed}
-          onSave={(title) =>
+          saveAction={(title) =>
             update.mutate(
               { input: { title }, strategy: taskCacheStrategies.searchText },
               {
@@ -197,7 +197,7 @@ function TaskDetail({
         <DescriptionEditor
           key={`desc:${task.id}`}
           value={task.description}
-          onSave={(description) =>
+          saveAction={(description) =>
             update.mutate(
               {
                 input: { description },
@@ -217,7 +217,7 @@ function TaskDetail({
           <Field label="Status">
             <StatusControl
               value={task.status}
-              onChange={(status) =>
+              changeAction={(status) =>
                 update.mutate(
                   { input: { status }, strategy: taskCacheStrategies.status },
                   {
@@ -233,7 +233,7 @@ function TaskDetail({
           <Field label="Priority">
             <PriorityControl
               value={task.priority}
-              onChange={(priority) =>
+              changeAction={(priority) =>
                 update.mutate(
                   {
                     input: { priority },
@@ -252,7 +252,7 @@ function TaskDetail({
           <Field label="Assignee">
             <AssigneePicker
               value={task.assignee?.id ?? null}
-              onChange={(assigneeId) =>
+              changeAction={(assigneeId) =>
                 update.mutate(
                   {
                     input: { assigneeId },
@@ -271,7 +271,7 @@ function TaskDetail({
           <Field label="Project">
             <ProjectPicker
               value={task.project?.id ?? null}
-              onChange={(projectId) =>
+              changeAction={(projectId) =>
                 update.mutate(
                   {
                     input: { projectId },
@@ -346,13 +346,13 @@ function TaskDetail({
             ))}
             <LabelPicker
               selectedIds={task.labels.map((label) => label.id)}
-              onAdd={(label) =>
+              addAction={(label) =>
                 addLabel.mutate(label, {
                   onError: onMutationError("Couldn't add label"),
                   onSuccess: showSavedNotice,
                 })
               }
-              onRemove={(labelId) =>
+              removeAction={(labelId) =>
                 removeLabel.mutate(labelId, {
                   onError: onMutationError("Couldn't remove label"),
                   onSuccess: showSavedNotice,
@@ -424,18 +424,18 @@ function useSavedNotice(): [boolean, () => void] {
 function TitleEditor({
   value,
   isClosed,
-  onSave,
+  saveAction,
 }: {
   value: string;
   isClosed: boolean;
-  onSave: (title: string) => void;
+  saveAction: (title: string) => void;
 }) {
   const [draft, setDraft] = React.useState(value);
 
   function commit() {
     const next = draft.trim();
     if (next && next !== value) {
-      onSave(next);
+      saveAction(next);
     } else if (!next) {
       setDraft(value);
     }
@@ -463,16 +463,16 @@ function TitleEditor({
 
 function DescriptionEditor({
   value,
-  onSave,
+  saveAction,
 }: {
   value: string;
-  onSave: (description: string) => void;
+  saveAction: (description: string) => void;
 }) {
   const [draft, setDraft] = React.useState(value);
 
   function commit() {
     if (draft.trim() !== value.trim()) {
-      onSave(draft.trim());
+      saveAction(draft.trim());
     }
   }
 

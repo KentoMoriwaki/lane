@@ -273,7 +273,7 @@ function WorkspaceShell({
       <CreateTaskDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onCreated={selectTask}
+        createAction={selectTask}
       />
     </div>
     </WorkspaceRefreshProvider>

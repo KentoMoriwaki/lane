@@ -88,7 +88,7 @@ export function ProjectPicker({
           <React.Suspense fallback={<OptionsFallback />}>
             <ProjectOptions
               value={value}
-              onPick={(project) => {
+              pickAction={(project) => {
                 changeAction(project);
                 setOpen(false);
               }}
@@ -102,10 +102,10 @@ export function ProjectPicker({
 
 function ProjectOptions({
   value,
-  onPick,
+  pickAction,
 }: {
   value: string | null;
-  onPick: (project: PickerProject | null) => void;
+  pickAction: (project: PickerProject | null) => void;
 }) {
   const [listKey, setListKey] = React.useState(0);
   const [search, setSearch] = React.useState("");
@@ -129,7 +129,7 @@ function ProjectOptions({
       try {
         const project = await createProject({ name: trimmed, color });
         setListKey((key) => key + 1);
-        onPick({ id: project.id, name: project.name, color: project.color });
+        pickAction({ id: project.id, name: project.name, color: project.color });
         toast.success(`Project “${project.name}” created`);
       } catch (error) {
         toast.error("Couldn't create project", {
@@ -149,7 +149,7 @@ function ProjectOptions({
       <CommandList>
         <CommandEmpty>No matching project.</CommandEmpty>
         <CommandGroup>
-          <CommandItem value="__no_project__" onSelect={() => onPick(null)}>
+          <CommandItem value="__no_project__" onSelect={() => pickAction(null)}>
             <Hash className="size-4 text-muted-foreground" />
             <span className="flex-1">No project</span>
             {value === null ? <Check className="size-4 text-cobalt" /> : null}
@@ -159,7 +159,7 @@ function ProjectOptions({
               key={project.id}
               value={project.name}
               onSelect={() =>
-                onPick({
+                pickAction({
                   id: project.id,
                   name: project.name,
                   color: project.color,

@@ -25,14 +25,14 @@ export function TaskRow({
   isMine,
   dimmed,
   onSelect,
-  onDeleted,
+  deleteAction,
 }: {
   task: Task;
   isSelected: boolean;
   isMine: boolean;
   dimmed?: boolean;
   onSelect: () => void;
-  onDeleted?: (taskId: string) => void;
+  deleteAction?: (taskId: string) => void;
 }) {
   const update = useUpdateTask(task.id);
   const remove = useDeleteTask();
@@ -65,7 +65,7 @@ export function TaskRow({
         await remove(task.id);
         setDeleteConfirmed(true);
         toast.success("Task deleted");
-        onDeleted?.(task.id);
+        deleteAction?.(task.id);
       } catch (error) {
         toast.error("Couldn't delete task", {
           description: error instanceof Error ? error.message : undefined,

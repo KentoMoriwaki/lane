@@ -121,14 +121,14 @@ export function FeedRow({
   item,
   annotation,
   busy,
-  onRename,
-  onDelete,
+  renameAction,
+  deleteAction,
 }: {
   item: FeedItem;
   annotation: RowAnnotation | undefined;
   busy: boolean;
-  onRename: (item: FeedItem) => void;
-  onDelete: (item: FeedItem) => void;
+  renameAction: (item: FeedItem) => void;
+  deleteAction: (item: FeedItem) => void;
 }) {
   return (
     <>
@@ -162,7 +162,7 @@ export function FeedRow({
                 variant="ghost"
                 size="icon-sm"
                 title="Rename this row (in place, no reordering)"
-                onClick={() => onRename(item)}
+                onClick={() => renameAction(item)}
                 disabled={busy}
               >
                 <Pencil />
@@ -171,7 +171,7 @@ export function FeedRow({
                 variant="ghost"
                 size="icon-sm"
                 title="Delete this row"
-                onClick={() => onDelete(item)}
+                onClick={() => deleteAction(item)}
                 disabled={busy}
               >
                 <Trash2 />

@@ -124,7 +124,7 @@ export function TaskList({
                   isMine={task.assignee?.id === currentUserId}
                   isSelected={task.id === selectedTaskId}
                   onSelect={() => onSelectTask(task.id)}
-                  onDeleted={onClearSelection}
+                  deleteAction={onClearSelection}
                 />
               ))}
             </div>
@@ -141,14 +141,14 @@ function TaskRow({
   isSelected,
   isMine,
   onSelect,
-  onDeleted,
+  deleteAction,
 }: {
   ctx: WorkspaceContext;
   task: Task;
   isSelected: boolean;
   isMine: boolean;
   onSelect: () => void;
-  onDeleted: (taskId: string) => void;
+  deleteAction: (taskId: string) => void;
 }) {
   const [isUpdating, startUpdateTransition] = React.useTransition();
   const [isDeleting, startDeleteTransition] = React.useTransition();
@@ -168,7 +168,7 @@ function TaskRow({
         await deleteTaskAction(ctx, task.id);
         setDeleteConfirmed(true);
         toast.success("Task deleted");
-        onDeleted(task.id);
+        deleteAction(task.id);
       } catch (error) {
         toast.error("Couldn't delete task", {
           description: error instanceof Error ? error.message : undefined,

@@ -61,7 +61,7 @@ export function CreateTaskDialog({
   projects,
   labels,
   onOpenChange,
-  onCreated,
+  createAction,
 }: {
   ctx: WorkspaceContext;
   open: boolean;
@@ -69,7 +69,7 @@ export function CreateTaskDialog({
   projects: Project[];
   labels: TeamLabel[];
   onOpenChange: (open: boolean) => void;
-  onCreated: (taskId: string) => void;
+  createAction: (taskId: string) => void;
 }) {
   const [isCreating, startCreateTransition] = React.useTransition();
   const [draft, setDraft] = React.useState<Draft>(emptyDraft);
@@ -111,7 +111,7 @@ export function CreateTaskDialog({
         toast.success("Task created");
         setDraft(emptyDraft);
         onOpenChange(false);
-        onCreated(task.id);
+        createAction(task.id);
       } catch (error) {
         setFormError(
           error instanceof Error ? error.message : "Couldn't create task.",

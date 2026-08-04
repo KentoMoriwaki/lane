@@ -15,15 +15,15 @@ import {
 } from "./endpoints";
 
 /**
- * The board's own reads — the task list and the two views derived from it —
- * revalidate when the tab comes back to the foreground. The same policy the
- * RSC-seeded variant uses; see `lane/api/lane-reads.ts` for why these three and
- * not the catalogue reads around them.
+ * The board's own reads — the task list, the selected task, and the two views
+ * derived from the list — revalidate when the tab comes back to the foreground.
+ * The selected task is a separate cache entry from the list, so refreshing one
+ * cannot make the other current. Catalogue reads around them stay on demand.
  */
 const BOARD_REVALIDATION = {
   refetchOnFocus: true,
   refetchOnMount: true,
-  staleTime: 1_000,
+  staleTime: 5_000,
 } as const;
 
 /**
@@ -71,6 +71,7 @@ export const workspaceReads = {
     laneRead({
       key: ["task", taskId],
       loader: ({ meta }) => fetchTask(meta, taskId),
+      ...BOARD_REVALIDATION,
     }),
   projects: () =>
     laneRead({

@@ -50,11 +50,11 @@ const emptyDraft: Draft = {
 export function CreateTaskDialog({
   open,
   onOpenChange,
-  onCreated,
+  createAction,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (taskId: string) => void;
+  createAction: (taskId: string) => void;
 }) {
   const createTask = useCreateTask();
   const [isCreating, startCreateTransition] = React.useTransition();
@@ -99,7 +99,7 @@ export function CreateTaskDialog({
         toast.success("Task created");
         setDraft(emptyDraft);
         onOpenChange(false);
-        onCreated(task.id);
+        createAction(task.id);
       } catch (error) {
         // The dialog stays open and the draft is preserved on failure.
         setFormError(

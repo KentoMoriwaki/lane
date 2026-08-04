@@ -60,30 +60,10 @@ export function teamsQueryOptions(ctx: WorkspaceCtx) {
   });
 }
 
-/**
- * The board's own reads — the task list and the two views derived from it —
- * revalidate when the tab comes back to the foreground.
- *
- * They are the reads a teammate's edit invalidates, so coming back to a stale
- * board is the case worth handling; the catalogue reads around them keep the
- * client default of refetching only on demand. `staleTime` is short enough that a
- * refocus after a moment away actually fetches, and long enough that flicking
- * between two windows does not.
- *
- * This remains the client-owned half of the hybrid: Server Actions converge
- * through RSC hydration, while focus revalidation and URL states that were not
- * part of the latest server generation can still execute browser queryFns.
- */
-const BOARD_REVALIDATION = {
-  refetchOnWindowFocus: true,
-  staleTime: 1_000,
-} as const;
-
 export function tasksQueryOptions(ctx: WorkspaceCtx, filters: TaskFilters) {
   return queryOptions({
     queryKey: queryKeys.tasks(filters),
     queryFn: () => fetchTasks(ctx, filters),
-    ...BOARD_REVALIDATION,
   });
 }
 
@@ -102,7 +82,6 @@ export function blockedByTasksQueryOptions(
   return queryOptions({
     queryKey: queryKeys.taskBlockedBy(taskId),
     queryFn: () => fetchTasksByIds(ctx, ids),
-    staleTime: 5_000,
   });
 }
 
@@ -114,7 +93,6 @@ export function blockingTasksQueryOptions(
   return queryOptions({
     queryKey: queryKeys.taskBlocking(taskId),
     queryFn: () => fetchTasksByIds(ctx, ids),
-    staleTime: 5_000,
   });
 }
 
@@ -122,8 +100,6 @@ export function projectsQueryOptions(ctx: WorkspaceCtx) {
   return queryOptions({
     queryKey: queryKeys.projects,
     queryFn: () => fetchProjects(ctx),
-    // Carries per-project task counts, so it moves whenever the board does.
-    ...BOARD_REVALIDATION,
   });
 }
 
@@ -145,6 +121,5 @@ export function insightsQueryOptions(ctx: WorkspaceCtx) {
   return queryOptions({
     queryKey: queryKeys.insights,
     queryFn: () => fetchInsights(ctx),
-    ...BOARD_REVALIDATION,
   });
 }

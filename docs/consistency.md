@@ -274,6 +274,17 @@ the inconsistent case, the same-transition control that removes them, and the
 guarantees at the top of this page — including the one that says an ordinary
 invalidate → refetch is safe on its own.
 
+`transition-entanglement.test.ts` pins the half of the shared-lane claim that
+reaches *outside* Lane, because it is what decides whether keeping readers
+pending across a mutation needs machinery at all. A reader invalidated from
+inside `startTransition(async () => …)` joins that transition rather than
+opening one of its own, so the caller stays pending until the reader has its
+new data — after its own action has already settled. The second case records
+the React behavior behind that: an empty `startTransition`, with no update to
+schedule, still reports pending for as long as the enclosing scope runs,
+because `isPending` is itself transition-lane state and its reset is entangled
+with everything else in the lane.
+
 ## See also
 
 - [Design notes](./design-notes.md) — why Lane is transition-native by

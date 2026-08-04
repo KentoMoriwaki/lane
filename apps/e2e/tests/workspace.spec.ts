@@ -1,4 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 import { instant } from "@next/playwright";
 import { getTaskUpdateDerivedImpact } from "../../demo/src/app/lane/api/cache-policy";
 
@@ -12,6 +17,27 @@ const ACME_COMPLETED_TASK = "Responsive navigation for small screens";
 const GROWTH_TASK = "Welcome email rewrite";
 
 const SEARCH_PLACEHOLDER = "Search tasks, labels…";
+
+type TeamApiRequestRecord = {
+  method: string;
+  origin: "browser" | "server";
+  path: string;
+  sequence: number;
+};
+
+async function resetRequestDiagnostics(request: APIRequestContext) {
+  const response = await request.delete("/api/_diagnostics/requests");
+  expect(response.status()).toBe(204);
+}
+
+async function readRequestDiagnostics(
+  request: APIRequestContext,
+): Promise<TeamApiRequestRecord[]> {
+  const response = await request.get("/api/_diagnostics/requests");
+  expect(response.ok()).toBe(true);
+  return (await response.json() as { requests: TeamApiRequestRecord[] })
+    .requests;
+}
 
 test("task update invalidation follows derived-data dependencies", () => {
   expect(getTaskUpdateDerivedImpact({ title: "Renamed" })).toEqual({
@@ -100,6 +126,40 @@ test("the server-owned route exposes a workspace shell instantly", async ({
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
   await expect(page.getByTestId("lane-workspace-shell")).toBeHidden();
 });
+
+for (const route of ["/lane", "/app-router"] as const) {
+  test(`${route} reuses a cached filtered source read on revisit`, async ({
+    page,
+    request,
+  }) => {
+    await gotoWorkspace(page, route);
+    const query = `source-budget-${route.slice(1)}-${Date.now()}`;
+    const filteredUrl = `${route}?q=${query}`;
+
+    await resetRequestDiagnostics(request);
+    await gotoWorkspace(page, filteredUrl);
+    const firstVisit = (await readRequestDiagnostics(request)).filter(
+      (entry) => entry.origin === "server",
+    );
+    expect(firstVisit).toEqual([
+      {
+        method: "GET",
+        origin: "server",
+        path: `/api/tasks?q=${query}`,
+        sequence: 1,
+      },
+    ]);
+
+    await gotoWorkspace(page, route);
+    await resetRequestDiagnostics(request);
+    await gotoWorkspace(page, filteredUrl);
+    expect(
+      (await readRequestDiagnostics(request)).filter(
+        (entry) => entry.origin === "server",
+      ),
+    ).toEqual([]);
+  });
+}
 
 test("intent prefetch resolves a filtered publication before the click", async ({
   page,

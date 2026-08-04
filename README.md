@@ -21,9 +21,9 @@ or improving — the same user experience with React transitions.
 | Path | Description |
 | --- | --- |
 | [`packages/lane`](packages/lane) | The `use-lane` library and its unit/React-integration tests. |
-| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, five implementations switchable by route: `/lane` (use-lane, server-owned: published + `external` reads), `/lane-spa` (use-lane, client-owned), `/react-query` (the TanStack Query baseline), `/relay` (a normalized GraphQL store), and `/jotai` (async atoms, no fetching library). It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
+| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, seven implementations grouped by ownership. Primary pairs: `/app-router` versus `/lane` for App Router ownership, and `/react-query` versus `/lane-spa` for browser ownership. `/react-query-rsc` isolates the server-generation-to-QueryClient bridge as an integration lab; `/relay` and `/jotai` are client-store references. It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
 | [`apps/docs`](apps/docs) | The Nextra documentation site (sourced from `docs/*.md`). |
-| [`apps/e2e`](apps/e2e) | Playwright suite running the user-facing success criteria (reload restoration, search, mutation convergence, team switching, stale-on-error refresh) against the demo's `/lane` route. |
+| [`apps/e2e`](apps/e2e) | Playwright suite for the primary App Router and SPA comparisons, including navigation, mutation convergence, stale refresh, and deterministic request-budget assertions. |
 
 The demo's team API (Hono + libSQL/Turso) is embedded as a Next.js Route Handler
 at [`apps/demo/src/app/api/[[...route]]/route.ts`](apps/demo/src/app/api), and the
@@ -35,7 +35,7 @@ see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ```sh
 pnpm install
-pnpm dev:demo   # http://localhost:3006  — /lane, /lane-spa, /react-query, /relay, /jotai (+ /api)
+pnpm dev:demo   # http://localhost:3006 — open / to choose a comparison (+ /api)
 ```
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full dev-server matrix,

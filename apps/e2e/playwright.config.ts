@@ -51,6 +51,9 @@ export default defineConfig({
       TEAM_API_DERIVED_DELAY_MS: "0",
       TEAM_API_BROWSER_TRANSPORT_DELAY_MS: "100",
       TEAM_API_SERVER_TRANSPORT_DELAY_MS: "0",
+      // Exposes an in-memory source-request log only inside this dedicated
+      // production test server. Normal demo deployments return 404.
+      TEAM_API_REQUEST_DIAGNOSTICS: "1",
       // Compile Next's production-only navigation lock used by `instant()`.
       NEXT_INSTANT_TEST: "1",
     },

@@ -5,6 +5,11 @@ import {
   readMilliseconds,
   requestTransportDelay,
 } from "./latency";
+import {
+  readTeamApiRequestRecords,
+  recordTeamApiRequest,
+  resetTeamApiRequestRecords,
+} from "./request-diagnostics";
 import { teamRoutes } from "./routes";
 
 /**
@@ -58,6 +63,12 @@ const randomFailPathPrefixes = readPathPrefixes(process.env.API_RANDOM_FAIL_PATH
 const app = new Hono();
 
 app.use("*", async (context, next) => {
+  recordTeamApiRequest({
+    header: (name) => context.req.header(name),
+    method: context.req.method,
+    url: context.req.url,
+  });
+
   const sourceDelay = readRequestDelay(context.req.method, context.req.path);
   const transportDelay = requestTransportDelay(
     context.req.header(COLOCATED_SERVER_REQUEST_HEADER),
@@ -78,6 +89,19 @@ app.use("*", async (context, next) => {
   }
 
   await next();
+});
+
+app.get("/api/_diagnostics/requests", (context) => {
+  const requests = readTeamApiRequestRecords();
+  return requests
+    ? context.json({ requests }, 200)
+    : context.json({ error: "Not found" }, 404);
+});
+
+app.delete("/api/_diagnostics/requests", (context) => {
+  return resetTeamApiRequestRecords()
+    ? context.body(null, 204)
+    : context.json({ error: "Not found" }, 404);
 });
 
 export const routes = app.route("/api", teamRoutes);

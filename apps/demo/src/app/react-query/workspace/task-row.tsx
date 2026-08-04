@@ -38,7 +38,7 @@ export function TaskRow({
   const isClosed = STATUS_META[task.status].group === "closed";
 
   function handleDelete() {
-    remove.mutate(task.id, {
+    remove.mutate(task, {
       onSuccess: () => {
         toast.success("Task deleted");
         deleteAction?.(task.id);

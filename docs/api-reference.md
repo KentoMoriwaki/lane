@@ -1188,6 +1188,14 @@ lane.set(taskKeys.detail(saved.id), saved); // checked against what the key hold
 `prefetch` is the exception and takes a whole read, because it is the only method
 that *performs* one.
 
+**Nothing here reads.** Every method returns a promise or `void` — there is no
+`get` / `peek` / `getQueryData` equivalent, and no way to ask what a key
+currently holds. Values reach components through `use(promise)` and nowhere else.
+See [the store returns promises, never
+data](./design-notes.md#the-store-returns-promises-never-data) for the reasoning,
+and [there is no cache getter](./migrating.md#there-is-no-cache-getter) for where
+each react-query `getQueryData` use goes instead.
+
 > **These are the client-owned half of the API.** Every method on this page
 > writes to an entry, and a key whose value was **published** — read with
 > [`external`](#external--a-read-the-owner-publishes), or seeded by

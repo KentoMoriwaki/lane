@@ -140,8 +140,11 @@ task touches that rule.
 
 - **Map the model, don't port the shape.** `isLoading` → Suspense; `error` →
   `refreshError` only (an initial failure hits the Error Boundary, never a field);
-  `refetchInterval` → a userland poll; `onMutate` → `useOptimistic`. Don't rebuild
-  a status object on top of Lane. → `references/migrating.md`
+  `refetchInterval` → a userland poll; `onMutate` → `useOptimistic`;
+  `getQueryData` → **nothing** — the store returns promises or `void`, never a
+  value, so derive with `update` (the updater is handed the current value) or
+  pass the value down from the component that rendered it. Don't rebuild a status
+  object on top of Lane. → `references/migrating.md`
 - **`queryOptions()` factories port directly** to `laneRead` — same idea, and the
   call sites map one for one (`useQuery` → `useLane`, `prefetchQuery` →
   `prefetch`, `setQueryData(opts.queryKey, v)` → `set(spec.key, v)`).

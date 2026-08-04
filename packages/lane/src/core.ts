@@ -50,11 +50,23 @@ type LaneSubscription = (
 
 type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
 
+/**
+ * "Open your invalidation transition, there is nothing to read yet."
+ *
+ * Separate from {@link LaneSubscription} because it is the one notification that
+ * does not describe a cache: no source to pick a surface with (an announcement
+ * is always the explicit one) and no gate to hold a re-read behind, because
+ * there is no re-read. A subscriber that acts on it schedules nothing — see
+ * `useLane`, where an empty `startTransition` is the whole handler.
+ */
+type LaneAnnounceSubscription = (entry: LaneEntryInfo) => void;
+
 // A subscriber is a pure notify hook plus a GC anchor — it carries no policy.
 // When to revalidate (focus / reconnect / mount / stale) is the reader's
 // concern, expressed as per-read invalidations; the store only notifies. Even
 // focus / reconnect stay out of here — they are DOM concerns the provider owns.
 export type LaneSubscriber = {
+  onAnnounce?: LaneAnnounceSubscription;
   onInvalidate?: LaneSubscription;
   onRemove?: LaneRemoveSubscription;
 };
@@ -747,6 +759,39 @@ function notifyInvalidate(
 
   for (const subscriber of [...entry.subscribers]) {
     subscriber.onInvalidate?.(info, source, gate);
+  }
+}
+
+/**
+ * Tell a scope's readers that an invalidation is coming, without touching a
+ * cache. The whole point is that nothing is stored: a notification that
+ * *replaced* the cache would make readers re-read now, against a source the
+ * caller has not changed yet, which is the pre-mutation data. So this schedules
+ * no work and answers no question about the entry — it only reaches subscribers,
+ * and what they do with it is open their transition.
+ *
+ * `lastNotifySource` is deliberately left alone. It records what a reader that
+ * subscribes late should join, and an announcement is not something to catch up
+ * *to*: by the time such a reader arrives the window has either closed or the
+ * real invalidation is on its way, and both of those set it themselves.
+ *
+ * Checked over the whole match before anything is announced, for the reason
+ * `updateAll` is: a scope that happens to reach a published key is refused
+ * rather than half-applied. Announcing one is the same claim `invalidate` makes
+ * and cannot back — the client does not know whether a publication is coming.
+ */
+export function announceAll(lane: Lane, scope: LaneScope): void {
+  const state = getLaneState(lane);
+  const entries = matchingEntries(state.entries, scope);
+
+  assertScopeClientOwned(entries, "announce");
+
+  for (const entry of entries) {
+    const info = entryInfo(entry);
+
+    for (const subscriber of [...entry.subscribers]) {
+      subscriber.onAnnounce?.(info);
+    }
   }
 }
 

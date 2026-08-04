@@ -6,6 +6,42 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`startInvalidationTransition`, returned by `useLane` / `useInfiniteLane`.**
+  Runs an action inside the reader's invalidation transition, so
+  `isInvalidationPending` is on from when the action *starts* rather than from
+  when it finishes. `await action(); invalidate()` can only tell readers at the
+  end — notification is Lane's only channel to them and it fires last — which
+  leaves the whole request showing stale data with no sign anything is happening.
+
+  ```ts
+  startInvalidationTransition([["insights"]], async () => {
+    await saveTask(patch);
+    invalidate();
+    lane.invalidate(["insights"]);
+  });
+  ```
+
+  The optional scopes are the other keys a mutation touches: their readers are
+  told to open their transitions in the same synchronous fan-out, so every reader
+  in the window goes pending in one tick and they all converge on one commit.
+  That list is not derived from what the action then invalidates — what converges
+  is what changed, what is announced is what should look busy, and a
+  `background: true` refresh is asking not to be one of them.
+
+  Lane never touches the action: its value is ignored and its rejection is never
+  caught, so a failed save cannot arrive at a reader as `refreshError`. Nothing
+  is stored when the window opens either — an announcement schedules no read,
+  because the source has not changed yet. External reads do not get it, for the
+  reason they do not get `invalidate`.
+
+  It costs **+120 B** on the typical `LaneProvider` + `useLane` pair, so the two
+  `size-limit` budgets that cover it move with it (3.9 → 4.05 kB, 5.55 → 5.7 kB).
+  The store on its own is **unchanged** at 2.47 kB: the announcement lives in the
+  store and the transition in the React layer, so `{ createLane }` still shakes
+  all of it out.
+
 ### Changed
 
 - **Breaking: `isTransitionPending` is now `isInvalidationPending`.** Both pending

@@ -242,4 +242,175 @@ describe("transition entanglement", () => {
       "caller:0|a:0|b:0",
     ]);
   });
+
+  // The scope above was opened by a `useTransition`. A lane-level entry point
+  // has no hook to open one with, so it would reach for React's standalone
+  // `startTransition` — which entangles the same way or the whole shape has to
+  // move back onto the caller's hook.
+  it("entangles the same way from a standalone startTransition", async () => {
+    const mutation = deferred<void>();
+    const listeners = new Set<(fn: () => void) => void>();
+
+    function Watcher({ label }: { label: string }) {
+      const [isPending, startTransition] = useTransition();
+
+      React.useEffect(() => {
+        listeners.add(startTransition);
+        return () => {
+          listeners.delete(startTransition);
+        };
+      }, [startTransition]);
+
+      return React.createElement("span", null, `${label}:${isPending ? 1 : 0}|`);
+    }
+
+    function Caller() {
+      return React.createElement("button", {
+        "data-testid": "save",
+        onClick: () => {
+          // Not a hook: the module-level export, which is all a `lane.*` method
+          // could call.
+          React.startTransition(async () => {
+            for (const open of listeners) {
+              open(() => {});
+            }
+
+            await mutation.promise;
+          });
+        },
+      });
+    }
+
+    const container = await mount(
+      React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(Caller, null),
+        React.createElement(Watcher, { label: "a" }),
+        React.createElement(Watcher, { label: "b" }),
+      ),
+    );
+
+    const timeline: string[] = [];
+    const snap = () => timeline.push(container.textContent ?? "");
+
+    snap();
+    await click(container);
+    snap();
+
+    await act(async () => {
+      mutation.resolve();
+      await mutation.promise;
+      await settlePromiseHandlers();
+    });
+
+    snap();
+
+    expect(timeline).toEqual([
+      "a:0|b:0|",
+      "a:1|b:1|",
+      "a:0|b:0|",
+    ]);
+  });
+
+  // The whole thing, through the real API: one window covering an action and
+  // the convergence it causes, across two keys that learn about it differently
+  // — one owns the transition, the other is announced into it.
+  it("keeps announced readers pending from the action's start to its data", async () => {
+    const lane = createLane();
+    const mutation = deferred<void>();
+    const tasksReload = deferred<string>();
+    const insightsReload = deferred<string>();
+
+    lane.set(["tasks"], "tasks@1");
+    lane.set(["insights"], "insights@1");
+
+    function Insights() {
+      const { isInvalidationPending, promise } = useLane({
+        key: ["insights"],
+        loader: () => insightsReload.promise,
+      });
+      const { data } = use(promise);
+
+      return React.createElement(
+        "span",
+        null,
+        `|${data}/${isInvalidationPending ? 1 : 0}`,
+      );
+    }
+
+    // The mutating component is itself a reader, which is why it has a bound
+    // `startInvalidationTransition` to run the action in.
+    function Tasks() {
+      const lane = useLaneInstance();
+      const { invalidate, isInvalidationPending, promise, startInvalidationTransition } =
+        useLane({ key: ["tasks"], loader: () => tasksReload.promise });
+      const { data } = use(promise);
+
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement("button", {
+          "data-testid": "save",
+          onClick: () => {
+            startInvalidationTransition([["insights"]], async () => {
+              await mutation.promise;
+              invalidate();
+              lane.invalidate(["insights"]);
+            });
+          },
+        }),
+        React.createElement("span", null, `${data}/${isInvalidationPending ? 1 : 0}`),
+      );
+    }
+
+    const container = await mount(
+      React.createElement(LaneProvider, {
+        lane,
+        children: React.createElement(
+          React.Suspense,
+          { fallback: "loading" },
+          React.createElement(Tasks, null),
+          React.createElement(Insights, null),
+        ),
+      }),
+    );
+
+    const timeline: string[] = [];
+    const snap = () => timeline.push(container.textContent ?? "");
+
+    snap();
+    await click(container);
+    snap();
+
+    await act(async () => {
+      mutation.resolve();
+      await mutation.promise;
+      await settlePromiseHandlers();
+    });
+
+    snap();
+
+    await act(async () => {
+      tasksReload.resolve("tasks@2");
+      insightsReload.resolve("insights@2");
+      await Promise.all([tasksReload.promise, insightsReload.promise]);
+      await settlePromiseHandlers();
+    });
+
+    snap();
+
+    expect(timeline).toEqual([
+      "tasks@1/0|insights@1/0",
+      // Both readers are pending before the action has done anything: the
+      // mutating one through the transition it opened, the distant one through
+      // the announcement. This is the state the plain shape cannot reach.
+      "tasks@1/1|insights@1/1",
+      // Still pending, now for the re-reads the action asked for. Neither
+      // reader dropped out between the two halves — the announcement's
+      // transition and the invalidation's are one lane.
+      "tasks@1/1|insights@1/1",
+      "tasks@2/0|insights@2/0",
+    ]);
+  });
 });

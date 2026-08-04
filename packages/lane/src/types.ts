@@ -438,11 +438,51 @@ export type LaneRead<T> = {
   refreshError?: unknown;
 };
 
+/**
+ * Run an action inside this reader's invalidation transition, so
+ * {@link LaneResult.isInvalidationPending} is on from the moment it starts
+ * rather than from the moment it finishes.
+ *
+ * ```ts
+ * startInvalidationTransition(async () => {
+ *   await saveTodo(patch);
+ *   invalidate();
+ * });
+ * ```
+ *
+ * The plain `await action(); invalidate()` shape leaves every reader showing
+ * stale data with no sign anything is happening, because notification is Lane's
+ * only channel to a reader and it fires last. This moves the transition to the
+ * front: readers keep their current value on screen, report pending, and
+ * converge when the action's own invalidation lands — one continuous window
+ * instead of two.
+ *
+ * **Nothing is stored, and the action is not Lane's.** Its value is ignored and
+ * its rejection is never caught, so a failed save cannot arrive at a reader as
+ * `refreshError` — that field means a failed *refresh* over data still worth
+ * showing, which is a different fact about a different thing. Converge inside the
+ * action, with whatever `invalidate` / `set` / `update` calls the change actually
+ * needs, and handle the failure where you would have anyway.
+ *
+ * Pass extra scopes when a mutation touches keys beyond this one: their readers
+ * are told to open their transitions too, in the same synchronous fan-out, so
+ * every reader in the window flips together rather than one screen at a time.
+ * The list is deliberately not derived from what the action goes on to
+ * invalidate — those are different decisions. What converges is what changed;
+ * what is announced is what should look busy, which is usually smaller (a
+ * `background: true` refresh is *asking* not to be one of them).
+ */
+export type LaneStartInvalidationTransition = {
+  (action: () => unknown): void;
+  (scopes: readonly LaneScope[], action: () => unknown): void;
+};
+
 export type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;
   isBackgroundPending: boolean;
   isInvalidationPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
+  startInvalidationTransition: LaneStartInvalidationTransition;
 };
 
 /**
@@ -458,16 +498,26 @@ export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
 
 /**
  * What `useLane` returns for an external read: {@link LaneResult} without
- * `invalidate`. Nothing is missing — an external entry has no loader to
- * re-run, so invalidating it could only empty a key its owner is expected to
- * fill, which is why the runtime throws on one. Removing it from the type is
- * how that becomes a compile error instead of a crash. The publication channel
+ * `invalidate` or `startInvalidationTransition`. Nothing is missing — an
+ * external entry has no loader to re-run, so invalidating it could only empty a
+ * key its owner is expected to fill, which is why the runtime throws on one.
+ * Removing it from the type is how that becomes a compile error instead of a
+ * crash. Announcing one goes with it: the announcement's promise is that an
+ * invalidation is coming, and this is the reader that cannot make it — the
+ * owner decides when the key changes, and its own transition (a Server Action,
+ * a router revalidation) is already the pending signal. The publication channel
  * is the owner's; optimistic UI belongs in `useOptimistic` over the read value.
  */
-export type LaneExternalResult<T> = Omit<LaneResult<T>, "invalidate">;
+export type LaneExternalResult<T> = Omit<
+  LaneResult<T>,
+  "invalidate" | "startInvalidationTransition"
+>;
 
 /** {@link LaneExternalResult} for a gated external read. */
-export type LaneGatedExternalResult<T> = Omit<LaneGatedResult<T>, "invalidate">;
+export type LaneGatedExternalResult<T> = Omit<
+  LaneGatedResult<T>,
+  "invalidate" | "startInvalidationTransition"
+>;
 
 export type LaneWhenStale = "revalidate" | "refetch";
 

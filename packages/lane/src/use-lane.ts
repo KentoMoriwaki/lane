@@ -10,6 +10,7 @@ import {
   useTransition,
 } from "react";
 import {
+  announceAll,
   invalidateEntry,
   invalidationSource,
   latestNotifySource,
@@ -35,6 +36,8 @@ import type {
   LaneRead,
   LaneReadSpec,
   LaneResult,
+  LaneScope,
+  LaneStartInvalidationTransition,
   LaneUseOptions,
 } from "./types";
 
@@ -200,6 +203,17 @@ export function useLane<T, C = T>(
       readOptions,
     );
     setPromise(nextPromise);
+  });
+
+  // An announcement carries no work: the caller has not changed the source yet,
+  // so there is nothing to re-read and nothing to store. Opening the transition
+  // with an empty scope is the entire handler — `isPending` is itself
+  // transition-lane state, so its reset entangles with whatever else the
+  // announcing scope schedules and cannot commit before that scope does. That is
+  // what holds this reader pending for the caller's whole action, and what makes
+  // every reader in the announced scope flip in the same tick.
+  const onAnnounce = useEffectEvent(() => {
+    startTransition(() => {});
   });
 
   // The last link in the chain of checks, and the only one that can close its
@@ -384,6 +398,9 @@ export function useLane<T, C = T>(
     // whose identity is the source's — so it lives in the effect, not behind an
     // event: anything new it comes to read is forced into the deps.
     const unsubscribe = subscribeLane(lane, keyId, sourceKey, {
+      onAnnounce: () => {
+        onAnnounce();
+      },
       onInvalidate: (entry, source, gate) => {
         onInvalidate(lane, entry.keyId, entry.key, source, gate);
       },
@@ -426,11 +443,41 @@ export function useLane<T, C = T>(
     [lane, keyId],
   );
 
+  const startInvalidationTransition = useCallback(
+    (
+      scopesOrAction: readonly LaneScope[] | (() => unknown),
+      maybeAction?: () => unknown,
+    ) => {
+      const action =
+        typeof scopesOrAction === "function" ? scopesOrAction : maybeAction;
+      const scopes = typeof scopesOrAction === "function" ? [] : scopesOrAction;
+
+      if (!action) {
+        return;
+      }
+
+      startTransition(async () => {
+        // This reader's own flag needs no announcement — `startTransition` above
+        // *is* the transition `isInvalidationPending` reports. The extra scopes
+        // are other readers', so they are told to open theirs, synchronously and
+        // before the first await, which is what puts every one of them in this
+        // transition's lane rather than one of their own.
+        for (const scope of scopes) {
+          announceAll(lane, scope);
+        }
+
+        await action();
+      });
+    },
+    [lane],
+  ) as LaneStartInvalidationTransition;
+
   return {
     invalidate,
     isBackgroundPending,
     isInvalidationPending,
     promise: effectivePromise,
+    startInvalidationTransition,
   };
 }
 

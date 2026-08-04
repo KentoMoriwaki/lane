@@ -221,18 +221,30 @@ order:
 
 1. **The action resolves to the key's value** → [`set(key, promise)`](./api-reference.md#set)
    publishes the in-flight promise under that key: pending starts with the
-   action, and there is no second round-trip.
+   action, and there is no second round-trip. Only for a promise of the key's
+   *value* — a mutation's promise does not go here, or its failure arrives at
+   every reader as `refreshError`.
 2. **You can show the outcome before it lands** → `useOptimistic`. The reader
    already shows the new state, so pending is not the right signal at all.
-3. **Neither** → [`invalidate(key, { after })`](./api-reference.md#announcing-an-invalidation-before-the-mutation-finishes),
+3. **Neither** → [`startInvalidationTransition`](./api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action),
    for the action that refreshes a list, a counter, and a detail view it returns
-   none of:
+   none of. Run the action in the reader's transition and name the other keys
+   that should look busy; they are announced in the same synchronous fan-out, so
+   the whole set goes pending in one tick and converges in one commit:
 
 ```ts
-const saved = saveTodo(patch);
-lane.invalidateAll(["todos"], { after: saved });
-await saved;
+startInvalidationTransition([["counters"]], async () => {
+  await saveTodo(patch);
+  invalidate();
+  lane.invalidate(["counters"]);
+});
 ```
+
+[`invalidate(key, { after })`](./api-reference.md#announcing-an-invalidation-before-the-mutation-finishes)
+reaches the same window by handing Lane the action's promise as a clock instead.
+It predates the transition form and costs one thing that form does not: the
+promise is Lane's to observe, so a rejected action still converges and its
+failure never surfaces through Lane.
 
 None of this is a default to apply everywhere. When the pending signal is
 already where the user is looking — a submit button on `useActionState` — and

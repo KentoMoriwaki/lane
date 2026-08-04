@@ -10,6 +10,7 @@ import type {
   LaneKeyOf,
   LaneLoaderMeta,
   LaneRead,
+  LaneStartInvalidationTransition,
   LaneUseOptions,
 } from "./types";
 import { useLane } from "./use-lane";
@@ -82,6 +83,7 @@ export type InfiniteLaneResult<P, C> = {
   isInvalidationPending: boolean;
   isBackgroundPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
+  startInvalidationTransition: LaneStartInvalidationTransition;
 };
 
 /**
@@ -137,7 +139,13 @@ export function useInfiniteLane<P, C>(
   const keyId = serializeKey(key);
   const loaderMeta = read.loaderMeta ?? laneMeta;
 
-  const { invalidate, isBackgroundPending, isInvalidationPending, promise } =
+  const {
+    invalidate,
+    isBackgroundPending,
+    isInvalidationPending,
+    promise,
+    startInvalidationTransition,
+  } =
     // The read options pass straight through; the pagination fields ride along
     // inert (a read only ever looks at the four it knows).
     useLane<InfiniteLaneValue<P, C>>({
@@ -233,6 +241,7 @@ export function useInfiniteLane<P, C>(
     isInvalidationPending,
     loadMore,
     promise,
+    startInvalidationTransition,
   };
 }
 

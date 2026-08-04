@@ -111,6 +111,14 @@ task touches that rule.
   suspend point — read where the data enters the screen and pass the value down.
   Read the same key twice only across genuinely separate surfaces.
   → `references/common-mistakes.md`, `references/consistency.md`
+- **Run a mutation inside `startInvalidationTransition`** (returned by `useLane`)
+  when readers should look busy *during* it, not after. `await action();
+  invalidate()` can only notify at the end, so the whole request shows stale data
+  with no sign of activity. Pass extra scopes for the other keys the mutation
+  touches — they are announced in the same tick, so every reader goes pending
+  together and converges on one commit. Lane never touches the action: converge
+  inside it, and catch its failure there (a failed save is not `refreshError`).
+  → `references/api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action`
 - **Converge by invalidating the source**, not by patching a cache — for
   **client-owned** keys. Use `set` / `update` only to publish data you *already
   have* (e.g. a mutation response); use `remove` to drop entries on sign-out /

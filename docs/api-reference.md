@@ -519,6 +519,10 @@ type LaneResult<T> = {
   isInvalidationPending: boolean;
   isBackgroundPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
+  startInvalidationTransition: {
+    (action: () => unknown): void;
+    (scopes: readonly LaneScope[], action: () => unknown): void;
+  };
 };
 ```
 
@@ -528,6 +532,72 @@ type LaneResult<T> = {
 | `isInvalidationPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / reconnect / a `background: true` invalidation / subscription catch-up) is converging. |
 | `invalidate` | Invalidate this exact key and re-read. Convenience for `lane.invalidate(key, options?)`; accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll). Defaults to an explicit transition. |
+| `startInvalidationTransition` | Run an action inside this reader's invalidation transition, so `isInvalidationPending` is on from when it *starts*. See [below](#startinvalidationtransition--pending-from-the-start-of-an-action). |
+
+### `startInvalidationTransition` — pending from the start of an action
+
+`await action(); invalidate()` tells readers only at the end: notification is
+Lane's only channel to them, and it fires last, so the whole request is stale
+data with no sign anything is happening. Running the action *inside* the
+reader's transition moves that to the front:
+
+```tsx
+const { promise, isInvalidationPending, invalidate, startInvalidationTransition } =
+  useLane(taskLanes.list(filters));
+
+function save(patch: Patch) {
+  startInvalidationTransition(async () => {
+    await saveTask(patch);
+    invalidate();
+  });
+}
+```
+
+`isInvalidationPending` is on from the click, stays on across the action *and*
+the re-read it triggers, and clears when the new data commits — one window, not
+two. The reader keeps its current value on screen throughout, because that is
+what a transition does.
+
+**Pass extra scopes for the keys a mutation touches beyond this one.** Their
+readers are told to open their transitions in the same synchronous fan-out, so
+every reader in the window goes pending in one tick rather than one screen at a
+time:
+
+```ts
+startInvalidationTransition([["insights"], ["projects"]], async () => {
+  await saveTask(patch);
+  invalidate();
+  lane.invalidate(["insights"]);
+  lane.invalidate(["projects"]);
+});
+```
+
+That list is deliberately *not* derived from what the action goes on to
+invalidate, because they answer different questions. What converges is what
+changed; what is announced is what should look busy — usually the smaller set. A
+`background: true` refresh is explicitly asking not to be one of them.
+
+#### What to know
+
+- **The action is not Lane's.** Its resolved value is ignored and its rejection
+  is never caught, so a failed save cannot reach a reader as
+  [`refreshError`](#lanereadt) — that field means a failed *refresh* over data
+  still worth showing, which is a different fact about a different thing. Handle
+  the failure inside the action, where you would have anyway.
+- **Nothing is stored when the window opens.** An announcement schedules no read:
+  the caller has not changed the source yet, so re-reading now would just fetch
+  the pre-mutation data. Only the transitions open; the re-reads are the ones the
+  action asks for.
+- **Converge inside the action, however the change needs it.** `invalidate`,
+  `set`, `update`, a prefix scope — all of them land in the same transition.
+- **External reads do not have it.** The announcement promises that an
+  invalidation is coming, and a published key's reader is the one that cannot
+  make it — see [`LaneExternalResult`](#external--a-read-the-owner-publishes).
+  The owner's own transition (a Server Action, a router revalidation) is already
+  the pending signal there.
+- **Announcing a published key throws** [`LaneOwnershipError`](#laneownershiperror),
+  and the scope is checked before anything is announced, so a scope that reaches
+  one is refused rather than half-applied.
 
 ### `LaneRead<T>`
 

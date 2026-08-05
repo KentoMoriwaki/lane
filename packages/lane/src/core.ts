@@ -350,6 +350,34 @@ export function readOrCreate<T, C = T>(
   // is.
   if (isExternalLoader(loader)) {
     markExternal(entry);
+  } else if (
+    // The two claims of ownership meeting, which is the one moment either side
+    // can see the other. A publication marks the key it seeds (`hydrate.ts`),
+    // and this read says it fetches the same key itself — so one of the two is a
+    // mistake, and nothing downstream will say which: the read *works*, it just
+    // works with none of a client-owned entry's guarantees, until the first
+    // write throws somewhere else entirely.
+    //
+    // Checked here rather than where the seed is written because this is the
+    // only place both facts exist. A publication is addressed by key, and a key
+    // does not carry its loader — `laneSnapshot` takes a read for ergonomics,
+    // but its plain-key forms carry nothing to check, so a check on that side
+    // would cover some spellings of the same mistake and not others.
+    typeof process !== "undefined" &&
+    process.env.NODE_ENV !== "production" &&
+    entry.external
+  ) {
+    warnDev(
+      `${keyId} is filled from outside — a publication seeded it, or another ` +
+        "read declares `loader: external` for it — but this read supplies a " +
+        "client loader. A key that is published is the publisher's: its value " +
+        "is held weakly rather than for `gcTime`, `set` / `update` / " +
+        "`invalidate` / `remove` throw on it, and what this loader returns is " +
+        "stored with none of a client-owned entry's guarantees — no " +
+        "stale-on-error fallback, no `current` for the next load, no structural " +
+        "sharing. Read it with `loader: external` and let its owner republish, " +
+        "or stop seeding the key and let the client own it.",
+    );
   }
 
   const reusable = reuseCache(entry, options);

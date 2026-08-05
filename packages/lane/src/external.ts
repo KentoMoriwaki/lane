@@ -62,6 +62,11 @@ export class LaneExternalTimeoutError extends Error {
  * client-owned, `external` is published from outside, `undefined` is disabled.
  * Every read path stays one unconditional `readOrCreate`.
  *
+ * `useLane` does ask which it was handed, once, and not on a read path: whether
+ * to observe the publication lineage at all. That is a question about *ownership*
+ * rather than about how to read — only a key somebody else fills has a
+ * publication to wait for — so the loader slot is exactly where the answer lives.
+ *
  * What it does when it runs is wait, and what it resolves with is **the next
  * publication of this key**. That is the literal reading of the promise, and it
  * is what makes a reader that has not committed yet work: it has no subscription

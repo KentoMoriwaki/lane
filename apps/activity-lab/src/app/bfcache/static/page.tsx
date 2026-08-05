@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { LaneHydration, laneSnapshot } from "use-lane";
-import { bfReads } from "../reads";
+import { bfPublished } from "../reads";
 import { SnapshotIdentityProbe } from "../ident-probe";
 import { PathnameProbe } from "../pathname-probe";
 import { RouteProbe, SeedFallback } from "../route-probes";
@@ -13,7 +13,7 @@ const STATIC_VALUE = "static s1 (rsc)";
 
 export default function StaticPage() {
   const snapshots = {
-    entries: [laneSnapshot(bfReads.static(), STATIC_VALUE)],
+    entries: [laneSnapshot(bfPublished.static(), STATIC_VALUE)],
   };
 
   return (

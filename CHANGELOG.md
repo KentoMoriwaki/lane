@@ -202,6 +202,28 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **A development warning when a published key is read with a client loader.**
+  Seeding a key through `<LaneHydration>` is a claim of ownership: the entry
+  becomes external for good, its value is held weakly instead of for `gcTime`,
+  and `set` / `update` / `invalidate` / `remove` throw on it. A read that gives
+  the same key a fetching loader is claiming it too, and until now nothing said
+  so — the read ran, its result was stored with none of a client-owned entry's
+  guarantees (no stale-on-error fallback, no `current` for the next load, no
+  structural sharing), and the mistake surfaced somewhere else entirely, at the
+  first write that threw.
+
+  The warning fires from the read, because that is the only place both halves are
+  visible. A publication is addressed by key and a key does not carry the loader
+  it will be read with — `laneSnapshot` takes a whole read for ergonomics, but
+  its plain-key forms carry nothing to check, so a check on the publishing side
+  would catch some spellings of the mistake and not others. It names the key,
+  warns once per key, and is stripped from production builds like every other
+  `warnDev`.
+
+  Seed only keys the client reads with `loader: external`. A value the client
+  should own from there on is not a seed — `lane.set` is the same write without
+  the change of ownership.
+
 - **`LaneRegister` — declare what loaders are handed besides the key.** A loader
   usually needs something the key does not carry: a session, a tenant, an API
   client. Declaring it once makes it available to every loader as `meta`, with no
@@ -453,6 +475,31 @@ All notable changes to `use-lane` are documented here. The format is based on
   used, instead of always the background one. Siblings reading the same key no
   longer disagree about whether an update is `isInvalidationPending` or
   `isBackgroundPending`.
+
+- **A republish no longer reaches reads that own their own value.** A
+  `<LaneHydration>` boundary announces a publication to the readers below it
+  through context, which is the only channel that reaches a hidden `<Activity>`
+  subtree — its readers are unsubscribed, so no notification can. Every read
+  observed that announcement, including reads with a client loader, which have no
+  publication to wait for; only `loader: external` does now.
+
+  Being woken for nothing is not free for an *unsubscribed* reader, which is the
+  population this channel exists for. Re-reading the store is a no-op only while
+  the entry still holds what the reader is showing, and two cases break that once
+  a hidden reader has stopped anchoring its entry: `whenStale: "refetch"` sees an
+  idle stale value and discards it, and a value the GC sweep already evicted is
+  re-created by the read-through. Either one started a fetch for a subtree that
+  may never be revealed, at the moment some unrelated boundary happened to
+  republish — in an App Router app, on every navigation.
+
+  A client-owned read of a seeded key still converges, through the channels it
+  shares with `lane.set`: the notification while it is subscribed, and the reveal
+  reconciliation while it is not. What moves is only *when* — a hidden one adopts
+  at its reveal rather than during the offscreen render that carried the payload,
+  so it can suspend for a flush where it previously did not. Reading a published
+  key with `loader: external` keeps the single-commit, no-fallback reveal
+  unchanged; a key the client fetches for itself is one it should not also be
+  seeded with.
 
 ### Changed
 

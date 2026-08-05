@@ -7,12 +7,25 @@ import {
   useEffect,
   useLayoutEffect,
 } from "react";
-import { useLane, useLanesAll, type LaneReadSpec } from "use-lane";
+import {
+  useLane,
+  useLanesAll,
+  type LaneExternalReadSpec,
+  type LaneReadSpec,
+} from "use-lane";
 import { labLog } from "./log";
+
+/**
+ * Either ownership. The probe renders a value and its two pending flags, and
+ * both read kinds have all three — they differ only in `invalidate`, which the
+ * probe does not call. /bfcache mounts one of each side by side, so the type
+ * has to admit both or the scene needs two probes that render identically.
+ */
+export type ProbeRead = LaneExternalReadSpec<string> | LaneReadSpec<string>;
 
 export type ProbeProps = {
   channel: string;
-  read: LaneReadSpec<string>;
+  read: ProbeRead;
   label?: string;
 };
 
@@ -42,8 +55,11 @@ function ProbeFallback({ channel }: { channel: string }) {
   );
 }
 
-function ProbeReader({ channel, read }: { channel: string; read: LaneReadSpec<string> }) {
-  const result = useLane(read);
+function ProbeReader({ channel, read }: { channel: string; read: ProbeRead }) {
+  // `useLane`'s overloads discriminate on the loader, and a union matches none
+  // of them. Narrowed to the client shape for the call because the two results
+  // differ only in `invalidate`: everything read below is on both.
+  const result = useLane(read as LaneReadSpec<string>);
 
   labLog.push(
     channel,
@@ -91,7 +107,7 @@ export function Probe({ channel, read, label }: ProbeProps) {
   );
 }
 
-function sameRead(a: LaneReadSpec<string>, b: LaneReadSpec<string>): boolean {
+function sameRead(a: ProbeRead, b: ProbeRead): boolean {
   if (a.loader !== b.loader) return false;
   if (JSON.stringify(a.key) !== JSON.stringify(b.key)) return false;
 

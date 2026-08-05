@@ -1,8 +1,8 @@
 "use client";
 
 import {
+  use,
   useCallback,
-  useContext,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -19,6 +19,7 @@ import {
 import type { LaneInvalidationSource } from "./core";
 import { LaneHydrationSourceContext } from "./hydration";
 import { serializeKey } from "./keys";
+import { isExternalLoader } from "./ownership";
 import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
@@ -88,6 +89,12 @@ export function useLane<T, C = T>(
   // external data, so an absent loader has no other meaning and is the single,
   // unambiguous disable signal: no fetch, no subscription, no stored entry.
   const enabled = loader !== undefined;
+  // Whose value this key holds, as the read declares it. The store asks the same
+  // question of the loader it is handed (`readOrCreate`); this asks it one level
+  // up, to decide whether publications are part of this read's source at all.
+  // Nothing else here branches on it — every read path below is still one
+  // unconditional `readOrCreate`.
+  const external = isExternalLoader(loader);
   const keyId = serializeKey(key);
   const readOptions = toReadOptions(read, loaderMeta);
   const [isInvalidationPending, startTransition] = useTransition();
@@ -95,7 +102,32 @@ export function useLane<T, C = T>(
   // The publication this render is happening under (nearest LaneHydration
   // boundary, or the stable `undefined` outside one). Part of the read's
   // source: a republish is a new source the same way a new key is.
-  const hydrationSource = useContext(LaneHydrationSourceContext);
+  //
+  // **Read only by an external read**, and with `use` rather than `useContext`
+  // because that is the form React allows to be called conditionally. The
+  // condition is the whole point: a context a render did not read is not a
+  // dependency of that fiber, so a client-owned read is not a consumer of the
+  // lineage and a publication does not re-render it at all.
+  //
+  // That is the right scope, because a publication is the arrival of a value the
+  // key's *owner* supplies, and a read carrying a client loader has declared that
+  // it supplies its own. Its convergence channels are the ones every client read
+  // has: the notification while it is subscribed, and the reveal reconciliation
+  // while it is not (`publishEntry` notifies either way, so a *visible*
+  // client-owned reader of a seeded key still converges — it just does so through
+  // the channel it shares with `set`, rather than through the lineage).
+  //
+  // Widening it costs more than a wasted render, which is why the narrowing is
+  // not merely an optimization. A re-read is only a no-op while the entry still
+  // holds what the reader is showing, and for an *unsubscribed* reader — a hidden
+  // `<Activity>`, the population this dimension exists for — it may not:
+  // `whenStale: "refetch"` discards a stale value that no longer has a subscriber
+  // to protect it, and an entry the sweep already evicted is re-created by the
+  // read-through. Both start, from an unrelated boundary's republish, work that
+  // belonged to the reader's own reveal.
+  const hydrationSource = external
+    ? use(LaneHydrationSourceContext)
+    : undefined;
   const [promise, setPromise] = useState<Promise<LaneRead<T>> | undefined>(() =>
     loader !== undefined
       ? readOrCreate(lane, keyId, key, loader, readOptions)
@@ -133,8 +165,21 @@ export function useLane<T, C = T>(
   // payload re-renders it under a new publication, and this branch adopts the
   // already-published seed in that same render — inside the revealing
   // transition, so the framework's fetch-then-reveal stays a single commit
-  // with no fallback. (A reader whose key was not in the publication re-reads
-  // into its own current cache: a no-op.)
+  // with no fallback.
+  //
+  // That dimension is `undefined` on both sides for a client-owned read (see the
+  // context read above), so it is inert for one — the branch narrows to the three
+  // dimensions such a read actually has. It is *not* inert across a read that
+  // changes ownership: a spec that swaps a client loader for `external` under a
+  // boundary reads a lineage where it recorded none, which is a source change and
+  // is re-read as one.
+  //
+  // Among external reads it stays deliberately coarse — any publication in the
+  // lineage, not just one carrying this key. That costs a re-read and no more:
+  // an external spec has no `staleTime` / `whenStale` to make `reuseCache`
+  // discard anything, and the reader holds the very promise the entry's weak slot
+  // points at, so a read whose key was not in the payload returns the promise it
+  // already has and the `setPromise` below bails out.
   if (
     enabled !== prevSource.enabled ||
     lane !== prevSource.lane ||

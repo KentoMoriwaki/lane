@@ -17,6 +17,13 @@
  * re-read starting at the reveal. The passive catch-up (`syncAfterSubscribe`)
  * still exists, but only for the microwindow between the last render and the
  * subscription — the reveal itself is the layout reconciliation's job.
+ *
+ * The publication lineage is the other channel into a hidden tree, and it is
+ * scoped to reads that declare `loader: external` — see `use-lane.ts`. So the
+ * republish tests here come in two shapes: an external reader adopts a payload
+ * during its own offscreen render (the structural no-fallback guarantee, owned by
+ * `external.test.ts`), and a client-owned reader is left alone by one and
+ * converges at the reveal like any other value published behind its back.
  */
 
 import * as React from "react";
@@ -24,7 +31,13 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readOrCreate } from "./test-utils";
-import { createLane, LaneHydration, LaneProvider, useLane } from "../index";
+import {
+  createLane,
+  external,
+  LaneHydration,
+  LaneProvider,
+  useLane,
+} from "../index";
 import type {
   Lane,
   LaneHydrationSnapshots,
@@ -281,6 +294,68 @@ describe("Activity", () => {
     // unsubscribes the reader, which arms the lane-wide sweep, and running
     // pending timers would otherwise evict the entry mid-scenario.
     const lane = createLane({ gcTime: Infinity });
+    const first: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-1" }],
+    };
+    const second: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: "server-2" }],
+    };
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    document.body.append(container);
+    roots.push(root);
+
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, external, "visible", first));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    await waitForText(container, "server-1|background:0|transition:0");
+
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, external, "hidden", first));
+      await settlePromiseHandlers();
+    });
+
+    // The payload arrives while the tree is still hidden: the offscreen render
+    // picks up the new snapshots, the publish lands, and the hidden reader —
+    // unsubscribed, so no notification could reach it — adopts the seed
+    // through the source switch in its own (offscreen) render. The reader is
+    // `external`, which is what makes it a consumer of the lineage at all.
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, external, "hidden", second));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    const fallbacksBeforeReveal = fallbackRenders;
+
+    // The framework resolved the data before revealing; Lane must not convert
+    // that into a loading state. The reveal shows the republished value in its
+    // first committed frame — no fallback. (`external` has no loader to count:
+    // a wait would have been created only if the seed were missing, and it
+    // would show as the boundary's fallback here.)
+    await act(async () => {
+      root.render(hydrationActivityApp(lane, external, "visible", second));
+      await settlePromiseHandlers();
+    });
+
+    await waitForText(container, "server-2|background:0|transition:0");
+    expect(valueElement({ container } as RenderedApp).style.display).toBe("");
+    expect(fallbackRenders).toBe(fallbacksBeforeReveal);
+  });
+
+  it("converges a client-owned reader of a seeded key at the reveal", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: Infinity });
     const loads = controllableLoader();
     const first: LaneHydrationSnapshots = {
       entries: [{ key: ["tasks"], data: "server-1" }],
@@ -310,10 +385,10 @@ describe("Activity", () => {
       await settlePromiseHandlers();
     });
 
-    // The payload arrives while the tree is still hidden: the offscreen render
-    // picks up the new snapshots, the publish lands, and the hidden reader —
-    // unsubscribed, so no notification could reach it — adopts the seed
-    // through the source switch in its own (offscreen) render.
+    // Same payload arriving on a hidden tree, read with a *client* loader. This
+    // reader is not a consumer of the lineage, so the offscreen render that
+    // carries the new snapshots is not a source change for it and it stays on
+    // the promise it committed.
     await act(async () => {
       root.render(hydrationActivityApp(lane, loads.loader, "hidden", second));
       await settlePromiseHandlers();
@@ -325,25 +400,112 @@ describe("Activity", () => {
 
     const fallbacksBeforeReveal = fallbackRenders;
 
-    // The framework resolved the data before revealing; Lane must not convert
-    // that into a loading state. The reveal shows the republished value in its
-    // first committed frame — no fallback, no loader.
     await act(async () => {
       root.render(hydrationActivityApp(lane, loads.loader, "visible", second));
       await settlePromiseHandlers();
     });
 
+    // It still converges, through the channel every client-owned read has: the
+    // reveal reconciliation reads the store and finds the published promise —
+    // no loader call, and the superseded server-1 is never what the reveal
+    // settles on. What it does not get is the *structural* guarantee the
+    // external reader above has, and the fallback render is where the two
+    // differ: adopting a promise React has not instrumented yet suspends for a
+    // flush, exactly as a `lane.set` landing behind a hidden reader does.
     await waitForText(container, "server-2|background:0|transition:0");
     expect(valueElement({ container } as RenderedApp).style.display).toBe("");
     expect(loads.calls).toBe(0);
-    expect(fallbackRenders).toBe(fallbacksBeforeReveal);
+    expect(fallbackRenders).toBe(fallbacksBeforeReveal + 1);
+  });
+
+  it("leaves a hidden client-owned reader alone on an unrelated republish", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: Infinity });
+    const loads = controllableLoader();
+    // Neither payload mentions ["tasks"]: this boundary is the app shell's, and
+    // republishing is what it does on every navigation.
+    const first: LaneHydrationSnapshots = {
+      entries: [{ key: ["shell"], data: "shell-1" }],
+    };
+    const second: LaneHydrationSnapshots = {
+      entries: [{ key: ["shell"], data: "shell-2" }],
+    };
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    document.body.append(container);
+    roots.push(root);
+
+    const renderApp = (mode: Mode, snapshots: LaneHydrationSnapshots) =>
+      root.render(
+        hydrationActivityApp(lane, loads.loader, mode, snapshots, {
+          staleTime: 10,
+          whenStale: "refetch",
+        }),
+      );
+
+    await act(async () => {
+      renderApp("visible", first);
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+    loads.resolveLast("v1");
+    await flushReact();
+
+    await waitForText(container, "v1|background:0|transition:0");
+    expect(loads.calls).toBe(1);
+
+    await act(async () => {
+      renderApp("hidden", first);
+      await settlePromiseHandlers();
+    });
+
+    // Hidden and past its staleTime, so the value is now exactly what
+    // `whenStale: "refetch"` discards — but only at an idle remount, which is
+    // what the reveal is. The republish below is not one.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+
+    await act(async () => {
+      renderApp("hidden", second);
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await settlePromiseHandlers();
+    });
+
+    // The regression this scopes out: the reader is unsubscribed, so nothing
+    // shields its stale cache from a read-through, and an offscreen render
+    // carrying somebody else's payload would have discarded it and started a
+    // fetch for a tree that may never be revealed.
+    expect(loads.calls).toBe(1);
+
+    await act(async () => {
+      renderApp("visible", second);
+      await settlePromiseHandlers();
+    });
+
+    // The reveal is still the reveal: the opt-in fires there, on the schedule
+    // the read asked for rather than on the shell's.
+    expect(loads.calls).toBe(2);
+    expect(container.textContent).toContain("loading");
+
+    loads.resolveLast("v2");
+    await flushReact();
+
+    await waitForText(container, "v2|background:0|transition:0");
   });
 
   it("carries an outer republish through a stable inner boundary", async () => {
     vi.useFakeTimers();
 
     const lane = createLane({ gcTime: Infinity });
-    const loads = controllableLoader();
     const outerFirst: LaneHydrationSnapshots = {
       entries: [{ key: ["tasks"], data: "server-1" }],
     };
@@ -372,9 +534,7 @@ describe("Activity", () => {
               { fallback: React.createElement(Fallback) },
               React.createElement(LaneHydration, {
                 children: React.createElement(LaneHydration, {
-                  children: React.createElement(Probe, {
-                    loader: loads.loader,
-                  }),
+                  children: React.createElement(Probe, { loader: external }),
                   snapshots: inner,
                 }),
                 snapshots: outer,
@@ -401,7 +561,6 @@ describe("Activity", () => {
       await settlePromiseHandlers();
     });
     await waitForText(container, "server-1|background:0|transition:0");
-    expect(loads.calls).toBe(0);
 
     await act(async () => {
       renderApp("hidden", outerFirst);
@@ -425,7 +584,6 @@ describe("Activity", () => {
     });
 
     await waitForText(container, "server-2|background:0|transition:0");
-    expect(loads.calls).toBe(0);
     expect(fallbackRenders).toBe(fallbacksBeforeReveal);
   });
 
@@ -581,6 +739,7 @@ function hydrationActivityApp(
   loader: LaneLoader<string>,
   mode: Mode,
   snapshots: LaneHydrationSnapshots,
+  options?: ReadOptions,
 ): React.ReactElement {
   return React.createElement(LaneProvider, {
     lane,
@@ -589,7 +748,7 @@ function hydrationActivityApp(
         React.Suspense,
         { fallback: React.createElement(Fallback) },
         React.createElement(LaneHydration, {
-          children: React.createElement(Probe, { loader }),
+          children: React.createElement(Probe, { loader, options }),
           snapshots,
         }),
       ),

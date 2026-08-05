@@ -295,6 +295,65 @@ describe("ownership of an external entry", () => {
     expect(() => lane.invalidate(["task", "t1"])).not.toThrow();
     expect(() => lane.remove(["task", "t1"])).not.toThrow();
   });
+
+  // Seeding is a claim of ownership, so a key that is seeded and *also* read
+  // with a client loader has two owners. The store settles that in the
+  // publisher's favour and says nothing: the read runs, and what it produces is
+  // held weakly with no `lastFulfilled` behind it, so the mistake surfaces
+  // later — at a write that throws, or a value that quietly went missing. The
+  // read is where both halves are visible, so the read is where it is reported.
+  describe("a client loader on a published key", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("warns in development, naming the key", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const lane = createLane();
+
+      hydrateMany(lane, {
+        entries: [{ key: ["seeded", "warns"], data: "published" }],
+      });
+      await readOrCreate(lane, ["seeded", "warns"], async () => "client");
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('["seeded","warns"]');
+      expect(warn.mock.calls[0]?.[0]).toContain("loader: external");
+    });
+
+    it("warns once for a key, not on every read of it", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const lane = createLane();
+      const loader = async () => "client";
+
+      hydrateMany(lane, {
+        entries: [{ key: ["seeded", "once"], data: "published" }],
+      });
+      // A reader re-reads on every notification and every reveal; one warning
+      // per read would bury the console it is trying to reach.
+      await readOrCreate(lane, ["seeded", "once"], loader);
+      await readOrCreate(lane, ["seeded", "once"], loader);
+      await readOrCreate(lane, ["seeded", "once"], loader);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays quiet for the combinations that are not a mistake", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const lane = createLane();
+
+      hydrateMany(lane, {
+        entries: [{ key: ["seeded", "quiet"], data: "published" }],
+      });
+
+      // Reading a seeded key the declared way, and reading an *unseeded* key
+      // with a client loader. Neither is two owners.
+      await readOrCreate(lane, ["seeded", "quiet"], external);
+      await readOrCreate(lane, ["client", "quiet"], async () => "client");
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("retention of an external entry", () => {
@@ -561,10 +620,13 @@ describe("an external reader", () => {
 
     const fallbacksBeforeReveal = fallbackRenders;
 
-    // The same guarantee the client-owned republish has (see activity.test.ts):
-    // the reveal adopts the seed through the hydration source switch, in the
-    // revealing render, so nothing loading is ever shown. Nothing about the read
-    // paths knows this key is external.
+    // The reveal adopts the seed through the hydration source switch, in the
+    // revealing render, so nothing loading is ever shown. This is where that
+    // guarantee lives: `external` is what makes a reader a consumer of the
+    // publication lineage at all, and a client-owned read of a seeded key
+    // converges through the reveal reconciliation instead (see
+    // activity.test.ts). The read *paths* still know nothing — the loader
+    // decides who is woken, never how the entry is read.
     await act(async () => {
       container.root.render(hydratedExternalApp(lane, second, "visible"));
       await settlePromiseHandlers();

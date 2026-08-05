@@ -3,7 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { LaneHydration, laneSnapshot } from "use-lane";
 import { nextValue } from "@/server/bfcache-data";
-import { bfReads } from "../../reads";
+import { bfPublished } from "../../reads";
 import { PathnameProbe } from "../../pathname-probe";
 import { RouteProbes, SeedFallback } from "../../route-probes";
 
@@ -21,8 +21,8 @@ async function SeededDetail({ params }: { params: Promise<{ id: string }> }) {
 
   const snapshots = {
     entries: [
-      laneSnapshot(bfReads.detail(id), nextValue(`detail/${id}`, "rsc")),
-      laneSnapshot(bfReads.shared(), nextValue("shared", "rsc")),
+      laneSnapshot(bfPublished.detail(id), nextValue(`detail/${id}`, "rsc")),
+      laneSnapshot(bfPublished.shared(), nextValue("shared", "rsc")),
     ],
   };
 

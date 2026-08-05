@@ -22,6 +22,19 @@ import type { LaneKey, LaneKeyOf, LanePlainKey, LaneSnapshot } from "./types";
  * key restated for the server. Reads are plain objects with no loader called
  * here, so this stays an ordinary Server Component import.
  *
+ * **Seed keys the client reads with `loader: external`.** Publishing a key is
+ * claiming it: the value is held weakly rather than for `gcTime`, and the client
+ * mutation surface closes on it for good. So a key seeded here and read with a
+ * client loader is a key with two owners, and Lane resolves that in the
+ * publisher's favour without asking — the read still runs, it just runs without
+ * anything a client-owned entry gives it, until some later `invalidate` throws.
+ * That combination warns in development, from the read (see `readOrCreate`),
+ * which is the only place both halves of it are visible: this function is handed
+ * a key, and a key does not carry the loader it will be read with.
+ *
+ * A value the client should own from there on is not a seed — publish it with
+ * `lane.set`, which is the same write without the change of ownership.
+ *
  * The checking is the point. `LaneSnapshot.key` is a plain `LaneKey`, so an
  * object literal (`{ key, data }`) lets any `data` through: a mismatched pair on
  * this path does not fail a fetch, it hydrates every reader of that key with the

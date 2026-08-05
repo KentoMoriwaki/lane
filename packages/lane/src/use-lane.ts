@@ -13,6 +13,7 @@ import {
   invalidateEntry,
   invalidationSource,
   latestNotifySource,
+  peekEntryPromise,
   readOrCreate,
   subscribeLane,
 } from "./core";
@@ -477,37 +478,24 @@ export function useLane<T, C = T>(
     refetchOnMount(lane, keyId);
   }, [enabled, lane, keyId]);
 
-  // The re-read behind the bound `invalidate`, as an event for the same reason
-  // every fire-time read here is one: the loader and options must be the
-  // latest, and `invalidate`'s identity must not follow them. It runs *after*
-  // the invalidation's synchronous fan-out, so for a subscribed reader the
-  // notification handler above has already installed the fresh read and this
-  // `readOrCreate` dedupes onto it — the returned promise is the one the
-  // readers adopt, not a second fetch. Only a key nobody was subscribed to
-  // (a stale callback after unmount) actually starts its read here, which is
-  // then an orphan the sweep reclaims, exactly like a prefetch nobody adopted.
-  const readAfterInvalidate = useEffectEvent((
-    targetLane: Lane,
-    targetKeyId: string,
-    targetKey: LaneKey,
-  ) => {
-    if (loader === undefined) {
-      return undefined;
-    }
-
-    return readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions);
-  });
-
   const invalidate = useCallback(
     (options?: LaneInvalidateOptions): Promise<LaneRead<T>> | undefined => {
       invalidateEntry(lane, keyId, options, invalidationSource(options));
 
-      // Always read back, even when `onlyIf` skipped the invalidation: the
-      // cache is then still in place, so this returns the current promise and
-      // the caller is awaiting "the key's value after this call" either way.
-      return readAfterInvalidate(lane, keyId, sourceKey);
+      // The next read, from the store rather than from a loader this callback
+      // would have to depend on. The invalidation's fan-out is synchronous, so
+      // by this line a subscribed reader's `onInvalidate` has already
+      // installed its re-read as the entry's cache — the promise every reader
+      // of the key adopts, by the store's dedupe — and an `onlyIf` that
+      // declined cleared nothing, so the cache it left in place *is* "the
+      // key's value after this call". `undefined` is the read with nothing
+      // left to await: gated off, or a stale callback that outlived its
+      // subscription.
+      return peekEntryPromise(lane, keyId) as
+        | Promise<LaneRead<T>>
+        | undefined;
     },
-    [lane, keyId, sourceKey],
+    [lane, keyId],
   );
 
   // Only this reader's own transition, which needs no announcement:

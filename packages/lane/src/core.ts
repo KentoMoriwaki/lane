@@ -600,6 +600,24 @@ export function subscribeLane(
 }
 
 /**
+ * The promise the entry currently holds, if any — the loader-free read-back
+ * behind the bound `invalidate`, for the invalidation that notified nobody: an
+ * `onlyIf` that declined cleared nothing, so the current cache *is* "the key's
+ * value after this call". Deliberately not a public read API (the store returns
+ * promises to readers, never data, and this returns only what a read already
+ * created); addressed by canonical id like every internal entry API.
+ */
+export function peekEntryPromise(
+  lane: Lane,
+  keyId: string,
+): Promise<unknown> | undefined {
+  const entry = getLaneState(lane).entries.get(keyId);
+  const cache = entry?.cache;
+
+  return entry && cache ? cachedPromise(entry, cache) : undefined;
+}
+
+/**
  * The source of the last notification for a key, for a reader catching up on one
  * it was not subscribed in time to receive. `undefined` when the key has never
  * been notified — or no longer exists — in which case the reader has no reason

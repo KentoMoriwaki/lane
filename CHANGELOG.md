@@ -38,7 +38,7 @@ All notable changes to `use-lane` are documented here. The format is based on
   example is exact, not heuristic: structural sharing's reference reuse is now
   documented as a guarantee, with `revision` (below) as its serializable twin.
 
-  It costs **+13 B** on the typical `LaneProvider` + `useLane` pair.
+  It costs **+30 B** on the typical `LaneProvider` + `useLane` pair.
 
 - **`LaneRead.revision` — the identity of a read's content, in the resolved
   value.** Structural sharing already decides whether a refetch changed
@@ -87,9 +87,9 @@ All notable changes to `use-lane` are documented here. The format is based on
 
   It costs **+60 B** on the store and **+79 B** on the typical
   `LaneProvider` + `useLane` pair. Across this and the awaitable `invalidate`
-  above, typical lands at 3.97 kB and its budget moves 3.9 → 4 kB; the store
+  above, typical lands at 3.98 kB and its budget moves 3.9 → 4 kB; the store
   stays under its unchanged 2.55 kB guard, and the ceiling moves
-  5.55 → 5.56 kB.
+  5.55 → 5.58 kB.
 
 ## [0.8.0] - 2026-08-05
 

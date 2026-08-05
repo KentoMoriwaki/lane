@@ -109,12 +109,12 @@ export function useLanesAll<T, C = T>(
   // Recompute the whole aggregate from the current members. `readOrCreate` returns
   // the core-cached promise for every unchanged member, so only an invalidated one
   // re-fetches, and `aggregateOf` reuses the identity when members are unchanged.
-  const refresh = useEffectEvent((urgent: boolean, gate?: Promise<void>) => {
-    // The gate only reaches members with no cache — an unchanged member reuses
+  const refresh = useEffectEvent((urgent: boolean) => {
+    // Only members with no cache re-read — an unchanged member reuses
     // its promise — so handing it to the whole recompute is the same as handing
     // it to the member that was just invalidated.
     const apply = () =>
-      setAggregate(computeAggregate(lane, descriptors, options, loaderMeta, gate));
+      setAggregate(computeAggregate(lane, descriptors, options, loaderMeta));
     if (urgent) {
       apply();
       return;
@@ -179,7 +179,7 @@ export function useLanesAll<T, C = T>(
       active.set(
         keyId,
         subscribeLane(lane, keyId, key, {
-          onInvalidate: (_entry, _source, gate) => refresh(false, gate),
+          onInvalidate: () => refresh(false),
           onRemove: () => refresh(true),
         }),
       );
@@ -291,7 +291,6 @@ function computeAggregate<T, C>(
   descriptors: Descriptor<T, C>[],
   options: LaneUseOptions,
   loaderMeta: LaneLoaderMeta,
-  gate?: Promise<void>,
 ): Promise<LaneRead<T>[]> {
   return aggregateOf(
     descriptors.map((d) =>
@@ -301,7 +300,6 @@ function computeAggregate<T, C>(
         d.key,
         d.loader,
         toReadOptions(optionsFor(options, d), loaderMeta),
-        gate,
       ),
     ),
   );

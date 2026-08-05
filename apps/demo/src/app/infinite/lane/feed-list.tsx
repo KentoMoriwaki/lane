@@ -33,7 +33,7 @@ const FEED_STALE_TIME = 5_000;
  * - a *re-read* that fails never throws: lane keeps serving the last fulfilled
  *   value and hands the failure back as `refreshError` in the same resolved
  *   value, rendered inline below;
- * - "refreshing" is `isTransitionPending`, which covers both a `loadMore` and a
+ * - "refreshing" is `isInvalidationPending`, which covers both a `loadMore` and a
  *   full re-read, and during which the committed list stays on screen.
  *
  * What is *not* here any more is the bookkeeping. An earlier version of this
@@ -64,7 +64,7 @@ export function FeedList({
   const deferredFeed = useDeferredValue(feed);
   const isSwappingParams = deferredFeed !== feed;
 
-  const { promise, loadMore, isTransitionPending, isBackgroundPending } =
+  const { promise, loadMore, isInvalidationPending, isBackgroundPending } =
     useInfiniteLane<FeedPageResponse, FeedCursor>({
       key: feedKey(deferredFeed),
       fetchPage: (cursor, { signal }) =>
@@ -87,7 +87,7 @@ export function FeedList({
     [items, deferredFeed.sort],
   );
 
-  const isConverging = isTransitionPending || isBackgroundPending;
+  const isConverging = isInvalidationPending || isBackgroundPending;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -138,7 +138,7 @@ export function FeedList({
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <h2 className="text-sm font-semibold">Accumulated list</h2>
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-          <Flag label="isTransitionPending" value={isTransitionPending} />
+          <Flag label="isInvalidationPending" value={isInvalidationPending} />
           <Flag label="isBackgroundPending" value={isBackgroundPending} />
           <Flag label="data.hasNext" value={hasNext} />
           <Flag label="params deferred" value={isSwappingParams} />

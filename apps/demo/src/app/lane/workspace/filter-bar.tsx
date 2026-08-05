@@ -196,7 +196,7 @@ export function FilterBar({
       ) : null}
 
       <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-        {tasksResult.isTransitionPending ? (
+        {tasksResult.isInvalidationPending ? (
           <span className="inline-flex items-center gap-1 text-cobalt">
             <RotateCw className="size-3 animate-spin" />
             Updating

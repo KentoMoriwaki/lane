@@ -25,7 +25,7 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `isLoading` (no data yet) | a **`Suspense` fallback** — there is no flag |
 | `isError` / `error` (initial) | an **Error Boundary** — an initial load rejects |
 | `error` *over existing data* | `refreshError` from `use(promise)` — render it inline |
-| `isFetching` / `isRefetching` | `isTransitionPending` (explicit) / `isBackgroundPending` (auto) |
+| `isFetching` / `isRefetching` | `isInvalidationPending` (explicit) / `isBackgroundPending` (auto) |
 | `keepPreviousData` / `placeholderData` | **transitions** — wrap the key change, or `useDeferredValue` |
 | `invalidateQueries(key)` | `invalidate(key)` exact, `invalidate(prefix)`, or a predicate |
 | `setQueryData(key, v)` | `set(key, v)` — for confirmed data you already have |
@@ -74,6 +74,7 @@ The call sites map one for one:
 | `queryClient.prefetchQuery(taskQueries.detail(id))` | `lane.prefetch(taskLanes.detail(id))` |
 | `queryClient.invalidateQueries(taskQueries.detail(id))` | `lane.invalidate(taskLanes.detail(id).key)` |
 | `queryClient.setQueryData(taskQueries.detail(id).queryKey, task)` | `lane.set(taskLanes.detail(id).key, task)` |
+| `queryClient.getQueryData(taskQueries.detail(id).queryKey)` | **no equivalent** — see [there is no cache getter](#there-is-no-cache-getter) |
 | `useQueries({ queries: ids.map(taskQueries.detail) })` | `useLanesAll(ids.map(taskLanes.detail))` |
 
 The shape of that table is the same as react-query's, and for the same reason.
@@ -157,7 +158,7 @@ To keep call-site churn small in a large codebase, it is reasonable to wrap
   Boundary and never reaches a field. Expose `refreshError` — a failed refresh
   *over* existing data — not a general `error`.
 - **`isPending` / `isFetching` mean "refreshing over data,"** not "no data yet."
-  Map them to `isBackgroundPending` / `isTransitionPending`.
+  Map them to `isBackgroundPending` / `isInvalidationPending`.
 - **Pass the key straight to `useLane`.** Lane canonicalizes keys internally — no
   `useMemo` / `JSON.stringify` wrapper needed. (If the key *also* feeds an effect
   dependency array — e.g. a poll — see [step 5](#step-5--revalidation-and-polling).)
@@ -167,7 +168,7 @@ To keep call-site churn small in a large codebase, it is reasonable to wrap
 Once reads suspend, a data widget composes into a few layers:
 
 - **Initial load** → a `Suspense` boundary (per widget or per section).
-- **Refreshing over data** → an `isBackgroundPending` / `isTransitionPending`
+- **Refreshing over data** → an `isBackgroundPending` / `isInvalidationPending`
   affordance (an overlay or a subtle bar), *not* a fallback.
 - **A failed refresh** → render the stale `data` **and** the `refreshError` as a
   small inline hint. Don't throw it; don't blank the panel.
@@ -228,6 +229,27 @@ that maps each string to a Lane [scope](./api-reference.md#keys) — an exact ke
 prefix, or a predicate — and **unit-test it**. It is the load-bearing seam of the
 migration; a wrong scope silently fails to converge.
 
+## There is no cache getter
+
+`getQueryData`, `getQueriesData`, and `getQueryState` have no Lane equivalent,
+and the absence is a decision rather than a gap. Every method on the `Lane`
+instance returns a promise or `void`, so a value reaches a component through
+`use(promise)` and nowhere else — see [the store returns promises, never
+data](./design-notes.md#the-store-returns-promises-never-data) for why. Where
+each use of it goes:
+
+| What you reached for it for | In Lane |
+| --- | --- |
+| `onMutate` — snapshot the previous value for rollback | Nothing to port. Optimistic state is `useOptimistic` over the read value, so there is no shared write to roll back. |
+| `setQueryData(key, old => …)` — derive from the current value | [`lane.update(key, current => …)`](./api-reference.md#update--updateall) — the updater is handed the value, and chains onto an in-flight read rather than racing it. |
+| `initialData` / `placeholderData` from another key | Usually nothing: wrap the navigation in a transition and the previous screen stays live until the next read resolves. To show a partial value *immediately*, `lane.set(key, value)` with the value you already have — it becomes that key's authoritative value, carrying no staleness from where it came from. |
+| Reading in an event handler without subscribing | Pass the value in from the component that rendered it. |
+| A socket / push message | `lane.set` or `lane.update` when the message carries the value; `lane.invalidate` when it only announces a change. No "do I hold this key" guard is needed — invalidation is render-driven, so an entry nobody reads costs nothing until it is read. |
+| Asserting cache contents in a test | Assert what a reader renders. |
+
+SWR's `cache.get(key)` and its `useSWRConfig().cache` map the same way; so does
+reading `api.endpoints.x.select(arg)(getState())` out of RTK Query in a thunk.
+
 ## Step 5 — revalidation and polling
 
 Focus / reconnect / mount revalidation are read options (`refetchOnFocus`,
@@ -250,7 +272,7 @@ one entry per list, holding every page:
 | `getNextPageParam(lastPage, pages)` | `nextCursor(page, cursor)` — `null` ends the list |
 | `initialPageParam` | `initialCursor` |
 | `fetchNextPage()` | `loadMore()` |
-| `isFetchingNextPage` | `isTransitionPending` — it also covers a full re-read |
+| `isFetchingNextPage` | `isInvalidationPending` — it also covers a full re-read |
 | `hasNextPage` | `data.hasNext` — **in the value**, not on the hook |
 
 ```tsx

@@ -6,7 +6,93 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`startInvalidationTransition`, returned by `useLane` / `useInfiniteLane`.**
+  Runs an action inside the reader's invalidation transition, so
+  `isInvalidationPending` is on from when the action *starts* rather than from
+  when it finishes. `await action(); invalidate()` can only tell readers at the
+  end — notification is Lane's only channel to them and it fires last — which
+  leaves the whole request showing stale data with no sign anything is happening.
+
+  ```ts
+  startInvalidationTransition(async () => {
+    await saveTask(patch);
+    invalidate();
+  });
+  ```
+
+  Other keys a mutation touches join with the scoped form,
+  **`lane.startInvalidationTransition(scope)`**, called from inside the action —
+  where the knowledge is, since a mutation helper knows its own reach and its
+  caller does not. Their readers open their transitions in the same synchronous
+  fan-out `invalidate` already uses, so every reader in the window goes pending in
+  one tick and they all converge on one commit. What is announced is not what is
+  converged: what converges is what changed, what is announced is what should look
+  busy, and a `background: true` refresh is asking not to be one of them.
+
+  Lane never touches the action: its value is ignored and its rejection is never
+  caught, so a failed save cannot arrive at a reader as `refreshError`. Nothing
+  is stored when the window opens either — an announcement schedules no read,
+  because the source has not changed yet. External reads do not get it, for the
+  reason they do not get `invalidate`.
+
+  It costs **+120 B** on the typical `LaneProvider` + `useLane` pair on its own,
+  and removing the gate `after` needed gives 90 B of that back, so the net across
+  both changes is **+30 B** (3.84 → 3.87 kB, against an unchanged 3.9 kB budget).
+  The store is back where it started at 2.47 kB, and no `size-limit` budget
+  moves.
+
+### Removed
+
+- **Breaking: `invalidate`'s `after` option is gone**, replaced by
+  `startInvalidationTransition`. It answered the same question — how to mark
+  readers pending while a mutation runs — by taking the action's promise as a
+  clock and holding the re-reads behind it. That worked, and cost more than it
+  looked: Lane had to observe a promise that was never its own (swallowing the
+  rejection, so a failed action still converged and its failure never surfaced),
+  and the early invalidation it performed had to be undone by a gate, since
+  re-reading before the action lands fetches the pre-mutation source. Running the
+  action inside a transition needs none of that — React's entanglement holds the
+  window open, so the gate, the swallowed rejection, and the deferral path for a
+  key nobody was reading all leave with the option.
+
+  ```ts
+  // Before
+  const saved = saveTodo(patch);
+  lane.invalidateAll(["todos"], { after: saved });
+  await saved;
+
+  // After
+  startInvalidationTransition(async () => {
+    await saveTodo(patch);
+    lane.invalidateAll(["todos"]);
+  });
+  ```
+
+  One behavior does not carry over, and it was the option's own compromise: a
+  rejected action still converged, because `after` chose *when* to re-read rather
+  than whether to. Now the converge calls are yours, inside the action, so a
+  failure that should not converge simply does not reach them — and one that
+  should still can, from a `catch`.
+
 ### Changed
+
+- **Breaking: `isTransitionPending` is now `isInvalidationPending`.** Both pending
+  flags a reader returns come from `useTransition()`, so "transition" named what
+  they share rather than what tells them apart — the field said nothing. What
+  separates them is the cause: an explicit invalidation against an automatic
+  revalidation, and only the second half already had the name it needed
+  (`isBackgroundPending`). `set` and `update` set it too, which is not a stretch of
+  the word — both are [prefilled
+  invalidations](docs/design-notes.md#authoritative-publication-is-secondary), and
+  so is the `update` behind `useInfiniteLane`'s `loadMore`.
+
+  Rename the field at each read site; nothing else changes. `useLane` and
+  `useInfiniteLane` return it (`useLanesAll` resolves to values and never had it).
+  The noun form is deliberate: an invalidation is instantaneous, so `isInvalidating`
+  would claim a duration the verb does not have — what lasts is the convergence
+  that is *pending*.
 
 - **Breaking: `staleTime` defaults to `Infinity`, not `0`.** Nothing is stale until
   an app says what stale means. The old `0` was inherited from react-query, where
@@ -253,7 +339,7 @@ All notable changes to `use-lane` are documented here. The format is based on
 - **`useInfiniteLane(read)`** — a cursor-paginated list as
   one key holding the whole accumulated list, with the page depth read back out
   of the cached value. `{ initialCursor, fetchPage, nextCursor }` in, `{ promise,
-  loadMore, isTransitionPending, isBackgroundPending, invalidate }` out, and
+  loadMore, isInvalidationPending, isBackgroundPending, invalidate }` out, and
   `{ pages, params, hasNext }` under the key. `loadMore` appends one page through
   `update`, so the key never changes and the list converges through a transition
   with no `useTransition` of your own; any refresh re-walks the chain as deep as
@@ -365,7 +451,7 @@ All notable changes to `use-lane` are documented here. The format is based on
   on the previous promise and only finds the change when its subscription effect
   runs — now converges through the same kind of transition that notification
   used, instead of always the background one. Siblings reading the same key no
-  longer disagree about whether an update is `isTransitionPending` or
+  longer disagree about whether an update is `isInvalidationPending` or
   `isBackgroundPending`.
 
 ### Changed
@@ -484,7 +570,7 @@ All notable changes to `use-lane` are documented here. The format is based on
   per-entry poll timer) and drops the per-subscriber `refetchInterval` option.
 - **`invalidate` / `invalidateAll` accept `{ background: true }`.** It converges
   through the background transition (`isBackgroundPending`) instead of the default
-  explicit one (`isTransitionPending`) — what a self-scheduled poll uses so an
+  explicit one (`isInvalidationPending`) — what a self-scheduled poll uses so an
   automatic refresh doesn't read as a user-driven invalidation. New field on
   `LaneInvalidateOptions`.
 
@@ -593,7 +679,7 @@ Initial public release.
 ### Added
 
 - `useLane(key, loader, options)` returning `{ promise, refreshError,
-  isTransitionPending, isBackgroundPending, invalidate }`, plus the
+  isInvalidationPending, isBackgroundPending, invalidate }`, plus the
   `useLanePromise` convenience wrapper.
 - `LaneProvider` / `useLaneInstance` and standalone `createLane()`.
 - Exact and scoped (`prefix` / predicate) `invalidate`, `set`, `update`, and

@@ -546,7 +546,7 @@ function Probe({
     "div",
     { "data-testid": "value" },
     `${read.data}|background:${flag(result.isBackgroundPending)}|transition:${flag(
-      result.isTransitionPending,
+      result.isInvalidationPending,
     )}`,
   );
 }

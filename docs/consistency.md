@@ -24,7 +24,7 @@ disagreeing.
 
 **Readers of one key agree on which pending flag is set.** A reader that
 subscribes a moment too late to receive a notification still converges through
-the same kind of transition it missed, so it reports `isTransitionPending` or
+the same kind of transition it missed, so it reports `isInvalidationPending` or
 `isBackgroundPending` to match its siblings rather than always the latter.
 
 **An uncommitted mount is never pinned to a superseded promise.** A suspended
@@ -221,24 +221,31 @@ order:
 
 1. **The action resolves to the key's value** → [`set(key, promise)`](./api-reference.md#set)
    publishes the in-flight promise under that key: pending starts with the
-   action, and there is no second round-trip.
+   action, and there is no second round-trip. Only for a promise of the key's
+   *value* — a mutation's promise does not go here, or its failure arrives at
+   every reader as `refreshError`.
 2. **You can show the outcome before it lands** → `useOptimistic`. The reader
    already shows the new state, so pending is not the right signal at all.
-3. **Neither** → [`invalidate(key, { after })`](./api-reference.md#announcing-an-invalidation-before-the-mutation-finishes),
+3. **Neither** → [`startInvalidationTransition`](./api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action),
    for the action that refreshes a list, a counter, and a detail view it returns
-   none of:
+   none of. Run the action in the reader's transition; the other keys that should
+   look busy join with `lane.startInvalidationTransition(scope)` from inside it,
+   in the same synchronous fan-out, so the whole set goes pending in one tick and
+   converges in one commit:
 
 ```ts
-const saved = saveTodo(patch);
-lane.invalidateAll(["todos"], { after: saved });
-await saved;
+startInvalidationTransition(async () => {
+  await saveTodo(patch);   // announces ["counters"] from inside, and converges it
+  invalidate();
+});
 ```
 
 None of this is a default to apply everywhere. When the pending signal is
 already where the user is looking — a submit button on `useActionState` — and
-the affected reads are elsewhere, the plain shape above is the right one. See
-[when to reach for it](./api-reference.md#when-to-reach-for-it) for the rest,
-including the one place `after` costs you something.
+the affected reads are elsewhere, the plain shape above is the right one: a
+window nobody is watching costs renders and buys nothing. See
+[`startInvalidationTransition`](./api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action)
+for the rest.
 
 ### Let readers of one key agree on freshness
 
@@ -273,6 +280,17 @@ repaired one commit later still fails the test. It covers both entry points for
 the inconsistent case, the same-transition control that removes them, and the
 guarantees at the top of this page — including the one that says an ordinary
 invalidate → refetch is safe on its own.
+
+`transition-entanglement.test.ts` pins the half of the shared-lane claim that
+reaches *outside* Lane, because it is what decides whether keeping readers
+pending across a mutation needs machinery at all. A reader invalidated from
+inside `startTransition(async () => …)` joins that transition rather than
+opening one of its own, so the caller stays pending until the reader has its
+new data — after its own action has already settled. The second case records
+the React behavior behind that: an empty `startTransition`, with no update to
+schedule, still reports pending for as long as the enclosing scope runs,
+because `isPending` is itself transition-lane state and its reset is entangled
+with everything else in the lane.
 
 ## See also
 

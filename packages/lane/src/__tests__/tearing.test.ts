@@ -488,10 +488,10 @@ describe("cross-reader consistency", () => {
       expect(text(app)).toBe("[A=v2:t0b0][B=v2:t0b0]");
     });
 
-    it("closes the window with invalidate({ after })", async () => {
-      // The general fix: the invalidation is announced when the action starts and
-      // the re-read is held behind it, so pending covers the whole action even
-      // though the action does not resolve to this key's value.
+    it("closes the window with startInvalidationTransition", async () => {
+      // The general fix: the readers are put in the action's transition when it
+      // starts, so pending covers the whole action even though the action does
+      // not resolve to this key's value.
       const lane = createLane();
       const action = deferred<void>();
       const reload = deferred<string>();
@@ -501,7 +501,7 @@ describe("cross-reader consistency", () => {
       const frames = newFrames();
       const ctl: Controls = {};
       const app = await render(frames, () =>
-        el(ActionApp, { lane, frames, ctl, loader, after: true }),
+        el(ActionApp, { lane, frames, ctl, loader, announce: true }),
       );
       await settle(app);
       expect(text(app)).toBe("[A=v1:t0b0][B=v1:t0b0]");
@@ -647,7 +647,7 @@ function Reader({
   const result = useLane({ key: cacheKey, loader });
   const read = React.use(result.promise);
   const pending = flags
-    ? `:t${result.isTransitionPending ? 1 : 0}b${result.isBackgroundPending ? 1 : 0}`
+    ? `:t${result.isInvalidationPending ? 1 : 0}b${result.isBackgroundPending ? 1 : 0}`
     : "";
 
   return React.createElement(
@@ -783,28 +783,27 @@ function ActionApp({
   frames,
   ctl,
   loader,
-  after = false,
+  announce = false,
 }: {
   lane: Lane;
   frames: Frames;
   ctl: Controls;
   loader: LaneLoader<string>;
-  after?: boolean;
+  announce?: boolean;
 }) {
   const [, startTransition] = React.useTransition();
 
   React.useEffect(() => {
     ctl.act = (action) => {
       startTransition(async () => {
-        if (after) {
-          lane.invalidate(KEY, { after: action });
+        if (announce) {
+          // This component reads nothing, so it reaches the readers through the
+          // scoped form rather than a bound one.
+          lane.startInvalidationTransition(KEY);
         }
 
         await action;
-
-        if (!after) {
-          lane.invalidate(KEY);
-        }
+        lane.invalidate(KEY);
       });
     };
   });

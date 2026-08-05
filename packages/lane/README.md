@@ -120,7 +120,7 @@ export function UserProfile({ userId }: { userId: string }) {
 ```
 
 **3. Converge after a mutation by invalidating the source.** Mounted readers
-re-read through a transition; `isTransitionPending` tells you it is happening.
+re-read through a transition; `isInvalidationPending` tells you it is happening.
 
 ```tsx
 "use client";
@@ -147,7 +147,7 @@ function RenameButton({ userId }: { userId: string }) {
 
 - **Transition-native re-reads.** Updates run through `useTransition`, so the
   previous UI stays mounted and interactive while the next promise resolves —
-  `isTransitionPending` and `isBackgroundPending` tell you which is in flight.
+  `isInvalidationPending` and `isBackgroundPending` tell you which is in flight.
   Pair a key with `useDeferredValue` for search and filter UIs. (Initial loads
   with no prior data still suspend to a Suspense fallback.)
 - **Keys are structural arrays** (`["task", id]`). They are matched exactly, or
@@ -190,7 +190,7 @@ function RenameButton({ userId }: { userId: string }) {
 | Export | Purpose |
 | --- | --- |
 | `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation via a pluggable `eventSource` (browser default; React Native / CLI / custom). |
-| `useLane(read)` | Read a key. Returns `{ promise, isTransitionPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
+| `useLane(read)` | Read a key. Returns `{ promise, isInvalidationPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, refreshError }`. |
 | `useLanePromise(read)` | Thin wrapper returning just `promise`. |
 | `laneRead({ key, loader, …options })` | Colocate a read's key, loader, and options in one value — react-query's `queryOptions()` for Lane. Reads take the whole thing (`useLane`, `useLanesAll`, `prefetch`); entry operations take its `key`. |
 | `laneKey<T>(key)` | A key that carries what its entry holds, so `set` / `update` through it are type-checked — no loader needed. |

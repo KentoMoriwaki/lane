@@ -79,10 +79,9 @@ The race that a cancel API usually exists to solve does not arise here, so
 stopping is all it is for. Elsewhere cancellation is load-bearing just before an
 optimistic update — a refetch that started before the mutation must not land after
 it and overwrite the result. Lane closes that path structurally instead: `set`
-aborts and publishes in one step, `update` chains rather than races, and
-`invalidate(key, { after })` gates the re-read on the action. A response that
-arrives late regardless writes into a cache object the entry no longer holds, and
-is ignored.
+aborts and publishes in one step, and `update` chains rather than races. A
+response that arrives late regardless writes into a cache object the entry no
+longer holds, and is ignored.
 
 **So `cancel` is for a read the caller started and can still account for.** Not
 "stop whatever is in flight under this key" — that reading is what makes it
@@ -121,13 +120,14 @@ Collection is left to `gcTime` because the timescales do not match either:
 garbage collection is correct if it happens eventually, cancellation is worthless
 unless it happens now.
 
-Ownership cannot be a runtime check, and deliberately so. Lane exposes no way to
-ask what a key holds, and an option like `onlyIf: "revertable"` — cancel, but only
-where it happens to be safe — would make the same button stop the request or not
-depending on whether the load had committed a moment earlier, which the caller
-cannot observe. `invalidate`'s `onlyIf` works because both of its outcomes
-converge; cancelling's do not. The rule belongs where the knowledge is: at the
-call site, checked by whoever writes it.
+Ownership cannot be a runtime check, and deliberately so. Lane exposes [no way to
+ask what a key holds](#the-store-returns-promises-never-data), and an option like
+`onlyIf: "revertable"` — cancel, but only where it happens to be safe — would
+make the same button stop the request or not depending on whether the load had
+committed a moment earlier, which the caller cannot observe. `invalidate`'s
+`onlyIf` works because both of its outcomes converge; cancelling's do not. The
+rule belongs where the knowledge is: at the call site, checked by whoever writes
+it.
 
 Resource saving is a side effect and not the point. A stopped request does spare
 the bandwidth, the radio, and — only if the server bothers to notice the closed
@@ -146,6 +146,62 @@ For the same reason **Lane ships no mutation helper**. Mutations are written wit
 React primitives — `useActionState`, `useOptimistic`, transitions — exactly as
 they are next to Server Components and Server Functions. One mental model is worth
 more long-term than a convenient wrapper that diverges from it.
+
+## The store returns promises, never data
+
+Every method on the `Lane` instance returns a promise or nothing. `prefetch`,
+`set`, `update`, and `updateAll` hand back the promise a reader will `use()`;
+`invalidate`, `invalidateAll`, `remove`, `removeAll`, and `cancel` return `void`.
+There is no `get`, no `peek`, no `getQueryData` equivalent — nothing that answers
+"what does this key hold" with a value.
+
+That is the section above seen from the other side. `useLane` returns no `data`
+field because the promise is the state; the store returns no value because a
+value handed out beside `use()` is a second channel into the same data, and
+nothing keeps the two agreeing.
+
+**Concurrent rendering is what breaks the agreement.** Lane keeps each key's
+promise in React state, so two readers of one key under different Suspense
+boundaries commit on their own schedule: during a transition one can already be
+showing the next value while the other still shows the previous one. "What this
+key holds" has no single answer at that moment, so a getter could only report the
+store's own state — which is neither reader's. An event handler consulting it
+reads a value the tree the user clicked may not be showing. That is the argument
+that already decides `loadMore`'s callback identity in `useInfiniteLane`, where a
+ref refreshed outside render would land a click on a key that has not been
+revealed yet. A getter is that ref, offered as API.
+
+**The last fulfilled value is not a way around it.** An entry does keep one, and
+in the ordinary single-reader case it is exactly what is on screen. But it is
+there to serve three recovery paths — the stale-on-error fallback, the loader's
+[`current`](#a-loaders-input-includes-what-it-already-produced), and where
+`cancel` reverts to — and its lifetime rules belong to them. Publishing it would
+freeze those rules: every later change to how a failed refresh or a cancel
+recovers would silently be a change to what the getter returns.
+
+So the demand splits, and each half already has somewhere to go:
+
+- **Derive the next value from the current one** — `update`, which chains onto
+  the in-flight promise instead of racing it. It needs no getter because an
+  updater is *handed* the value; that is how `useInfiniteLane` appends a page.
+- **React to something from outside** (a socket patch, a push notification) —
+  `set` or `update` for a message that carries the value, `invalidate` for one
+  that only announces a change. Guarding either on "do I hold this key" is not
+  worth an API: invalidation is render-driven, so an entry nobody reads stays
+  invalidated and costs nothing until it is read.
+- **Use the value in an event handler** — the component that rendered it passes
+  it in. A handler that cannot reach the data is a question about component
+  structure, and answering it from the store is exactly what puts the click and
+  the screen out of step.
+- **Show one key's value while another loads** — a transition already keeps the
+  previous screen live, which is most of what a `getQueryData`-backed
+  `initialData` is bought for. When a partial value genuinely should appear
+  first, the caller has it in hand and `set` publishes it.
+
+Lane reads its own store, and that is not the same permission: `update` addressed
+by entry id is an internal export, used by the hooks that already know which
+entry they own. What it does not do is extend that reach to callers, whose
+relationship to an entry is a rendered tree rather than a key.
 
 ## Optimistic state is local
 

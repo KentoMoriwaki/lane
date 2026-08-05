@@ -90,7 +90,7 @@ export function useLane<T, C = T>(
   const enabled = loader !== undefined;
   const keyId = serializeKey(key);
   const readOptions = toReadOptions(read, loaderMeta);
-  const [isTransitionPending, startTransition] = useTransition();
+  const [isInvalidationPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
   // The publication this render is happening under (nearest LaneHydration
   // boundary, or the stable `undefined` outside one). Part of the read's
@@ -161,7 +161,6 @@ export function useLane<T, C = T>(
     targetKeyId: string,
     targetKey: LaneKey,
     source: LaneInvalidationSource,
-    gate: Promise<void> | undefined,
   ) => {
     // Only fires while subscribed, which never happens without a loader; the
     // guard also narrows `loader` to non-undefined for the read below.
@@ -171,7 +170,7 @@ export function useLane<T, C = T>(
 
     const updatePromise = () => {
       setPromise(
-        readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions, gate),
+        readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions),
       );
     };
 
@@ -200,6 +199,17 @@ export function useLane<T, C = T>(
       readOptions,
     );
     setPromise(nextPromise);
+  });
+
+  // An announcement carries no work: the caller has not changed the source yet,
+  // so there is nothing to re-read and nothing to store. Opening the transition
+  // with an empty scope is the entire handler — `isPending` is itself
+  // transition-lane state, so its reset entangles with whatever else the
+  // announcing scope schedules and cannot commit before that scope does. That is
+  // what holds this reader pending for the caller's whole action, and what makes
+  // every reader in the announced scope flip in the same tick.
+  const onInvalidationPending = useEffectEvent(() => {
+    startTransition(() => {});
   });
 
   // The last link in the chain of checks, and the only one that can close its
@@ -384,8 +394,11 @@ export function useLane<T, C = T>(
     // whose identity is the source's — so it lives in the effect, not behind an
     // event: anything new it comes to read is forced into the deps.
     const unsubscribe = subscribeLane(lane, keyId, sourceKey, {
-      onInvalidate: (entry, source, gate) => {
-        onInvalidate(lane, entry.keyId, entry.key, source, gate);
+      onInvalidationPending: () => {
+        onInvalidationPending();
+      },
+      onInvalidate: (entry, source) => {
+        onInvalidate(lane, entry.keyId, entry.key, source);
       },
       onRemove: (entry) => {
         onRemove(lane, entry.keyId, entry.key);
@@ -426,11 +439,27 @@ export function useLane<T, C = T>(
     [lane, keyId],
   );
 
+  // Only this reader's own transition, which needs no announcement:
+  // `startTransition` here *is* what `isInvalidationPending` reports. Other keys
+  // join through `lane.startInvalidationTransition(scope)`, called inside the
+  // action — which is where the knowledge of what a mutation touches lives, and
+  // where it composes: a helper announces its own reach without its caller
+  // having to enumerate it.
+  const startInvalidationTransition = useCallback(
+    (action: () => unknown) => {
+      startTransition(async () => {
+        await action();
+      });
+    },
+    [],
+  );
+
   return {
     invalidate,
     isBackgroundPending,
-    isTransitionPending,
+    isInvalidationPending,
     promise: effectivePromise,
+    startInvalidationTransition,
   };
 }
 

@@ -243,7 +243,7 @@ export const taskLanes = {
 ```
 
 ```tsx
-const { promise, isTransitionPending } = useLane(taskLanes.detail(id));
+const { promise, isInvalidationPending } = useLane(taskLanes.detail(id));
 const { data: task } = use(promise);
 ```
 
@@ -516,18 +516,101 @@ Two things to know:
 ```ts
 type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;
-  isTransitionPending: boolean;
+  isInvalidationPending: boolean;
   isBackgroundPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
+  startInvalidationTransition: (action: () => unknown) => void;
 };
 ```
 
 | Field | Description |
 | --- | --- |
 | `promise` | The current promise for the key. Unwrap with `use(promise)` to get a [`LaneRead<T>`](#lanereadt). |
-| `isTransitionPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
+| `isInvalidationPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / reconnect / a `background: true` invalidation / subscription catch-up) is converging. |
 | `invalidate` | Invalidate this exact key and re-read. Convenience for `lane.invalidate(key, options?)`; accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll). Defaults to an explicit transition. |
+| `startInvalidationTransition` | Run an action inside this reader's invalidation transition, so `isInvalidationPending` is on from when it *starts*. See [below](#startinvalidationtransition--pending-from-the-start-of-an-action). |
+
+### `startInvalidationTransition` — pending from the start of an action
+
+`await action(); invalidate()` tells readers only at the end: notification is
+Lane's only channel to them, and it fires last, so the whole request is stale
+data with no sign anything is happening. Running the action *inside* the
+reader's transition moves that to the front:
+
+```tsx
+const { promise, isInvalidationPending, invalidate, startInvalidationTransition } =
+  useLane(taskLanes.list(filters));
+
+function save(patch: Patch) {
+  startInvalidationTransition(async () => {
+    await saveTask(patch);
+    invalidate();
+  });
+}
+```
+
+`isInvalidationPending` is on from the click, stays on across the action *and*
+the re-read it triggers, and clears when the new data commits — one window, not
+two. The reader keeps its current value on screen throughout, because that is
+what a transition does.
+
+**For the other keys a mutation touches, call
+[`lane.startInvalidationTransition(scope)`](#mutation-convergence--the-lane-instance)
+inside the action.** Their readers are told to open their transitions in the same
+synchronous fan-out, so every reader in the window goes pending in one tick
+rather than one screen at a time:
+
+```ts
+// The component runs the action and knows nothing about its reach:
+startInvalidationTransition(async () => {
+  await saveTask(patch);
+  invalidate();
+});
+
+// …and the mutation announces its own, wherever it lives:
+export async function saveTask(patch: Patch) {
+  lane.startInvalidationTransition(["insights"]);
+  await api.saveTask(patch);
+  lane.invalidate(["insights"]);
+}
+```
+
+Inside the action rather than as an argument, because that is where the
+knowledge is: a mutation helper knows which keys it touches and its caller does
+not. Passing them in would hoist that list to every call site and freeze it
+there — it could not be built conditionally, or by the helper itself.
+
+What you announce is not what you converge. What converges is what changed; what
+is announced is what should look busy, which is usually the smaller set — a
+`background: true` refresh is explicitly asking not to be one of them.
+
+#### What to know
+
+- **The action is not Lane's.** Its resolved value is ignored and its rejection
+  is never caught, so a failed save cannot reach a reader as
+  [`refreshError`](#lanereadt) — that field means a failed *refresh* over data
+  still worth showing, which is a different fact about a different thing. Handle
+  the failure inside the action, where you would have anyway.
+- **Nothing is stored when the window opens.** An announcement schedules no read:
+  the caller has not changed the source yet, so re-reading now would just fetch
+  the pre-mutation data. Only the transitions open; the re-reads are the ones the
+  action asks for.
+- **Converge inside the action, however the change needs it.** `invalidate`,
+  `set`, `update`, a prefix scope — all of them land in the same transition.
+- **External reads do not have it.** The announcement promises that an
+  invalidation is coming, and a published key's reader is the one that cannot
+  make it — see [`LaneExternalResult`](#external--a-read-the-owner-publishes).
+  The owner's own transition (a Server Action, a router revalidation) is already
+  the pending signal there.
+- **Announcing a published key throws** [`LaneOwnershipError`](#laneownershiperror),
+  and the scope is checked before anything is announced, so a scope that reaches
+  one is refused rather than half-applied.
+- **`lane.startInvalidationTransition` outside any transition is close to a
+  no-op.** Each reader opens an empty transition that commits immediately, so
+  nothing shows pending — which is the thing you called it for, making the
+  symptom its own diagnosis. It is documented rather than guarded because there
+  is no way to ask React whether a transition is in progress.
 
 ### `LaneRead<T>`
 
@@ -795,7 +878,7 @@ function useInfiniteLane<P, C>(read: {
 } & LaneUseOptions): {
   promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
   loadMore: () => Promise<LaneRead<InfiniteLaneValue<P, C>>> | undefined;
-  isTransitionPending: boolean;
+  isInvalidationPending: boolean;
   isBackgroundPending: boolean;
   invalidate: (options?: LaneInvalidateOptions) => void;
 };
@@ -847,7 +930,7 @@ type InfiniteLaneValue<P, C> = {
 ```
 
 ```tsx
-const { promise, loadMore, isTransitionPending } = useInfiniteLane(
+const { promise, loadMore, isInvalidationPending } = useInfiniteLane(
   ["feed", filters],
   {
     initialCursor: null as string | null,
@@ -885,9 +968,12 @@ Notes:
 
 - **`loadMore` appends one page** through `update`, so the key never changes: the
   reader converges through a transition with the list still on screen, and
-  `isTransitionPending` covers it with no `useTransition` of your own. It is a
-  no-op at the end of the list; gate your control on `data.hasNext` so an
-  over-eager click does not cost even a notification.
+  `isInvalidationPending` covers it with no `useTransition` of your own. The name
+  is not a mismatch — `update` is a [prefilled
+  invalidation](./design-notes.md#authoritative-publication-is-secondary), so an
+  append converges through the same surface an `invalidate` does. It is a no-op
+  at the end of the list; gate your control on `data.hasNext` so an over-eager
+  click does not cost even a notification.
 - **`fetchPage`'s `signal` is optional because it is genuinely absent on the
   append path.** A refresh runs as a read and gets the read's abort signal; an
   updater is handed the current value and no controller, so a `loadMore` in
@@ -910,7 +996,7 @@ Notes:
   ```tsx
   const { data, refreshError } = use(promise);
   // ...inside the IntersectionObserver effect:
-  if (!data.hasNext || isTransitionPending || refreshError) return;
+  if (!data.hasNext || isInvalidationPending || refreshError) return;
   ```
 
   `refreshError` clears on the next successful read, so recovery is an explicit
@@ -1161,6 +1247,9 @@ under [Reading data](#prefetch).
 type Lane = {
   prefetch<T>(key: LaneKey, loader: LaneLoader<T>, options?: LanePrefetchOptions): Promise<LaneRead<T>>;
   prefetch<T>(spec: LaneReadSpec<T>): Promise<LaneRead<T>>;
+  // Opens the *readers'* transitions in a scope. Call it inside an action that
+  // is already running in one — see `startInvalidationTransition` above.
+  startInvalidationTransition(scope: LaneScope): void;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
   invalidateAll(scope: LaneScope, options?: LaneInvalidateOptions): void;
   // A `LaneKeyOf<T>` decides the value's type; a plain key lets the value decide it.
@@ -1187,6 +1276,14 @@ lane.set(taskKeys.detail(saved.id), saved); // checked against what the key hold
 
 `prefetch` is the exception and takes a whole read, because it is the only method
 that *performs* one.
+
+**Nothing here reads.** Every method returns a promise or `void` — there is no
+`get` / `peek` / `getQueryData` equivalent, and no way to ask what a key
+currently holds. Values reach components through `use(promise)` and nowhere else.
+See [the store returns promises, never
+data](./design-notes.md#the-store-returns-promises-never-data) for the reasoning,
+and [there is no cache getter](./migrating.md#there-is-no-cache-getter) for where
+each react-query `getQueryData` use goes instead.
 
 > **These are the client-owned half of the API.** Every method on this page
 > writes to an entry, and a key whose value was **published** — read with
@@ -1252,76 +1349,8 @@ type LaneInvalidateOptions = {
 - `"settled"` → only entries with a settled promise (skips in-flight reads).
 - `background: true` → converge through the **background** transition
   (`isBackgroundPending`) instead of the default explicit one
-  (`isTransitionPending`). Use it for automatic refreshes so they don't read as a
+  (`isInvalidationPending`). Use it for automatic refreshes so they don't read as a
   user-driven invalidation — see [Polling](#polling).
-- `after: promise` → invalidate now, fetch later. See below.
-
-### Announcing an invalidation before the mutation finishes
-
-The obvious way to converge after a mutation leaves every reader in the dark
-while the mutation runs:
-
-```ts
-startTransition(async () => {
-  await saveTodo(patch);   // readers show nothing for the whole request
-  lane.invalidateAll(["todos"]);
-});
-```
-
-Notification is Lane's only channel to a reader, and here it fires last — so
-`isTransitionPending` only turns on once the work is already done. `after` moves
-the notification to the front:
-
-```ts
-startTransition(async () => {
-  const saved = saveTodo(patch);
-  lane.invalidateAll(["todos"], { after: saved });
-  await saved;
-});
-```
-
-Readers go pending immediately and keep their current value on screen through
-the transition; the actual re-read is held behind `saved` and starts the moment
-it settles. Pending is continuous from the click to the fresh data.
-
-#### When to reach for it
-
-`after` is not the default shape for converging after a mutation. It changes
-*when readers learn*, not when the fetch happens — that is already after the
-action either way — so using it everywhere just holds pending on for longer. Work
-down this list:
-
-1. **The action resolves to the key's value** → [`set(key, promise)`](#set).
-   It publishes the in-flight promise under that key, which marks readers pending
-   the same way and saves the extra round-trip. Strictly better where it applies.
-2. **You can show the outcome before it lands** → `useOptimistic`. The reader
-   already shows the new state; marking it pending on top contradicts that.
-3. **Otherwise, ask whether a reader would sit on stale data with no sign
-   anything is happening.** If yes — a slow action that refreshes a list, a
-   counter, and a detail view it returns none of — that is what `after` is for.
-
-And when it isn't: if the pending signal is already where the user is looking —
-a submit button driven by `useActionState` or its own `useTransition` — and the
-affected reads are elsewhere or off-screen, the plain `await action; invalidate()`
-shape is the right one. So is a fast action, where a flicker of pending reads
-worse than none.
-
-#### What to know
-
-- **`after` decides when, not whether — including on failure.** A rejected action
-  still lets the read run: the key was already invalidated, so the next read
-  reflects whatever the source actually holds. Only settlement is observed — the
-  resolved value is ignored, and a rejection never surfaces through Lane. This is
-  the one real cost against the plain shape, which can keep the invalidation
-  inside a `try` and skip it when the action fails. It matters when the action
-  fails often and the refetch is expensive.
-- **A gated read counts as in-flight.** It has no settled promise, so
-  `onlyIf: "settled"` skips it and a poll cannot cut the pending window short.
-- **A key nobody is reading keeps its value.** There is no reader to mark
-  pending, so the entry is left as it is and invalidated when the action lands —
-  what `await action; invalidate(key)` does. Navigating to it mid-action shows
-  the last known value, then converges. This is what makes naming a whole family
-  with `invalidateAll` safe.
 
 ### Polling
 
@@ -1352,7 +1381,7 @@ function Polled({ id }: { id: string }) {
 }
 ```
 
-- **`background: true`** keeps the refresh off `isTransitionPending` (it surfaces
+- **`background: true`** keeps the refresh off `isInvalidationPending` (it surfaces
   as `isBackgroundPending`), so an automatic poll doesn't read like a user action.
 - Depending on `[promise]` makes it a **poll-after-response** loop (a fixed gap
   after each load). For a fixed **wall-clock** interval, use `setInterval` plus

@@ -95,7 +95,6 @@ describe("hydrateMany", () => {
         keyId: serializeKey(["tasks"]),
       },
       "transition",
-      undefined,
     );
     expect(removeListener).not.toHaveBeenCalled();
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "server" });
@@ -285,7 +284,6 @@ describe("invalidate", () => {
         keyId: serializeKey(["tasks"]),
       },
       "transition",
-      undefined,
     );
     expect(teamsListener).not.toHaveBeenCalled();
   });

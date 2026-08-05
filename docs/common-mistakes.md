@@ -76,7 +76,7 @@ You have them — they live in React, not in your component's state:
 | --- | --- |
 | Initial loading (no data yet) | a `Suspense` fallback |
 | Initial-load failure (nothing to show) | an Error Boundary |
-| "Refreshing" while the current data stays on screen | `isTransitionPending` (explicit) / `isBackgroundPending` (focus, poll, …) from `useLane` |
+| "Refreshing" while the current data stays on screen | `isInvalidationPending` (explicit) / `isBackgroundPending` (focus, poll, …) from `useLane` |
 | A refresh that failed *over* existing data | `refreshError` from `use(promise)` — render `data` **and** a small inline hint |
 
 **Don't** keep `const [isLoading, setIsLoading] = useState(true)` — there is no
@@ -441,7 +441,7 @@ function TaskHeader({ task }: { task: Task }) {
 }
 ```
 
-Three readers of one key are three subscriptions, three `isTransitionPending`
+Three readers of one key are three subscriptions, three `isInvalidationPending`
 flags to reconcile, three places that can suspend, and three independently
 scheduled convergences — the whole reason
 [cross-reader consistency](./consistency.md) has anything to say. A child taking

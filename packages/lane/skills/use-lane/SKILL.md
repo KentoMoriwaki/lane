@@ -9,7 +9,7 @@ description: Use when writing or reviewing React 19 async-data code that uses us
 **promise** in React state and replaces it inside React transitions. It does
 **not** own a resolved-value cache or status flags — React owns loading
 (Suspense), errors (Error Boundaries), pending (`useTransition` /
-`isTransitionPending`), and optimistic UI (`useOptimistic`).
+`isInvalidationPending`), and optimistic UI (`useOptimistic`).
 
 **The one rule that explains every API: Lane owns _promise identity_; React owns
 _UI state_.** When something looks missing — no `isLoading`, no `useMutation`, no
@@ -111,6 +111,16 @@ task touches that rule.
   suspend point — read where the data enters the screen and pass the value down.
   Read the same key twice only across genuinely separate surfaces.
   → `references/common-mistakes.md`, `references/consistency.md`
+- **Run a mutation inside `startInvalidationTransition`** (returned by `useLane`)
+  when readers should look busy *during* it, not after. `await action();
+  invalidate()` can only notify at the end, so the whole request shows stale data
+  with no sign of activity. Other keys the mutation touches join with
+  `lane.startInvalidationTransition(scope)` called *inside* the action — a helper
+  announces its own reach, its caller does not enumerate it — and they are
+  announced in the same tick, so every reader goes pending together and converges
+  on one commit. Lane never touches the action: converge inside it, and catch its
+  failure there (a failed save is not `refreshError`).
+  → `references/api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action`
 - **Converge by invalidating the source**, not by patching a cache — for
   **client-owned** keys. Use `set` / `update` only to publish data you *already
   have* (e.g. a mutation response); use `remove` to drop entries on sign-out /
@@ -140,8 +150,11 @@ task touches that rule.
 
 - **Map the model, don't port the shape.** `isLoading` → Suspense; `error` →
   `refreshError` only (an initial failure hits the Error Boundary, never a field);
-  `refetchInterval` → a userland poll; `onMutate` → `useOptimistic`. Don't rebuild
-  a status object on top of Lane. → `references/migrating.md`
+  `refetchInterval` → a userland poll; `onMutate` → `useOptimistic`;
+  `getQueryData` → **nothing** — the store returns promises or `void`, never a
+  value, so derive with `update` (the updater is handed the current value) or
+  pass the value down from the component that rendered it. Don't rebuild a status
+  object on top of Lane. → `references/migrating.md`
 - **`queryOptions()` factories port directly** to `laneRead` — same idea, and the
   call sites map one for one (`useQuery` → `useLane`, `prefetchQuery` →
   `prefetch`, `setQueryData(opts.queryKey, v)` → `set(spec.key, v)`).

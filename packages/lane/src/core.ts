@@ -43,12 +43,21 @@ export type LaneReadOptions = {
 type LaneSubscription = (
   entry: LaneEntryInfo,
   source: LaneInvalidationSource,
-  // Set by `invalidate(..., { after })`: the re-read this notification triggers
-  // must wait for it before fetching. Pass it straight back to `readOrCreate`.
-  gate: Promise<void> | undefined,
 ) => void;
 
 type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
+
+/**
+ * "An invalidation is coming for your key — open its transition now."
+ *
+ * Separate from {@link LaneSubscription} because it is the one notification that
+ * does not describe a cache: no source to pick a surface with (this is always
+ * the explicit one), and nothing to re-read. A subscriber that acts on it
+ * schedules nothing — see `useLane`, where an empty `startTransition` is the
+ * whole handler, and the flag it raises is the `isInvalidationPending` this is
+ * named after.
+ */
+type LaneInvalidationPendingSubscription = (entry: LaneEntryInfo) => void;
 
 // A subscriber is a pure notify hook plus a GC anchor — it carries no policy.
 // When to revalidate (focus / reconnect / mount / stale) is the reader's
@@ -56,6 +65,7 @@ type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
 // focus / reconnect stay out of here — they are DOM concerns the provider owns.
 export type LaneSubscriber = {
   onInvalidate?: LaneSubscription;
+  onInvalidationPending?: LaneInvalidationPendingSubscription;
   onRemove?: LaneRemoveSubscription;
 };
 
@@ -179,6 +189,9 @@ export function createLane(options: LaneOptions = {}): Lane {
         retryDelay: read.retryDelay,
         whenStale: "revalidate",
       });
+    },
+    startInvalidationTransition(scope) {
+      startScopeInvalidationTransition(state, scope);
     },
     invalidate(key, options = {}) {
       const entry = state.entries.get(serializeKey(key));
@@ -326,7 +339,6 @@ export function readOrCreate<T, C = T>(
   key: LaneKey,
   loader: LaneLoader<T, C>,
   options?: LaneReadOptions,
-  gate?: Promise<void>,
 ): Promise<LaneRead<T>> {
   const state = getLaneState(lane);
   const entry = getOrCreateEntry(state, key, keyId);
@@ -353,10 +365,7 @@ export function readOrCreate<T, C = T>(
   // cache, not `lastFulfilled`) and is `undefined` once the entry itself is
   // gone.
   const current = entry.lastFulfilled?.value as C | undefined;
-  const load = () => runLoader(loader, key, controller.signal, options, current);
-  // A gated read is an in-flight read that has not begun: readers see it as
-  // pending and hold their last value on screen until the action lands.
-  const promise = gate ? gate.then(load) : load();
+  const promise = runLoader(loader, key, controller.signal, options, current);
 
   return setEntryCache(state, entry, promise, controller);
 }
@@ -589,35 +598,8 @@ function invalidateLaneEntry(
   // value still fails, because that is the violation.
   assertClientOwned(entry, "invalidate");
 
-  // `{ after }` rides the notification: subscribers re-read synchronously during
-  // the fan-out, the first one installs a cache whose load waits for the gate,
-  // and the rest dedupe onto it. The gate only has to outlive the fan-out, so it
-  // is an argument rather than state. Settlement is all that is observed — a
-  // rejected action still invalidates, because `after` chooses *when* to
-  // converge rather than whether the key is suspect, and swallowing it keeps a
-  // caller-owned failure from surfacing through Lane.
-  const gate = options.after?.then(noop, noop);
-
-  if (gate && entry.subscribers.size === 0) {
-    // Nobody to announce it to, and nobody to refill the cache the fan-out would
-    // empty — so emptying it would leave a reader arriving mid-action fetching
-    // straight into the pre-mutation source. Leave the entry intact and converge
-    // when the action lands, which is what `await action; invalidate(key)` does.
-    // Resolved by key, so an action outliving its entry still converges whatever
-    // occupies the slot.
-    void gate.then(() => {
-      const current = state.entries.get(entry.keyId);
-
-      if (current) {
-        invalidateLaneEntry(state, current, {}, source);
-      }
-    });
-
-    return;
-  }
-
   removeEntryCache(entry);
-  notifyInvalidate(entry, source, gate);
+  notifyInvalidate(entry, source);
   cleanupEntry(state, entry);
 }
 
@@ -739,14 +721,52 @@ function cleanupEntry(state: LaneState, entry: LaneEntry): void {
 function notifyInvalidate(
   entry: LaneEntry,
   source: LaneInvalidationSource,
-  gate?: Promise<void>,
 ): void {
   const info = entryInfo(entry);
 
   entry.lastNotifySource = source;
 
   for (const subscriber of [...entry.subscribers]) {
-    subscriber.onInvalidate?.(info, source, gate);
+    subscriber.onInvalidate?.(info, source);
+  }
+}
+
+/**
+ * Open the invalidation transition of every reader in a scope, without touching
+ * a cache. The whole point is that nothing is stored: a notification that
+ * *replaced* the cache would make readers re-read now, against a source the
+ * caller has not changed yet, which is the pre-mutation data. So this schedules
+ * no work and answers no question about the entry — it only reaches subscribers,
+ * and what they do with it is open their transition.
+ *
+ * `lastNotifySource` is deliberately left alone. It records what a reader that
+ * subscribes late should join, and an announcement is not something to catch up
+ * *to*: by the time such a reader arrives the window has either closed or the
+ * real invalidation is on its way, and both of those set it themselves.
+ *
+ * Checked over the whole match before anything is announced, for the reason
+ * `updateAll` is: a scope that happens to reach a published key is refused
+ * rather than half-applied. Announcing one is the same claim `invalidate` makes
+ * and cannot back — the client does not know whether a publication is coming.
+ */
+function startScopeInvalidationTransition(
+  state: LaneState,
+  scope: LaneScope,
+): void {
+  const entries = matchingEntries(state.entries, scope);
+
+  assertScopeClientOwned(entries, "startInvalidationTransition");
+
+  for (const entry of entries) {
+    notifyInvalidationPending(entry);
+  }
+}
+
+function notifyInvalidationPending(entry: LaneEntry): void {
+  const info = entryInfo(entry);
+
+  for (const subscriber of [...entry.subscribers]) {
+    subscriber.onInvalidationPending?.(info);
   }
 }
 
@@ -1172,7 +1192,7 @@ function evictEntry(state: LaneState, entry: LaneEntry): void {
  * Public invalidations converge through a transition by default; `background:
  * true` routes them through the background transition instead (for automatic
  * refreshes like a self-scheduled poll, so they don't surface as
- * `isTransitionPending`). Polling itself is not a core feature — schedule your
+ * `isInvalidationPending`). Polling itself is not a core feature — schedule your
  * own timer and call `invalidate(key, { background: true, onlyIf: "settled" })`.
  */
 export function invalidationSource(

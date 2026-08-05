@@ -48,7 +48,7 @@ function ProbeReader({ channel, read }: { channel: string; read: LaneReadSpec<st
   labLog.push(
     channel,
     "render",
-    `bg:${result.isBackgroundPending ? 1 : 0} tr:${result.isTransitionPending ? 1 : 0}`,
+    `bg:${result.isBackgroundPending ? 1 : 0} tr:${result.isInvalidationPending ? 1 : 0}`,
   );
   useLifecycleLog(channel);
 
@@ -68,10 +68,10 @@ function ProbeReader({ channel, read }: { channel: string; read: LaneReadSpec<st
       </span>
       <span
         className={
-          result.isTransitionPending ? "ml-1 text-amber-600" : "ml-1 text-zinc-300"
+          result.isInvalidationPending ? "ml-1 text-amber-600" : "ml-1 text-zinc-300"
         }
       >
-        tr:{result.isTransitionPending ? 1 : 0}
+        tr:{result.isInvalidationPending ? 1 : 0}
       </span>
       {value.refreshError !== undefined && (
         <span className="ml-2 text-red-600">refreshError:{String(value.refreshError)}</span>

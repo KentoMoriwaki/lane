@@ -202,6 +202,28 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **A development warning when a published key is read with a client loader.**
+  Seeding a key through `<LaneHydration>` is a claim of ownership: the entry
+  becomes external for good, its value is held weakly instead of for `gcTime`,
+  and `set` / `update` / `invalidate` / `remove` throw on it. A read that gives
+  the same key a fetching loader is claiming it too, and until now nothing said
+  so — the read ran, its result was stored with none of a client-owned entry's
+  guarantees (no stale-on-error fallback, no `current` for the next load, no
+  structural sharing), and the mistake surfaced somewhere else entirely, at the
+  first write that threw.
+
+  The warning fires from the read, because that is the only place both halves are
+  visible. A publication is addressed by key and a key does not carry the loader
+  it will be read with — `laneSnapshot` takes a whole read for ergonomics, but
+  its plain-key forms carry nothing to check, so a check on the publishing side
+  would catch some spellings of the mistake and not others. It names the key,
+  warns once per key, and is stripped from production builds like every other
+  `warnDev`.
+
+  Seed only keys the client reads with `loader: external`. A value the client
+  should own from there on is not a seed — `lane.set` is the same write without
+  the change of ownership.
+
 - **`LaneRegister` — declare what loaders are handed besides the key.** A loader
   usually needs something the key does not carry: a session, a tenant, an API
   client. Declaring it once makes it available to every loader as `meta`, with no

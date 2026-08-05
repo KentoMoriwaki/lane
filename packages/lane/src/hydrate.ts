@@ -35,6 +35,21 @@ const publications = new WeakMap<LaneHydrationSnapshots, Promise<unknown>[]>();
  * (`lane.set` / `update` / `invalidate` / `remove` throw) and its retention
  * follows the payload rather than `gcTime`. A key the client is meant to own is
  * a key it should not be seeded with — read it with its own loader instead.
+ *
+ * The marking happens *before* the value is written, and that order is load
+ * bearing: `setEntryCache` records a fulfilled value as the entry's
+ * `lastFulfilled` unless the entry is already external, and that record is a
+ * **strong** reference. A publication lands before any reader of its key renders
+ * — the boundary suspends until it has — so leaving the marking to the reader's
+ * own `readOrCreate` would let every seed be pinned by the entry that is
+ * supposed to be holding it weakly, and the sweep never reclaims an external
+ * entry to undo it.
+ *
+ * Which is also why the seed cannot wait and see whether a reader declares
+ * `external`: by the time one does, the value is already recorded. The rule has
+ * to be stated by the payload instead — seed only what the client reads with
+ * `loader: external` — and the read is where a mismatch is reported (see
+ * `readOrCreate`).
  */
 export function hydrateMany(
   lane: Lane,

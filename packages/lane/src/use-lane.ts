@@ -477,11 +477,37 @@ export function useLane<T, C = T>(
     refetchOnMount(lane, keyId);
   }, [enabled, lane, keyId]);
 
+  // The re-read behind the bound `invalidate`, as an event for the same reason
+  // every fire-time read here is one: the loader and options must be the
+  // latest, and `invalidate`'s identity must not follow them. It runs *after*
+  // the invalidation's synchronous fan-out, so for a subscribed reader the
+  // notification handler above has already installed the fresh read and this
+  // `readOrCreate` dedupes onto it — the returned promise is the one the
+  // readers adopt, not a second fetch. Only a key nobody was subscribed to
+  // (a stale callback after unmount) actually starts its read here, which is
+  // then an orphan the sweep reclaims, exactly like a prefetch nobody adopted.
+  const readAfterInvalidate = useEffectEvent((
+    targetLane: Lane,
+    targetKeyId: string,
+    targetKey: LaneKey,
+  ) => {
+    if (loader === undefined) {
+      return undefined;
+    }
+
+    return readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions);
+  });
+
   const invalidate = useCallback(
-    (options?: LaneInvalidateOptions) => {
+    (options?: LaneInvalidateOptions): Promise<LaneRead<T>> | undefined => {
       invalidateEntry(lane, keyId, options, invalidationSource(options));
+
+      // Always read back, even when `onlyIf` skipped the invalidation: the
+      // cache is then still in place, so this returns the current promise and
+      // the caller is awaiting "the key's value after this call" either way.
+      return readAfterInvalidate(lane, keyId, sourceKey);
     },
-    [lane, keyId],
+    [lane, keyId, sourceKey],
   );
 
   // Only this reader's own transition, which needs no announcement:

@@ -19,10 +19,10 @@ describe("set, update, and remove", () => {
 
     lane.set(["tasks"], "old");
     subscribeInvalidate(lane, ["tasks"], listener);
-    await expect(lane.set(["tasks"], "new")).resolves.toEqual({ data: "new" });
+    await expect(lane.set(["tasks"], "new")).resolves.toEqual({ revision: expect.any(Number), data: "new" });
 
     expect(listener).toHaveBeenCalledTimes(1);
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "new" });
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "new" });
     expect(loader).not.toHaveBeenCalled();
   });
 
@@ -41,8 +41,8 @@ describe("set, update, and remove", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     current.resolve(1);
 
-    await expect(updated).resolves.toEqual({ data: 2 });
-    await expect(readOrCreate(lane, ["count"], async () => 100)).resolves.toEqual({ data: 2 });
+    await expect(updated).resolves.toEqual({ revision: expect.any(Number), data: 2 });
+    await expect(readOrCreate(lane, ["count"], async () => 100)).resolves.toEqual({ revision: expect.any(Number), data: 2 });
   });
 
   it("update skips missing and rejected cache", async () => {
@@ -79,17 +79,20 @@ describe("set, update, and remove", () => {
     expect(doneListener).toHaveBeenCalledTimes(1);
     expect(teamsListener).not.toHaveBeenCalled();
     await expect(Promise.all(updates)).resolves.toEqual(
-      expect.arrayContaining([{ data: 2 }, { data: 11 }]),
+      expect.arrayContaining([
+        { revision: expect.any(Number), data: 2 },
+        { revision: expect.any(Number), data: 11 },
+      ]),
     );
     await expect(
       readOrCreate(lane, ["tasks", { status: "todo" }], async () => 0),
-    ).resolves.toEqual({ data: 2 });
+    ).resolves.toEqual({ revision: expect.any(Number), data: 2 });
     await expect(
       readOrCreate(lane, ["tasks", { status: "done" }], async () => 0),
-    ).resolves.toEqual({ data: 11 });
+    ).resolves.toEqual({ revision: expect.any(Number), data: 11 });
     await expect(
       readOrCreate(lane, ["teams"], async () => 0),
-    ).resolves.toEqual({ data: 100 });
+    ).resolves.toEqual({ revision: expect.any(Number), data: 100 });
   });
 
   it("remove clears cache, notifies remove subscribers, and does not notify invalidate subscribers", async () => {
@@ -106,7 +109,7 @@ describe("set, update, and remove", () => {
 
     expect(removeListener).toHaveBeenCalledTimes(1);
     expect(invalidateListener).not.toHaveBeenCalled();
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "fresh" });
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "fresh" });
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
@@ -137,12 +140,12 @@ describe("set, update, and remove", () => {
     expect(todoInvalidateListener).not.toHaveBeenCalled();
     await expect(
       readOrCreate(lane, ["tasks", { status: "todo" }], async () => "todo-new"),
-    ).resolves.toEqual({ data: "todo-new" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "todo-new" });
     await expect(
       readOrCreate(lane, ["tasks", { status: "done" }], async () => "done-new"),
-    ).resolves.toEqual({ data: "done-new" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "done-new" });
     await expect(
       readOrCreate(lane, ["teams"], async () => "teams-new"),
-    ).resolves.toEqual({ data: "teams" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "teams" });
   });
 });

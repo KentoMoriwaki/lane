@@ -444,6 +444,42 @@ export type Lane = {
  */
 export type LaneRead<T> = {
   data: T;
+  /**
+   * The identity of `data`'s content — a serializable stand-in for the
+   * reference equality structural sharing already guarantees: a refetch that
+   * came back deep-equal keeps the previous reference *and* the previous
+   * revision, and only a genuine content change mints a new one. Equality is
+   * the entire contract; the numbers are minted lane-wide, so nothing about
+   * order, density, or reuse across entries may be read into them.
+   *
+   * What it is for is naming content where a reference cannot go — chiefly as
+   * key material for a read *derived from* this one, so the derived key changes
+   * exactly when this entry's content does:
+   *
+   * ```ts
+   * const source = use(sourcePromise);
+   * useLane(prepareRead(source.data.documentId, source.revision));
+   * ```
+   *
+   * For a comparison between two reads you already hold, `revision` adds
+   * nothing over `===` on `data` — structural sharing makes the reference
+   * comparison exactly as precise.
+   *
+   * It rides in the resolved value, like `refreshError`, so `data` and
+   * `revision` are one settlement and can never tear: a stale-on-error result
+   * keeps serving the old data under the old revision. Session-local — never
+   * serialize it into a snapshot or compare it across lanes.
+   *
+   * **On an external read the identity is one notch weaker: the publication's,
+   * not the content's.** An external entry keeps no previous value to compare
+   * against (the weak retention forbids it), so "unchanged" is not a fact the
+   * client can establish — every publication mints a new revision, including a
+   * republish of identical content. Same revision ⇒ same content still holds;
+   * what does not is the converse, so a derived key built from an external
+   * revision re-derives per publication. When the content has a real version,
+   * its owner has it — ship it in the payload and key on that instead.
+   */
+  revision: number;
   refreshError?: unknown;
 };
 
@@ -480,11 +516,44 @@ export type LaneRead<T> = {
  */
 export type LaneStartInvalidationTransition = (action: () => unknown) => void;
 
+/**
+ * The reader's own `invalidate` — the key-addressed `lane.invalidate` bound to
+ * this read, which is what lets it return something the instance method cannot:
+ * **the next read**. A key alone does not know its loader, so `lane.invalidate`
+ * can only clear and notify; the hook holds the whole read, so after
+ * invalidating it starts (or joins) the re-read and hands back its promise —
+ * the same promise every subscribed reader of the key adopts, by the store's
+ * own dedupe.
+ *
+ * ```ts
+ * startInvalidationTransition(async () => {
+ *   const next = await invalidate();
+ *
+ *   if (next.data !== current.data) {
+ *     // the source really changed — converge what derives from it
+ *     lane.invalidateAll(["analysis", "query", id]);
+ *   }
+ * });
+ * ```
+ *
+ * The resolved value keeps every existing contract, because it *is* the read's:
+ * a failed refresh over existing data resolves `{ data: stale, refreshError }`
+ * rather than rejecting (stale-on-error), an initial failure rejects, and
+ * structural sharing makes the `!==` above a precise change check (`revision`
+ * says the same thing as a number). Resolving means the data settled — not that
+ * React committed it; readers converge through their transitions as they always
+ * have. An invalidation skipped by `onlyIf` returns the current cached promise,
+ * so awaiting it is always awaiting "the key's value after this call".
+ */
+export type LaneInvalidate<T> = (
+  options?: LaneInvalidateOptions,
+) => Promise<LaneRead<T>>;
+
 export type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;
   isBackgroundPending: boolean;
   isInvalidationPending: boolean;
-  invalidate: (options?: LaneInvalidateOptions) => void;
+  invalidate: LaneInvalidate<T>;
   startInvalidationTransition: LaneStartInvalidationTransition;
 };
 
@@ -494,9 +563,16 @@ export type LaneResult<T> = {
  * disabled (nothing is fetched, subscribed, or stored under the key). Unwrap it
  * conditionally — `result.promise ? use(result.promise) : fallback` — which is
  * allowed because `use` may be called inside conditionals.
+ *
+ * `invalidate` widens the same way `promise` does: while disabled there is no
+ * loader to re-read with, so it still clears the entry but has no next read to
+ * return.
  */
-export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
+export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise" | "invalidate"> & {
   promise: Promise<LaneRead<T>> | undefined;
+  invalidate: (
+    options?: LaneInvalidateOptions,
+  ) => Promise<LaneRead<T>> | undefined;
 };
 
 /**

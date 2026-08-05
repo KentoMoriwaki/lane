@@ -89,13 +89,13 @@ describe("the external wait", () => {
     // rather than being abandoned — the only thing a reader suspended on it can
     // be told, since it has no subscription to notify.
     expect(waiting.status).toBe("fulfilled");
-    expect(waiting.value).toEqual({ data: "published" });
+    expect(waiting.value).toEqual({ revision: expect.any(Number), data: "published" });
 
     // And the store's own promise holds the same publication, so a reader that
     // retried and one that kept the old promise agree.
     await expect(
       readOrCreate<string>(lane, ["task", "t1"], external),
-    ).resolves.toEqual({ data: "published" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "published" });
 
     // The timeout that would have fired is gone with the wait it belonged to.
     await vi.advanceTimersByTimeAsync(EXTERNAL_TIMEOUT * 2);
@@ -208,7 +208,7 @@ describe("the external wait", () => {
 
     await expect(
       readOrCreate<string>(lane, ["task", "t1"], external),
-    ).resolves.toEqual({ data: "late" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "late" });
   });
 });
 
@@ -257,7 +257,7 @@ describe("ownership of an external entry", () => {
     // refused, not the tail of it.
     await expect(
       readOrCreate<string>(lane, ["task", "t1"], async () => "reloaded"),
-    ).resolves.toEqual({ data: "client" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "client" });
   });
 
   it("names the key and the operation", () => {
@@ -373,7 +373,7 @@ describe("retention of an external entry", () => {
 
     await expect(
       readOrCreate<string>(lane, ["task", "t1"], external),
-    ).resolves.toEqual({ data: "published" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "published" });
   });
 
   it("serves a value that is still reachable", async () => {
@@ -386,7 +386,7 @@ describe("retention of an external entry", () => {
 
     await expect(
       readOrCreate<string>(lane, ["task", "t1"], external),
-    ).resolves.toEqual({ data: "published" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "published" });
   });
 
   it("reads a collected value as an absent one and waits again", async () => {
@@ -401,7 +401,7 @@ describe("retention of an external entry", () => {
     });
     await expect(
       readOrCreate<string>(lane, ["task", "t1"], external),
-    ).resolves.toEqual({ data: "published" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "published" });
 
     // What a collection leaves behind: the shell, pointing at nothing. Both
     // states are correct by design, so a reader has to handle this one as
@@ -419,7 +419,7 @@ describe("retention of an external entry", () => {
 
     await expect(
       readOrCreate<string>(lane, ["task", "t1"], external),
-    ).resolves.toEqual({ data: "republished" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "republished" });
   });
 
   it("holds a client-owned entry strongly, whatever external entries do", async () => {
@@ -431,7 +431,7 @@ describe("retention of an external entry", () => {
     await readOrCreate(lane, ["task", "t1"], loader);
     refs.collect();
 
-    await expect(readOrCreate(lane, ["task", "t1"], loader)).resolves.toEqual({
+    await expect(readOrCreate(lane, ["task", "t1"], loader)).resolves.toEqual({ revision: expect.any(Number),
       data: "loaded",
     });
     expect(loader).toHaveBeenCalledTimes(1);
@@ -455,8 +455,8 @@ describe("retention of an external entry", () => {
 
     expect(tethered).toHaveLength(2);
     await expect(Promise.all(tethered ?? [])).resolves.toEqual([
-      { data: "one" },
-      { data: "two" },
+      { revision: expect.any(Number), data: "one" },
+      { revision: expect.any(Number), data: "two" },
     ]);
     expect(tethered?.[0]).toBe(
       readOrCreate<string>(lane, ["task", "t1"], external),
@@ -702,7 +702,10 @@ function typeExpectations(lane: Lane, enabled: boolean): void {
   // unchanged — and `T` travels to `useLane` through it.
   expectTypeOf(detail.key).toEqualTypeOf<LaneKeyOf<Task>>();
 
-  // No `invalidate`: an external entry is not the client's to converge.
+  // No `invalidate`: an external entry is not the client's to converge. The
+  // resolved value is the ordinary `LaneRead` — `revision` included, though on
+  // an external entry it is the publication's identity rather than the
+  // content's (see the type's docs).
   expectTypeOf(useLane(detail)).toEqualTypeOf<LaneExternalResult<Task>>();
   expectTypeOf(useLanePromise(detail)).toEqualTypeOf<Promise<LaneRead<Task>>>();
 

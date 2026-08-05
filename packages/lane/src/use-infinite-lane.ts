@@ -5,7 +5,7 @@ import { updateEntry } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneContext } from "./provider";
 import type {
-  LaneInvalidateOptions,
+  LaneInvalidate,
   LaneKey,
   LaneKeyOf,
   LaneLoaderMeta,
@@ -82,7 +82,8 @@ export type InfiniteLaneResult<P, C> = {
   loadMore: () => Promise<LaneRead<InfiniteLaneValue<P, C>>> | undefined;
   isInvalidationPending: boolean;
   isBackgroundPending: boolean;
-  invalidate: (options?: LaneInvalidateOptions) => void;
+  /** The bound, awaitable `invalidate` — see {@link LaneInvalidate}. */
+  invalidate: LaneInvalidate<InfiniteLaneValue<P, C>>;
   startInvalidationTransition: LaneStartInvalidationTransition;
 };
 

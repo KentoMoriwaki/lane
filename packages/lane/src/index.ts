@@ -45,6 +45,7 @@ export type {
   LaneGatedReadSpec,
   LaneGatedResult,
   LaneHydrationSnapshots,
+  LaneInvalidate,
   LaneInvalidateOptions,
   LaneKey,
   LaneKeyOf,

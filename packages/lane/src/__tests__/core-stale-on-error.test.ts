@@ -20,7 +20,7 @@ describe("stale-on-error", () => {
       throw error;
     });
 
-    await expect(reloaded).resolves.toEqual({ data: "cached", refreshError: error });
+    await expect(reloaded).resolves.toEqual({ revision: expect.any(Number), data: "cached", refreshError: error });
   });
 
   it("keeps initial load rejections as a rejected cache", async () => {
@@ -54,7 +54,7 @@ describe("stale-on-error", () => {
     const reloaded = readOrCreate(lane, ["tasks"], async () => {
       throw new Error("offline");
     });
-    await expect(reloaded).resolves.toEqual({
+    await expect(reloaded).resolves.toEqual({ revision: expect.any(Number),
       data: "cached",
       refreshError: expect.any(Error),
     });
@@ -77,13 +77,13 @@ describe("stale-on-error", () => {
       readOrCreate(lane, ["tasks"], async () => {
         throw new Error("offline");
       }),
-    ).resolves.toEqual({ data: "cached", refreshError: expect.any(Error) });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "cached", refreshError: expect.any(Error) });
 
     lane.invalidate(["tasks"]);
     // A successful reload resolves to data with no refreshError key.
     await expect(
       readOrCreate(lane, ["tasks"], async () => "fresh"),
-    ).resolves.toEqual({ data: "fresh" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "fresh" });
   });
 
   it("falls back for values published through set as rejecting promises", async () => {
@@ -97,6 +97,6 @@ describe("stale-on-error", () => {
 
     const published = lane.set(["tasks"], rejecting);
 
-    await expect(published).resolves.toEqual({ data: "cached", refreshError: error });
+    await expect(published).resolves.toEqual({ revision: expect.any(Number), data: "cached", refreshError: error });
   });
 });

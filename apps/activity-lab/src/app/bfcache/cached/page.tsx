@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { LaneHydration, laneSnapshot } from "use-lane";
 import { cachedValue } from "@/server/cached-data";
-import { bfReads } from "../reads";
+import { bfPublished } from "../reads";
 import { SnapshotIdentityProbe } from "../ident-probe";
 import { PathnameProbe } from "../pathname-probe";
 import { RouteProbe, SeedFallback } from "../route-probes";
@@ -12,7 +12,7 @@ import { RouteProbe, SeedFallback } from "../route-probes";
 // token fires).
 async function SeededCached() {
   const snapshots = {
-    entries: [laneSnapshot(bfReads.cached(), await cachedValue("route"))],
+    entries: [laneSnapshot(bfPublished.cached(), await cachedValue("route"))],
   };
 
   return (

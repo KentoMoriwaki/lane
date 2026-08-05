@@ -2,24 +2,34 @@
 
 import Link from "next/link";
 import { useRef, useState, type ReactNode } from "react";
-import { LaneProvider } from "use-lane";
+import { LaneOwnershipError, LaneProvider } from "use-lane";
 import { FrameStrip, useFrameRecorder } from "@/lab/frame-recorder";
 import { labLog } from "@/lab/log";
 import { Timeline } from "@/lab/timeline";
 import { revalidateListAction } from "./actions";
 import { PathnameProbe } from "./pathname-probe";
-import { bfReads } from "./reads";
+import { bfClient, bfPublished } from "./reads";
 import { bfcacheLane } from "./shared-lane";
 
+// Both ownerships are selectable, and the published half is deliberately left
+// operable: pressing `set` on a key the server owns and reading REFUSED in the
+// Timeline is one of the things this HUD is for. Only the client-owned half can
+// actually be written from here, which is the whole distinction.
 const TARGETS = [
-  { label: "shared", read: bfReads.shared() },
-  { label: "list", read: bfReads.list() },
-  { label: "detail/1", read: bfReads.detail("1") },
-  { label: "detail/2", read: bfReads.detail("2") },
-  { label: "detail/3", read: bfReads.detail("3") },
-  { label: "static", read: bfReads.static() },
-  { label: "cached", read: bfReads.cached() },
-  { label: "photo/1", read: bfReads.photo("1") },
+  { label: "shared", owner: "published", read: bfPublished.shared() },
+  { label: "list", owner: "published", read: bfPublished.list() },
+  { label: "detail/1", owner: "published", read: bfPublished.detail("1") },
+  { label: "detail/2", owner: "published", read: bfPublished.detail("2") },
+  { label: "detail/3", owner: "published", read: bfPublished.detail("3") },
+  { label: "static", owner: "published", read: bfPublished.static() },
+  { label: "cached", owner: "published", read: bfPublished.cached() },
+  { label: "client/list", owner: "client", read: bfClient.own("list") },
+  {
+    label: "client/detail/1",
+    owner: "client",
+    read: bfClient.own("detail/1"),
+  },
+  { label: "photo/1", owner: "client", read: bfClient.photo("1") },
 ] as const;
 
 const ROUTES = [
@@ -51,7 +61,24 @@ export function BfcacheShell({
 
   const op = (name: string, run: () => void) => {
     labLog.push("bfcache:op", "lane-op", `${name} ${target.label}`);
-    run();
+
+    try {
+      run();
+    } catch (error) {
+      if (error instanceof LaneOwnershipError) {
+        // The store refusing a client write to a key the server publishes. It
+        // is a result, not a crash — recorded on the same channel as the op it
+        // answers, so the Timeline shows the attempt and the refusal adjacent.
+        labLog.push(
+          "bfcache:op",
+          "lane-op",
+          `${name} ${target.label} REFUSED — published key`,
+        );
+        return;
+      }
+
+      throw error;
+    }
   };
 
   return (
@@ -88,10 +115,22 @@ export function BfcacheShell({
           >
             {TARGETS.map((entry, index) => (
               <option key={entry.label} value={index}>
-                {entry.label} {JSON.stringify(entry.read.key)}
+                {entry.owner === "published" ? "pub" : "own"} · {entry.label}{" "}
+                {JSON.stringify(entry.read.key)}
               </option>
             ))}
           </select>
+          <span
+            className={
+              target.owner === "published"
+                ? "rounded bg-sky-100 px-2 py-1 font-mono text-[10px] font-bold text-sky-800"
+                : "rounded bg-emerald-100 px-2 py-1 font-mono text-[10px] font-bold text-emerald-800"
+            }
+          >
+            {target.owner === "published"
+              ? "server-owned — writes refused"
+              : "client-owned — writes apply"}
+          </span>
           <button
             type="button"
             onClick={() => op("invalidate", () => bfcacheLane.invalidate(target.read.key))}

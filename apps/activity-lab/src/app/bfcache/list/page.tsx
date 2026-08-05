@@ -2,7 +2,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { LaneHydration, laneSnapshot } from "use-lane";
 import { nextValue } from "@/server/bfcache-data";
-import { bfReads } from "../reads";
+import { bfPublished } from "../reads";
 import { SnapshotIdentityProbe } from "../ident-probe";
 import { PathnameProbe } from "../pathname-probe";
 import { RouteProbes, SeedFallback } from "../route-probes";
@@ -20,8 +20,8 @@ async function SeededList() {
 
   const snapshots = {
     entries: [
-      laneSnapshot(bfReads.list(), nextValue("list", "rsc")),
-      laneSnapshot(bfReads.shared(), nextValue("shared", "rsc")),
+      laneSnapshot(bfPublished.list(), nextValue("list", "rsc")),
+      laneSnapshot(bfPublished.shared(), nextValue("shared", "rsc")),
     ],
   };
 

@@ -34,13 +34,13 @@ describe("prefetch", () => {
     const lane = createLane();
     const loader = vi.fn(async () => "warm");
 
-    await expect(lane.prefetch({ key: ["tasks"], loader })).resolves.toEqual({
+    await expect(lane.prefetch({ key: ["tasks"], loader })).resolves.toEqual({ revision: expect.any(Number),
       data: "warm",
     });
     expect(loader).toHaveBeenCalledTimes(1);
 
     // A reader of the same key reuses the warm cache instead of loading again.
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number),
       data: "warm",
     });
     expect(loader).toHaveBeenCalledTimes(1);
@@ -61,7 +61,7 @@ describe("prefetch", () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     // The entry is gone, so the next read fetches again.
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number),
       data: "warm",
     });
     expect(loader).toHaveBeenCalledTimes(2);
@@ -80,7 +80,7 @@ describe("prefetch", () => {
     await armSweepViaChurn(lane);
     await vi.advanceTimersByTimeAsync(1_000 * 5);
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number),
       data: "warm",
     });
     expect(loader).toHaveBeenCalledTimes(1);
@@ -97,7 +97,7 @@ describe("prefetch", () => {
 
     await expect(
       lane.prefetch({ key: ["tasks"], loader, retry: 1, retryDelay: () => 0 }),
-    ).resolves.toEqual({ data: "warm" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "warm" });
     expect(loader).toHaveBeenCalledTimes(2);
   });
 });

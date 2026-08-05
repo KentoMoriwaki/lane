@@ -24,7 +24,7 @@ describe("readOrCreate", () => {
     const second = readOrCreate(lane, ["tasks"], loader);
 
     expect(second).toBe(first);
-    await expect(first).resolves.toEqual({ data: "loaded" });
+    await expect(first).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
@@ -38,7 +38,7 @@ describe("readOrCreate", () => {
     lane.set(["tasks"], "cached");
     vi.setSystemTime(60_000);
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "cached" });
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "cached" });
     expect(loader).not.toHaveBeenCalled();
   });
 
@@ -52,7 +52,7 @@ describe("readOrCreate", () => {
     const second = readOrCreate(lane, ["tasks"], loader);
 
     expect(second).toBe(first);
-    await expect(first).resolves.toEqual({ data: "loaded" });
+    await expect(first).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
     expect(listener).not.toHaveBeenCalled();
   });
@@ -97,7 +97,7 @@ describe("hydrateMany", () => {
       "transition",
     );
     expect(removeListener).not.toHaveBeenCalled();
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "server" });
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "server" });
     expect(loader).not.toHaveBeenCalled();
   });
 
@@ -114,7 +114,7 @@ describe("hydrateMany", () => {
     old.resolve("old");
     await settlePromiseHandlers();
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "server" });
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "server" });
     expect(loader).not.toHaveBeenCalled();
   });
 
@@ -140,7 +140,7 @@ describe("hydrateMany", () => {
     expect(listener).not.toHaveBeenCalled();
     await expect(
       readOrCreate(lane, ["tasks"], async () => "too-early"),
-    ).resolves.toEqual({ data: "server" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "server" });
 
     vi.setSystemTime(11_000);
 
@@ -151,7 +151,7 @@ describe("hydrateMany", () => {
     expect(listener).not.toHaveBeenCalled();
     await expect(
       readOrCreate(lane, ["tasks"], async () => "after-stale"),
-    ).resolves.toEqual({ data: "server" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "server" });
   });
 
   it("sets freshness metadata from publication time on a client-owned key", async () => {
@@ -170,7 +170,7 @@ describe("hydrateMany", () => {
     expect(listener).not.toHaveBeenCalled();
     await expect(
       readOrCreate(lane, ["tasks"], async () => "too-early"),
-    ).resolves.toEqual({ data: "published" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "published" });
 
     vi.setSystemTime(11_000);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
@@ -178,7 +178,7 @@ describe("hydrateMany", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     await expect(
       readOrCreate(lane, ["tasks"], async () => "after-stale"),
-    ).resolves.toEqual({ data: "after-stale" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "after-stale" });
   });
 
   // `staleTime` defaults to Infinity: nothing is stale until an app says what
@@ -201,7 +201,7 @@ describe("hydrateMany", () => {
     expect(listener).not.toHaveBeenCalled();
     await expect(
       readOrCreate(lane, ["tasks"], async () => "refetched"),
-    ).resolves.toEqual({ data: "value" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "value" });
 
     // `staleTime: 0` is how an app asks for "always stale" — and owns the
     // consequences, including a mount that refetches what it just loaded.
@@ -210,7 +210,7 @@ describe("hydrateMany", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     await expect(
       readOrCreate(lane, ["tasks"], async () => "refetched"),
-    ).resolves.toEqual({ data: "refetched" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "refetched" });
   });
 });
 
@@ -223,7 +223,7 @@ describe("invalidate", () => {
       .mockResolvedValueOnce("after");
     const observed: Promise<LaneRead<string>>[] = [];
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ data: "before" });
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "before" });
 
     subscribeInvalidate(lane, ["tasks"], () => {
       observed.push(readOrCreate(lane, ["tasks"], loader));
@@ -236,7 +236,7 @@ describe("invalidate", () => {
 
     expect(observed).toHaveLength(2);
     expect(observed[1]).toBe(observed[0]);
-    await expect(observed[0]).resolves.toEqual({ data: "after" });
+    await expect(observed[0]).resolves.toEqual({ revision: expect.any(Number), data: "after" });
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
@@ -258,10 +258,10 @@ describe("invalidate", () => {
     pending.resolve("old");
     await settlePromiseHandlers();
 
-    await expect(reloaded).resolves.toEqual({ data: "fresh" });
+    await expect(reloaded).resolves.toEqual({ revision: expect.any(Number), data: "fresh" });
     await expect(
       readOrCreate(lane, ["tasks"], async () => "unexpected"),
-    ).resolves.toEqual({ data: "fresh" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "fresh" });
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
@@ -336,13 +336,13 @@ describe("invalidate", () => {
 
     await expect(
       readOrCreate(lane, ["tasks", { status: "todo" }], async () => "todo-new"),
-    ).resolves.toEqual({ data: "todo-new" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "todo-new" });
     await expect(
       readOrCreate(lane, ["tasks", { status: "done" }], async () => "done-new"),
-    ).resolves.toEqual({ data: "done-new" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "done-new" });
     await expect(
       readOrCreate(lane, ["task", "task_1"], async () => "detail-new"),
-    ).resolves.toEqual({ data: "task-detail" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "task-detail" });
   });
 
   it("invalidates all entries matching a predicate scope", () => {
@@ -377,7 +377,7 @@ describe("conditional invalidation", () => {
     expect(readOrCreate(lane, ["tasks"], async () => "new")).toBe(cached);
 
     pending.resolve("done");
-    await expect(cached).resolves.toEqual({ data: "done" });
+    await expect(cached).resolves.toEqual({ revision: expect.any(Number), data: "done" });
   });
 
   it("settled-only invalidation clears fulfilled and rejected cache", async () => {
@@ -402,10 +402,10 @@ describe("conditional invalidation", () => {
     expect(rejectedListener).toHaveBeenCalledTimes(1);
     await expect(
       readOrCreate(lane, ["fulfilled"], async () => "new-fulfilled"),
-    ).resolves.toEqual({ data: "new-fulfilled" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "new-fulfilled" });
     await expect(
       readOrCreate(lane, ["rejected"], async () => "new-rejected"),
-    ).resolves.toEqual({ data: "new-rejected" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "new-rejected" });
   });
 
   it("stale invalidation only clears fulfilled cache after staleTime elapses", async () => {
@@ -424,7 +424,7 @@ describe("conditional invalidation", () => {
     expect(listener).not.toHaveBeenCalled();
     await expect(
       readOrCreate(lane, ["tasks"], async () => "too-early"),
-    ).resolves.toEqual({ data: "fresh" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "fresh" });
 
     vi.setSystemTime(2_000);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
@@ -432,7 +432,7 @@ describe("conditional invalidation", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     await expect(
       readOrCreate(lane, ["tasks"], async () => "reloaded"),
-    ).resolves.toEqual({ data: "reloaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "reloaded" });
   });
 
   it("measures staleness from promise settlement time, not creation time", async () => {
@@ -456,7 +456,7 @@ describe("conditional invalidation", () => {
     expect(listener).not.toHaveBeenCalled();
     await expect(
       readOrCreate(lane, ["tasks"], async () => "too-early"),
-    ).resolves.toEqual({ data: "loaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
 
     vi.setSystemTime(11_000);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
@@ -464,7 +464,7 @@ describe("conditional invalidation", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     await expect(
       readOrCreate(lane, ["tasks"], async () => "reloaded"),
-    ).resolves.toEqual({ data: "reloaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "reloaded" });
   });
 
   it("stale invalidation skips pending and rejected cache", async () => {
@@ -500,7 +500,7 @@ describe("conditional invalidation", () => {
     ).rejects.toThrow("network");
 
     pending.resolve("done");
-    await expect(cachedPending).resolves.toEqual({ data: "done" });
+    await expect(cachedPending).resolves.toEqual({ revision: expect.any(Number), data: "done" });
   });
 });
 

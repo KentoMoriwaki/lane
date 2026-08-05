@@ -18,10 +18,10 @@ describe("whenStale", () => {
     const loader = vi.fn(async () => "loaded");
     const opts = { staleTime: 1_000 };
 
-    await expect(readOrCreate(lane, ["k"], loader, opts)).resolves.toEqual({ data: "loaded" });
+    await expect(readOrCreate(lane, ["k"], loader, opts)).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
 
     await vi.advanceTimersByTimeAsync(5_000); // well past staleTime
-    await expect(readOrCreate(lane, ["k"], loader, opts)).resolves.toEqual({ data: "loaded" });
+    await expect(readOrCreate(lane, ["k"], loader, opts)).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
@@ -37,21 +37,21 @@ describe("whenStale", () => {
     const unsubscribe = subscribe(lane, ["k"]);
     await expect(
       readOrCreate(lane, ["k"], loader, refetch(1_000)),
-    ).resolves.toEqual({ data: "loaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     unsubscribe();
 
     // Within staleTime → reuse.
     await vi.advanceTimersByTimeAsync(999);
     await expect(
       readOrCreate(lane, ["k"], loader, refetch(1_000)),
-    ).resolves.toEqual({ data: "loaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
 
     // Past staleTime, idle remount → discard and fetch fresh (reader suspends).
     await vi.advanceTimersByTimeAsync(2);
     await expect(
       readOrCreate(lane, ["k"], loader, refetch(1_000)),
-    ).resolves.toEqual({ data: "loaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
@@ -67,12 +67,12 @@ describe("whenStale", () => {
     // latter loops forever because each retry re-settles and re-judges it stale.
     await expect(
       readOrCreate(lane, ["k"], loader, refetch(0)),
-    ).resolves.toEqual({ data: "loaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
 
     await vi.advanceTimersByTimeAsync(5_000); // well past staleTime
     await expect(
       readOrCreate(lane, ["k"], loader, refetch(0)),
-    ).resolves.toEqual({ data: "loaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
@@ -89,7 +89,7 @@ describe("whenStale", () => {
     expect(p2).toBe(p1);
 
     d.resolve("loaded");
-    await expect(p1).resolves.toEqual({ data: "loaded" });
+    await expect(p1).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     await vi.advanceTimersByTimeAsync(0);
     expect(loader).toHaveBeenCalledTimes(1);
   });
@@ -101,12 +101,12 @@ describe("whenStale", () => {
     const loader = vi.fn(async () => "loaded");
     subscribe(lane, ["k"]);
 
-    await expect(readOrCreate(lane, ["k"], loader, refetch(0))).resolves.toEqual({ data: "loaded" });
+    await expect(readOrCreate(lane, ["k"], loader, refetch(0))).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
 
     // Stale (staleTime 0), but an active key is never yanked out from under its
     // subscribers — the shared promise is reused.
     await vi.advanceTimersByTimeAsync(1_000);
-    await expect(readOrCreate(lane, ["k"], loader, refetch(0))).resolves.toEqual({ data: "loaded" });
+    await expect(readOrCreate(lane, ["k"], loader, refetch(0))).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
@@ -166,7 +166,7 @@ describe("whenStale", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await expect(
       readOrCreate(lane, ["k"], loader, { whenStale: "refetch" }),
-    ).resolves.toEqual({ data: "loaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledTimes(1);
 
@@ -191,7 +191,7 @@ describe("whenStale", () => {
     await vi.advanceTimersByTimeAsync(1);
     await expect(
       readOrCreate(lane, ["k"], loader, refetch(10_000)),
-    ).resolves.toEqual({ data: "loaded" });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(2);
   });
 });

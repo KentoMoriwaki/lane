@@ -36,7 +36,7 @@ describe("loader retry", () => {
     await vi.advanceTimersByTimeAsync(10);
     await vi.advanceTimersByTimeAsync(10);
 
-    await expect(promise).resolves.toEqual({ data: "third" });
+    await expect(promise).resolves.toEqual({ revision: expect.any(Number), data: "third" });
     expect(loader).toHaveBeenCalledTimes(3);
     expect(retryDelay).toHaveBeenNthCalledWith(1, 0, expect.any(Error));
     expect(retryDelay).toHaveBeenNthCalledWith(2, 1, expect.any(Error));

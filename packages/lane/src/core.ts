@@ -73,6 +73,14 @@ type LaneState = {
   entries: Map<string, LaneEntry>;
   gcTime: number;
   sweepTimer: ReturnType<typeof setInterval> | undefined;
+  /**
+   * Mints {@link LaneEntry.revision} values, one counter for the whole lane.
+   * Lane-wide rather than per-entry so that an entry evicted and re-created can
+   * never re-issue a number an older generation of the same key already used —
+   * a reader that folds a revision into another key's arguments would otherwise
+   * hit that key's stale cache and read it as current.
+   */
+  revisionCounter: number;
 };
 
 type LanePromiseSettlement = {
@@ -133,6 +141,17 @@ type LaneEntry = {
   // is set for the same update.
   lastNotifySource: LaneInvalidationSource | undefined;
   /**
+   * The identity of the content this entry currently holds — advanced (from the
+   * lane-wide counter) exactly when a fulfillment's value is a *new reference*,
+   * which structural sharing has already decided: a refetch that came back
+   * deep-equal kept the old reference and keeps the old revision. An external
+   * entry has no previous value to compare against, so every publication
+   * advances it — publication identity, the strongest claim the client can
+   * make about content it does not own (see {@link rememberFulfilled}). `0`
+   * until the first fulfillment, which no settled read ever shows.
+   */
+  revision: number;
+  /**
    * Whether this key's value comes from outside: read with `external`, or seeded
    * by a publication (see `hydrate.ts`, which marks everything it seeds). It
    * decides two things and nothing else — the client mutation surface throws on
@@ -156,6 +175,7 @@ export function createLane(options: LaneOptions = {}): Lane {
   const state: LaneState = {
     entries: new Map(),
     gcTime: options.gcTime ?? DEFAULT_GC_TIME,
+    revisionCounter: 0,
     sweepTimer: undefined,
   };
 
@@ -580,6 +600,24 @@ export function subscribeLane(
 }
 
 /**
+ * The promise the entry currently holds, if any — the loader-free read-back
+ * behind the bound `invalidate`, for the invalidation that notified nobody: an
+ * `onlyIf` that declined cleared nothing, so the current cache *is* "the key's
+ * value after this call". Deliberately not a public read API (the store returns
+ * promises to readers, never data, and this returns only what a read already
+ * created); addressed by canonical id like every internal entry API.
+ */
+export function peekEntryPromise(
+  lane: Lane,
+  keyId: string,
+): Promise<unknown> | undefined {
+  const entry = getLaneState(lane).entries.get(keyId);
+  const cache = entry?.cache;
+
+  return entry && cache ? cachedPromise(entry, cache) : undefined;
+}
+
+/**
  * The source of the last notification for a key, for a reader catching up on one
  * it was not subscribed in time to receive. `undefined` when the key has never
  * been notified — or no longer exists — in which case the reader has no reason
@@ -939,6 +977,7 @@ function createEntry(
     key,
     keyId,
     lastFulfilled: undefined,
+    revision: 0,
     subscribers: new Set(),
   };
 }
@@ -974,7 +1013,8 @@ function setEntryCache<T>(
 
   if (!isPromiseLike(valueOrPromise)) {
     const value = shareWithLastFulfilled(entry, valueOrPromise);
-    const settled = Promise.resolve<LaneRead<T>>({ data: value });
+    rememberFulfilled(state, entry, startedAt, value);
+    const settled = Promise.resolve<LaneRead<T>>(settledRead(entry, value));
 
     entry.cache = {
       // A cache installed while the key already has a live reader is adopted on
@@ -986,7 +1026,6 @@ function setEntryCache<T>(
       settlement: { at: startedAt, kind: "fulfilled" },
       startedAt,
     };
-    rememberFulfilled(entry, startedAt, value);
 
     return settled;
   }
@@ -1025,15 +1064,31 @@ function setEntryCache<T>(
 
     cache.settlement = { at: fallback.at, kind: "fulfilled" };
 
-    return cache.cancelled
-      ? { data: fallback.value as T }
-      : { data: fallback.value as T, refreshError: error };
+    // `entry.revision` (via `settledRead`) is the fallback's: the two are
+    // written together, and the fallback existing means this entry is
+    // client-owned, so the field applies.
+    const read = settledRead(entry, fallback.value as T);
+
+    if (!cache.cancelled) {
+      read.refreshError = error;
+    }
+
+    return read;
   };
 
   const guarded: Promise<LaneRead<T>> = valueOrPromise.then(
     (value) => {
       if (entry.cache !== cache) {
-        return { data: value };
+        // Displaced before settling: this value never became the entry's
+        // content, so it carries a revision of its own rather than the entry's
+        // — one number must never name two different values, and reading
+        // `entry.revision` here would pair this value with whatever settled
+        // *after* it. The external wait resolved by its own publication lands
+        // here too (the publication is what displaced it): its reader sees the
+        // published value under a number of its own, which external revisions
+        // permit — they only ever promise "same number ⇒ same value" — and the
+        // reveal reconciliation converges it onto the store's promise anyway.
+        return settledRead(entry, value, ++state.revisionCounter);
       }
 
       // Cancelled mid-flight. A loader that never forwarded its `signal` still
@@ -1047,9 +1102,9 @@ function setEntryCache<T>(
       const shared = shareWithLastFulfilled(entry, value);
 
       cache.settlement = { at, kind: "fulfilled" };
-      rememberFulfilled(entry, at, shared);
+      rememberFulfilled(state, entry, at, shared);
 
-      return { data: shared };
+      return settledRead(entry, shared);
     },
     (error: unknown) => {
       if (entry.cache !== cache) {
@@ -1128,13 +1183,58 @@ function cachedPromise(
  * release. Nothing is lost with it: `lastFulfilled` feeds the stale-on-error
  * fallback, the loader's `current`, and structural sharing across reloads, and
  * all three belong to a loader that fetches. An external entry has none.
+ *
+ * This is also where the entry's revision advances — at the settlement, in the
+ * same synchronous run that seals the resolved value, so the number and the
+ * data can never pair up wrong. For a client-owned entry the two records must
+ * agree: `revision` names the content `lastFulfilled` holds, so they are
+ * written in the same breath, and whether the content *changed* is not
+ * re-decided here — structural sharing already collapsed a deep-equal refetch
+ * onto the previous reference, so a new reference is the store's own verdict
+ * that this is new content. (`Object.is`, not `!==`: a value that is literally
+ * `NaN` must not read as forever-changing.)
+ *
+ * An external entry keeps no `lastFulfilled` (a strong reference the weak
+ * retention forbids), so there is nothing to compare a publication against —
+ * "unchanged" is not a fact this entry can establish. Every publication
+ * therefore mints: an external revision is the identity of the *publication*,
+ * the client's honest "possibly new content". The safe direction — same
+ * revision ⇒ same content — still holds; what is given up is only that a
+ * republish of identical content reads as new. An owner with a real content
+ * version ships it in the payload.
  */
-function rememberFulfilled(entry: LaneEntry, at: number, value: unknown): void {
+function rememberFulfilled(
+  state: LaneState,
+  entry: LaneEntry,
+  at: number,
+  value: unknown,
+): void {
   if (entry.external) {
+    entry.revision = ++state.revisionCounter;
     return;
   }
 
+  if (
+    entry.lastFulfilled === undefined ||
+    !Object.is(entry.lastFulfilled.value, value)
+  ) {
+    entry.revision = ++state.revisionCounter;
+  }
+
   entry.lastFulfilled = { at, value };
+}
+
+/**
+ * The resolved shape a fulfillment hands its readers: the data under the
+ * revision that names it — the entry's, unless the caller mints one of its own
+ * (the displaced settlement).
+ */
+function settledRead<T>(
+  entry: LaneEntry,
+  data: T,
+  revision = entry.revision,
+): LaneRead<T> {
+  return { data, revision };
 }
 
 function shareWithLastFulfilled<T>(entry: LaneEntry, value: T): T {

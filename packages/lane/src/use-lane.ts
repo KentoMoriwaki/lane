@@ -13,6 +13,7 @@ import {
   invalidateEntry,
   invalidationSource,
   latestNotifySource,
+  peekEntryPromise,
   readOrCreate,
   subscribeLane,
 } from "./core";
@@ -478,8 +479,21 @@ export function useLane<T, C = T>(
   }, [enabled, lane, keyId]);
 
   const invalidate = useCallback(
-    (options?: LaneInvalidateOptions) => {
+    (options?: LaneInvalidateOptions): Promise<LaneRead<T>> | undefined => {
       invalidateEntry(lane, keyId, options, invalidationSource(options));
+
+      // The next read, from the store rather than from a loader this callback
+      // would have to depend on. The invalidation's fan-out is synchronous, so
+      // by this line a subscribed reader's `onInvalidate` has already
+      // installed its re-read as the entry's cache — the promise every reader
+      // of the key adopts, by the store's dedupe — and an `onlyIf` that
+      // declined cleared nothing, so the cache it left in place *is* "the
+      // key's value after this call". `undefined` is the read with nothing
+      // left to await: gated off, or a stale callback that outlived its
+      // subscription.
+      return peekEntryPromise(lane, keyId) as
+        | Promise<LaneRead<T>>
+        | undefined;
     },
     [lane, keyId],
   );

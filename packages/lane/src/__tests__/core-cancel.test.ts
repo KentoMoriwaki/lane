@@ -74,7 +74,7 @@ describe("cancel", () => {
     lane.cancel(["tasks"]);
 
     // The caller asked for the stop, so it is not reported as a failed refresh.
-    await expect(promise).resolves.toEqual({ data: "first" });
+    await expect(promise).resolves.toEqual({ revision: expect.any(Number), data: "first" });
   });
 
   it("is not undone by a loader that ignores its signal", async () => {
@@ -92,7 +92,7 @@ describe("cancel", () => {
     // The loader never forwarded the signal and runs to completion anyway.
     refresh.resolve("second");
 
-    await expect(promise).resolves.toEqual({ data: "first" });
+    await expect(promise).resolves.toEqual({ revision: expect.any(Number), data: "first" });
   });
 
   it("settles rejected when there is nothing to revert to, and stays that way", async () => {
@@ -117,7 +117,7 @@ describe("cancel", () => {
 
     // It recovers like any other failed first load.
     lane.invalidate(["tasks"]);
-    await expect(readOrCreate(lane, ["tasks"], next)).resolves.toEqual({
+    await expect(readOrCreate(lane, ["tasks"], next)).resolves.toEqual({ revision: expect.any(Number),
       data: "fresh",
     });
     expect(next).toHaveBeenCalledTimes(1);
@@ -148,7 +148,7 @@ describe("cancel", () => {
 
     lane.cancel(["tasks"]);
 
-    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number),
       data: "value",
     });
     expect(loader).toHaveBeenCalledTimes(1);
@@ -199,7 +199,7 @@ describe("cancel", () => {
     lane.cancel(["tasks"]);
     published.resolve("second");
 
-    await expect(promise).resolves.toEqual({ data: "first" });
+    await expect(promise).resolves.toEqual({ revision: expect.any(Number), data: "first" });
   });
 
   it("ignores a key it has never read", () => {

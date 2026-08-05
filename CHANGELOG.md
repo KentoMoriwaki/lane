@@ -6,6 +6,91 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The reader's `invalidate` is awaitable: it returns the next read.**
+  `lane.invalidate(key)` stays `void` — a key alone does not know its loader,
+  so the instance method can only clear and notify. The hook holds the whole
+  read, which is what lets its bound `invalidate` do more: after the
+  invalidation's synchronous fan-out it reads the key back and returns the
+  promise, which the store's dedupe guarantees is **the same promise every
+  subscribed reader adopts** — never a second fetch.
+
+  ```ts
+  startInvalidationTransition(async () => {
+    const next = await invalidate();
+
+    if (next.data !== source.data) {
+      // the content really changed — converge what derives from it
+      lane.invalidateAll(["analysis", "query", id]);
+    }
+  });
+  ```
+
+  The resolved value keeps every contract the read already had: a failed
+  refresh over existing data resolves `{ data: stale, refreshError }` rather
+  than rejecting (stale-on-error), an initial failure rejects, and resolving
+  means the data settled — not that React committed it. An invalidation
+  skipped by `onlyIf` returns the current cached promise, so awaiting is
+  always awaiting "the key's value after this call". A gated read
+  (`loader: undefined`) returns `undefined` — no loader, no next read — and
+  `useInfiniteLane`'s `invalidate` gains the same return. The `===` in the
+  example is exact, not heuristic: structural sharing's reference reuse is now
+  documented as a guarantee, with `revision` (below) as its serializable twin.
+
+  It costs **+30 B** on the typical `LaneProvider` + `useLane` pair.
+
+- **`LaneRead.revision` — the identity of a read's content, in the resolved
+  value.** Structural sharing already decides whether a refetch changed
+  anything: deep-equal data keeps the previous reference. `revision` is that
+  verdict as a serializable number — minted from a lane-wide counter exactly
+  when a fulfillment installs a new reference, kept when it does not. Equality
+  is the entire contract: same revision ⇔ same `data` reference, nothing about
+  order or density, session-local, never to be serialized into a snapshot.
+
+  What it is for is naming content where a reference cannot go — chiefly as key
+  material for a read *derived from* this one, so the derived key changes
+  exactly when the source's content does and any trigger (manual invalidate,
+  focus, reconnect, mount) propagates through the same render-time channel:
+
+  ```ts
+  const source = use(sourcePromise);
+  useLane(prepareRead(source.data.documentId, source.revision));
+  ```
+
+  For comparing two reads you already hold, it adds nothing over `===` on
+  `data` — that reference comparison being a *precise* change check is now
+  documented as a guarantee of structural sharing rather than an implementation
+  detail.
+
+  It rides in the resolved value like `refreshError`, so `data` and `revision`
+  are one settlement and cannot tear: a stale-on-error result keeps serving the
+  old data under the old revision. The counter is lane-wide rather than
+  per-entry so an entry evicted and re-created can never re-issue a number an
+  older generation of the same key already used — a derived key built from one
+  would hit the old generation's cache and read it as current.
+
+  **On an external read the identity is one notch weaker: the publication's,
+  not the content's.** An external entry keeps no previous value to compare
+  against — `lastFulfilled` is a strong reference its weak retention forbids —
+  so "unchanged" is not a fact the client can establish, and every publication
+  mints, a republish of identical content included. That is the honest claim
+  available ("possibly new content"), and the safe direction still holds
+  universally: same revision ⇒ same content. What is given up is the converse,
+  so a derived key built from an external revision re-derives per publication
+  — when the content has a real version, its owner has it; ship it in the
+  payload and key on that instead. The external wait resolved by its own
+  publication settles with a revision of its own (minted at settlement, so a
+  racing second publication can never pair one publication's data with
+  another's number), and the reveal reconciliation converges that reader onto
+  the store's promise as usual.
+
+  It costs **+60 B** on the store and **+79 B** on the typical
+  `LaneProvider` + `useLane` pair. Across this and the awaitable `invalidate`
+  above, typical lands at 3.98 kB and its budget moves 3.9 → 4 kB; the store
+  stays under its unchanged 2.55 kB guard, and the ceiling moves
+  5.55 → 5.58 kB.
+
 ## [0.8.0] - 2026-08-05
 
 ### Added

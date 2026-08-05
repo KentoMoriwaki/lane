@@ -36,7 +36,7 @@ describe("loader context: current", () => {
 
     await readOrCreate(lane, ["feed"], loader);
     lane.invalidate(["feed"]);
-    await expect(readOrCreate(lane, ["feed"], loader)).resolves.toEqual({
+    await expect(readOrCreate(lane, ["feed"], loader)).resolves.toEqual({ revision: expect.any(Number),
       data: "page-1+page-2",
     });
 
@@ -100,7 +100,7 @@ describe("loader context: current", () => {
         seen.push(current);
         throw new Error("offline");
       }),
-    ).resolves.toEqual({ data: "page-1", refreshError: expect.any(Error) });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "page-1", refreshError: expect.any(Error) });
 
     lane.invalidate(["feed"]);
     await readOrCreate(lane, ["feed"], async ({ current }) => {

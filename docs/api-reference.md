@@ -518,7 +518,7 @@ type LaneResult<T> = {
   promise: Promise<LaneRead<T>>;
   isInvalidationPending: boolean;
   isBackgroundPending: boolean;
-  invalidate: (options?: LaneInvalidateOptions) => void;
+  invalidate: (options?: LaneInvalidateOptions) => Promise<LaneRead<T>>;
   startInvalidationTransition: (action: () => unknown) => void;
 };
 ```
@@ -528,7 +528,7 @@ type LaneResult<T> = {
 | `promise` | The current promise for the key. Unwrap with `use(promise)` to get a [`LaneRead<T>`](#lanereadt). |
 | `isInvalidationPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / reconnect / a `background: true` invalidation / subscription catch-up) is converging. |
-| `invalidate` | Invalidate this exact key and re-read. Convenience for `lane.invalidate(key, options?)`; accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll). Defaults to an explicit transition. |
+| `invalidate` | Invalidate this exact key, re-read, and return **the next read's promise** — awaitable, unlike `lane.invalidate` (a key alone does not know its loader; the hook holds the whole read). The returned promise is the one subscribed readers adopt, by the store's dedupe — never a second fetch. It resolves with the read's usual contracts: a failed refresh over existing data resolves `{ data: stale, refreshError }` rather than rejecting, an initial failure rejects, and resolving means the data settled — not that React committed. An invalidation skipped by `onlyIf` returns the current cached promise, so awaiting is always awaiting "the key's value after this call". Accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll); defaults to an explicit transition. See [Derived reads](#derived-reads--reacting-to-a-source-that-actually-changed) for the cascade it enables. |
 | `startInvalidationTransition` | Run an action inside this reader's invalidation transition, so `isInvalidationPending` is on from when it *starts*. See [below](#startinvalidationtransition--pending-from-the-start-of-an-action). |
 
 ### `startInvalidationTransition` — pending from the start of an action
@@ -612,6 +612,65 @@ is announced is what should look busy, which is usually the smaller set — a
   symptom its own diagnosis. It is documented rather than guarded because there
   is no way to ask React whether a transition is in progress.
 
+### Derived reads — reacting to a source that actually changed
+
+Some reads derive from another read's *content* — syntax highlighting derived
+from a source file, analysis derived from a document — and refreshing the
+source should refresh them only when the content really changed. Lane gives you
+two ways to say that, and which to pick depends on what identity you have.
+
+**Cascade on an awaited refresh.** The bound `invalidate` returns the next
+read, and [structural sharing](#structural-sharing) guarantees that `===` on
+`data` is a precise change check — a refetch that came back deep-equal keeps
+the previous reference. So the cascade is a comparison away, inside the
+[transition](#startinvalidationtransition--pending-from-the-start-of-an-action)
+so everything converges as one window:
+
+```tsx
+const { promise, invalidate, startInvalidationTransition } = useLane(sourceRead(path));
+const source = use(promise);
+
+function reload() {
+  startInvalidationTransition(async () => {
+    const next = await invalidate();
+
+    if (next.data !== source.data) {
+      // the content really changed — everything derived from it is stale
+      lane.invalidate(prepareRead(source.data.documentId).key);
+      lane.invalidateAll(["analysis", "query", source.data.documentId]);
+    }
+  });
+}
+```
+
+This keeps derived keys simple and every entry's continuity (structural
+sharing, `current`, stale-on-error) intact. Its limits: the derived set is
+enumerated by hand, and only paths that `await` the refresh cascade — an
+automatic revalidation (focus / reconnect / mount) refreshes the source alone.
+
+**Fold the identity into the derived key.** When the source's content has a
+name — a server-provided hash or version, or Lane's own
+[`revision`](#lanereadt) when it does not — put it in the derived read's key.
+The derived key then changes exactly when the content does, whatever triggered
+the refresh, and the new pair lands in one commit (the key switch and the
+suspension happen in the same transition render):
+
+```tsx
+const source = use(useLane(sourceRead(path)).promise);
+const prepared = use(
+  useLane(prepareRead(source.data.documentId, source.revision)).promise,
+);
+```
+
+No cascade to enumerate and no way to render a new source against stale
+derived data — at the price that each identity is a fresh entry: a new-key load
+starts from nothing (no `current`, no stale-on-error fallback; a failure
+suspends into the Error Boundary like any first load), which is the ordinary
+Suspense meaning of a key change. Old entries idle out through `gcTime`. A
+server-provided hash is the stronger key material when you have one — stable
+across sessions and reverts — where `revision` is session-local and only ever
+moves forward.
+
 ### `LaneRead<T>`
 
 What a read resolves to — `use(promise)` returns this:
@@ -619,6 +678,7 @@ What a read resolves to — `use(promise)` returns this:
 ```ts
 type LaneRead<T> = {
   data: T;
+  revision: number;
   refreshError?: unknown;
 };
 ```
@@ -626,16 +686,20 @@ type LaneRead<T> = {
 | Field | Description |
 | --- | --- |
 | `data` | The value for the key. |
+| `revision` | The identity of `data`'s **content** — a serializable stand-in for the reference equality [structural sharing](#structural-sharing) guarantees. A refetch that came back deep-equal keeps the previous reference *and* the previous revision; only a genuine content change (through any write path: a loader, `set`, `update`) mints a new one, from a lane-wide counter. Equality is the entire contract — nothing about order, density, or reuse across entries may be read into the numbers, and they are session-local: never serialize one into a snapshot. What it is for is naming content where a reference cannot go — chiefly as **key material for a derived read**, so the derived key changes exactly when the source's content does: `useLane(prepareRead(source.data.documentId, source.revision))`. For comparing two reads you already hold, `revision` adds nothing over `===` on `data`. A stale-on-error result keeps serving the old data under the old revision — the pair is one settlement and cannot tear. **On an [external](#external--a-read-the-owner-publishes) read the identity is one notch weaker: the publication's, not the content's.** An external entry keeps no previous value to compare against (its weak retention forbids the strong reference), so "unchanged" is not a fact the client can establish — every publication mints, a republish of identical content included. Same revision ⇒ same content still holds; the converse does not, so a derived key built from an external revision re-derives per publication. When the content has a real version, its owner has it — ship it in the payload and key on that instead. |
 | `refreshError` | Present when the most recent **refresh** of an entry that already has data failed (see [Stale-on-error](#stale-on-error)): the stale `data` keeps being served and the error rides alongside it. Absent when the latest read succeeded. Initial-load failures reject `promise` instead. Carrying the error *in the resolved value* (rather than a field read live from the store during render) keeps `data` and `refreshError` consistent under concurrent rendering and avoids a render-purity violation. |
 
 ### `LaneGatedResult<T>`
 
 What `useLane` / `useLanePromise` return when the loader may be `undefined` —
-`promise` widens to `Promise<T> | undefined`:
+`promise` widens to `Promise<T> | undefined`, and `invalidate` widens the same
+way (while disabled there is no loader to re-read with, so it still clears the
+entry but has no next read to return):
 
 ```ts
-type LaneGatedResult<T> = Omit<LaneResult<T>, "promise"> & {
+type LaneGatedResult<T> = Omit<LaneResult<T>, "promise" | "invalidate"> & {
   promise: Promise<LaneRead<T>> | undefined;
+  invalidate: (options?: LaneInvalidateOptions) => Promise<LaneRead<T>> | undefined;
 };
 ```
 
@@ -880,7 +944,9 @@ function useInfiniteLane<P, C>(read: {
   loadMore: () => Promise<LaneRead<InfiniteLaneValue<P, C>>> | undefined;
   isInvalidationPending: boolean;
   isBackgroundPending: boolean;
-  invalidate: (options?: LaneInvalidateOptions) => void;
+  invalidate: (
+    options?: LaneInvalidateOptions,
+  ) => Promise<LaneRead<InfiniteLaneValue<P, C>>>;
 };
 ```
 
@@ -1753,9 +1819,15 @@ Two anti-patterns to name, because both look reasonable:
   or GC.
 - **Retry.** `retry` / `retryDelay` retry failed loads (default: none;
   exponential backoff capped at 30s when enabled). Aborts stop the loop.
-- **Structural sharing.** When a reload resolves with data deeply equal to the
-  previous value, previous references are reused so memoized consumers do not
-  re-render.
+- **Structural sharing.** <a id="structural-sharing"></a> When a reload
+  resolves with data deeply equal to the previous value, previous references are
+  reused so memoized consumers do not re-render. This is a guarantee, not just
+  an optimization: one settlement's `data` is `===` to the previous one's
+  exactly when the content is deep-equal, so a reference comparison between two
+  reads you hold is a precise change check — and [`revision`](#lanereadt) is the
+  same fact as a serializable number, for the places a reference cannot go.
+  (The domain is plain objects, arrays, and primitives; a class instance or
+  `Date` in the data always comes back as a new reference.)
 - **Polling.** Not a built-in — schedule your own timer and call
   `invalidate(key, { background: true })`. See [Polling](#polling).
 - **Focus / reconnect.** The provider coalesces `focus` + `visibilitychange`
@@ -1786,7 +1858,7 @@ Two anti-patterns to name, because both look reasonable:
 ## Type exports
 
 `InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
-`Lane`, `LaneClientLoader`, `LaneEntryInfo`, `LaneEventSource`, `LaneExternalLoader`, `LaneExternalReadSpec`, `LaneExternalResult`, `LaneGatedExternalReadSpec`, `LaneGatedExternalResult`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidateOptions`,
+`Lane`, `LaneClientLoader`, `LaneEntryInfo`, `LaneEventSource`, `LaneExternalLoader`, `LaneExternalReadSpec`, `LaneExternalResult`, `LaneGatedExternalReadSpec`, `LaneGatedExternalResult`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidate`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneLoaderMeta`, `LaneLoaderMetaArgs`, `LaneLoaderMetaProp`, `LaneOptions`,
 `LaneKeyOf`, `LanePlainKey`, `LanePrefetchOptions`, `LaneProviderProps`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneRegister`,
 `LaneResult`, `LaneRetryDelay`, `LaneRevalidateHandlers`,

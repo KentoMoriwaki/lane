@@ -98,7 +98,7 @@ task touches that rule.
   every reader of that key with the wrong shape; `laneSnapshot` infers the type
   from the read's key and checks `data` against it. Everything seeded becomes
   server-owned — read it with `laneRead<T>({ key, loader: external })` (explicit
-  `T`; the spec accepts no `staleTime` / `whenStale` / `retry` / `refetchOn*`,
+  `T`; the spec accepts no `staleTime` / `whenStale` / `refetchOn*`,
   because each one instructs a loader this read does not have). An external read
   suspends until the publication arrives, and fails loudly with
   `LaneExternalTimeoutError` after 10s if nothing publishes the key.

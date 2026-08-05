@@ -53,9 +53,10 @@ designed to own.
   optimistic UI lives next to the action that triggered it instead of in a
   global cache that needs rollback semantics.
 - **Minimal on purpose.** A typical `LaneProvider` + `useLane` import is about
-  **3.4 kB** minified and Brotli-compressed, and importing *every* export costs
-  **4.7 kB** — that is the whole ceiling. Lane stays small because it does not
-  reimplement the UI state machine React already ships.
+  **3.8 kB** minified and Brotli-compressed, and importing *every* export costs
+  **5.4 kB** — that is the whole ceiling. Lane stays small because it does not
+  reimplement the UI state machine React already ships, or the request layer your
+  API client already owns.
 
 ## Requirements
 
@@ -176,9 +177,9 @@ function RenameButton({ userId }: { userId: string }) {
   `update` / `invalidate` / `remove`) throws on it. Mutations go back through the
   owner (Server Action → revalidate → republish); immediacy is `useOptimistic`
   over the read value.
-- **Lifecycle built in.** Garbage collection (`gcTime`, default 5 min), `retry` /
-  `retryDelay`, and `refetchOnFocus` / `refetchOnMount` / `refetchOnReconnect`
-  revalidation. Polling is userland — a self-scheduled `invalidate`.
+- **Lifecycle built in.** Garbage collection (`gcTime`, default 5 min) and
+  `refetchOnFocus` / `refetchOnMount` / `refetchOnReconnect` revalidation.
+  Polling is userland — a self-scheduled `invalidate`.
 - **Optimistic UI stays local.** Lane ships no mutation helper; use
   `useOptimistic` / `useActionState` in the component that owns the action.
 - **A read can be one value.** `laneRead({ key, loader, ...options })` colocates
@@ -211,7 +212,7 @@ function RenameButton({ userId }: { userId: string }) {
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
 `updateAll`, `remove` / `removeAll` — all keyed; `set` / `update` are checked
 when given a typed key. `useLane` options: `staleTime`, `whenStale`,
-`retry`, `retryDelay`, `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
+`refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
 `createLane` options: `gcTime`. Loaders receive `{ key, signal, current }`, where
 `current` is the entry's last fulfilled value.
 

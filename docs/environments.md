@@ -152,7 +152,7 @@ const myEventSource: LaneEventSource = ({ onFocus, onReconnect }) => {
 ```
 
 Nothing else about Lane changes across renderers — the store, keys, invalidation,
-GC, retry, and staleness policies are identical everywhere.
+GC, and staleness policies are identical everywhere.
 
 ## See also
 

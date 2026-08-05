@@ -147,6 +147,57 @@ React primitives — `useActionState`, `useOptimistic`, transitions — exactly 
 they are next to Server Components and Server Functions. One mental model is worth
 more long-term than a convenient wrapper that diverges from it.
 
+## Lane is not an API client
+
+Lane never issues a request. A loader is your code calling your client, and
+Lane's only contribution to it is the argument list. That is not a gap to be
+filled in later — it is the second of Lane's two boundaries. The first faces
+React ([React owns UI state](#react-owns-ui-state)); this one faces the network,
+and it is drawn by asking what each layer can see.
+
+| layer | sees | cannot see |
+| --- | --- | --- |
+| your API client | one request — its input, its response, its failure | who asked, whether anyone still cares, what is on screen, when React will commit |
+| React | the tree, the schedule, what is mounted | which data belongs to which key, when a value went stale |
+| **Lane** | **both sides of the seam** | |
+
+So what belongs in Lane has a factual answer rather than a stylistic one:
+
+> To implement this correctly, must you know **(a)** what is on screen right
+> now, **(b)** whether anyone is still reading, or **(c)** when React will
+> commit?
+
+If none of the three, the feature can be implemented correctly without Lane, and
+putting it in Lane only takes away your choice of client.
+
+**What the test admits.** Stale-on-error needs (a) — serving the last fulfilled
+value requires knowing there is one. `revision` and structural sharing need (a):
+"changed" means changed relative to what is rendered. Dedup, abort-on-discard,
+garbage collection, and focus / reconnect revalidation need (b) — they are all
+questions about who is still subscribed. Transition-native replacement needs (c),
+and nothing else can supply it.
+
+**What it excludes.** Retry and backoff. Timeouts, rate limiting, circuit
+breaking. Error reporting and telemetry. Auth token refresh, header and base-URL
+policy. Response parsing and error normalization. Each is a function of one
+request, answerable without knowing anything about the render — so each belongs
+to the client you already have, where it also applies to the requests Lane never
+sees.
+
+**The boundary is a handoff, not a wall.** A loader receives
+`{ key, signal, current, meta }`, and every one of those is something only Lane
+knows, handed down so your client can do its own job better than it could alone:
+`signal` fires when the read is discarded, so work nobody is waiting for stops;
+`current` is the last fulfilled value, so a conditional request can send it as
+`If-None-Match`. Lane supplies the render-relative context; your client makes the
+request.
+
+This is why Lane is smaller than React Query or SWR, and why you bring your own
+fetcher. A library that owned your HTTP stack could ship retry and error
+reporting as built-ins — at the price of owning the layer you are most likely to
+already have opinions about. Lane would rather be the layer you cannot write
+yourself.
+
 ## The store returns promises, never data
 
 Every method on the `Lane` instance returns a promise or nothing. `prefetch`,
@@ -250,8 +301,8 @@ extent. `useInfiniteLane` is one caller of it, and could be written in userland
 because it uses nothing the core does not already expose.
 
 Two properties keep it honest. It is **snapshotted when the read is created**, so
-every retry of that read sees the same input and a value published mid-flight
-cannot change what the read was started from. And it is **not a way to skip
+a value published while the read starts cannot change what it was started from.
+And it is **not a way to skip
 work**: it is the previous read's value, so returning it unchanged strands the
 entry on stale data with no way to notice — a loader that reads it still has to
 produce the current value.
@@ -493,7 +544,6 @@ adapter option -> conditional cache invalidation -> mounted readers re-read thro
 - mount-time stale refresh (`refetchOnMount`)
 - focus / reconnect revalidation (`refetchOnFocus`, `refetchOnReconnect`)
 - polling — userland: a self-scheduled `invalidate(key, { onlyIf: "settled", background: true })` (no core timer)
-- retry / backoff (`retry`, `retryDelay`)
 - inactive-entry garbage collection (`gcTime`, a per-lane policy on `createLane`)
 
 Splitting the durable key slot from its optional cached promise is what makes
@@ -502,44 +552,22 @@ to re-read creates the next promise and the rest dedupe onto it. No low-level
 reload API, version field, or separate invalidated flag is needed, and stale
 promises that settle late are ignored by comparing cache-object identity.
 
-### What each feature costs
+### What it costs
 
 `dist/` is one file per source module, so a feature you do not import is dropped
-whole rather than shaken statement-by-statement out of a shared bundle. That
-makes the marginal cost of each feature a stable number worth knowing. Measured
-by `size-limit` — minified, Brotli-compressed, `react` / `react-dom` external —
-against the typical `LaneProvider` + `useLane` import:
+whole rather than shaken statement-by-statement out of a shared bundle. Two
+numbers follow from that, and they are the ones `size-limit` holds in CI —
+minified, Brotli-compressed, `react` / `react-dom` external. The typical
+`LaneProvider` + `useLane` import is about **3.8 kB**, and importing *every*
+export is about **5.4 kB**: that ceiling is the whole of what Lane can cost you.
 
-| import | size | vs. typical |
-| --- | --- | --- |
-| `{ createLane }` — the store, no React | 2043 B | — |
-| `{ LaneProvider, useLane }` — **typical** | 3358 B | — |
-| `+ laneRead`, `laneKey` | 3366 B | **+8 B** |
-| `+ laneSnapshot` | 3380 B | +22 B |
-| `+ LaneHydration` — the publication minimum | 3501 B | +143 B |
-| `+ infiniteLaneRead`, `useInfiniteLane` | 3687 B | +329 B |
-| `+ useLanesAll` | 3944 B | +586 B |
-| `*` — everything | 4726 B | +1368 B |
-
-Two of these are worth stating outright. **The form the docs recommend
-everywhere is free**: moving from loose `key` / `loader` arguments to a
-`laneRead` definition with typed keys costs 8 B, so colocating a read carries no
-size argument against it. And **the whole package is 4726 B** — importing every
-export costs 1368 B over the typical pair, which bounds what Lane can cost you
-at all.
-
-`loaderMeta` is the one feature not on this table, because it is not a separate
-import: declaring `LaneRegister` is types only, and the value's delivery lives on
-the provider and the read path every consumer already pays for. It cost **31 B**
-on the typical pair (3327 → 3358 B) — the whole of the increase in this table's
-first two rows.
-
-The three numbers CI enforces are the store on its own, the typical pair, and
-that ceiling; the per-feature rows above are documentation, not budgets. A check
-would pin each row against regression, but no consumer imports `useLanesAll`
-*instead of* the typical path — they import it as well, so the ceiling already
-covers the growth. What a reader actually wants from these rows is whether a
-feature is worth its bytes, and that is a question for prose.
+The marginal cost worth naming is the one that is not there. Moving from loose
+`key` / `loader` arguments to a `laneRead` definition with typed keys costs a
+handful of bytes, so the form the docs recommend everywhere carries no size
+argument against it. Nothing else is priced here on purpose — no consumer imports
+`useLanesAll` *instead of* the typical path, they import it as well, so the
+ceiling already bounds the growth, and whether a feature is worth its bytes is a
+question for prose rather than a table that silently goes stale.
 
 ## Design bias
 
@@ -553,6 +581,7 @@ When more than one approach is possible, Lane prefers:
 - local React state for optimistic UI, not shared cache writes
 - aborting as a consequence of a cache transition, and cancelling only a read the
   caller issued
+- request-level concerns in the fetcher over built-ins that own your HTTP stack
 - app-level decisions for mutation effects
 - coordinating promise identity over owning resolved-value cache policy
 

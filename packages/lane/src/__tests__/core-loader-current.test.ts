@@ -111,7 +111,7 @@ describe("loader context: current", () => {
     expect(seen).toEqual([undefined, "page-1", "page-1"]);
   });
 
-  it("keeps one snapshot across every retry of the same read", async () => {
+  it("is snapshotted before the loader runs, so a publication cannot change it", async () => {
     const lane = createLane();
     const seen: unknown[] = [];
 
@@ -119,25 +119,23 @@ describe("loader context: current", () => {
     await readOrCreate(lane, ["feed"], async () => "page-1");
 
     lane.invalidate(["feed"]);
-    // Publishing a different value mid-read must not change what the read was
-    // started from.
     const loader = vi
       .fn(async ({ current }: LaneLoaderContext) => {
         seen.push(current);
-        if (seen.length < 3) {
-          throw new Error("flaky");
-        }
         return "page-2";
       })
       .mockName("loader");
 
-    await readOrCreate(lane, ["feed"], loader, {
-      retry: 2,
-      retryDelay: () => 0,
-    });
+    const reading = readOrCreate(lane, ["feed"], loader);
+    // The loader is started off a resolved promise, so it has not been called
+    // yet. Publishing here replaces what the entry holds before the loader ever
+    // asks — and the read still runs against the value it was created with.
+    lane.set(["feed"], "published");
 
-    expect(loader).toHaveBeenCalledTimes(3);
-    expect(seen).toEqual(["page-1", "page-1", "page-1"]);
+    await reading.catch(() => undefined);
+
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual(["page-1"]);
   });
 
   it("sees a value published with set", async () => {

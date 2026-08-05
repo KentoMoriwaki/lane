@@ -148,31 +148,6 @@ describe("loaderMeta", () => {
     expect(seen).toEqual([CTX, OTHER_CTX]);
   });
 
-  it("is snapshotted with the read, so every retry sees the same value", async () => {
-    const lane = createLane();
-    const seen: unknown[] = [];
-    const loader = vi
-      .fn<() => Promise<string>>()
-      .mockImplementationOnce(async () => {
-        throw new Error("boom");
-      })
-      .mockImplementationOnce(async () => "recovered");
-    const read = laneRead({
-      key: ["task", "t1"],
-      loader: ({ meta }) => {
-        seen.push(meta);
-        return loader();
-      },
-      retry: 1,
-      retryDelay: () => 0,
-    });
-
-    await lane.prefetch(read, { loaderMeta: CTX } as never);
-
-    expect(loader).toHaveBeenCalledTimes(2);
-    expect(seen).toEqual([CTX, CTX]);
-  });
-
   it("reaches every member of a batch read", async () => {
     const lane = createLane();
     const seen: unknown[] = [];

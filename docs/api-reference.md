@@ -108,7 +108,7 @@ type LaneOptions = {
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `gcTime` | `300000` (5 min) | How long (ms) an inactive entry (no subscribers) is retained before it is garbage-collected. An instance-wide memory policy — idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. Eviction is coalesced into a single sweep per lane, so the exact moment is approximate (it never needs to be precise). A reader that has not committed yet counts as inactive from the moment it starts its first load — it suspends before it can subscribe — so `gcTime` doubles as the grace window for that first load: if it runs longer than `gcTime` and a sweep fires, the in-flight read is aborted (its `signal` fires) and refetched on the retry. Keep `gcTime` comfortably longer than your slowest request (including retries); avoid `0` for reads that suspend for a while. |
+| `gcTime` | `300000` (5 min) | How long (ms) an inactive entry (no subscribers) is retained before it is garbage-collected. An instance-wide memory policy — idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. Eviction is coalesced into a single sweep per lane, so the exact moment is approximate (it never needs to be precise). A reader that has not committed yet counts as inactive from the moment it starts its first load — it suspends before it can subscribe — so `gcTime` doubles as the grace window for that first load: if it runs longer than `gcTime` and a sweep fires, the in-flight read is aborted (its `signal` fires) and refetched on the retry. Keep `gcTime` comfortably longer than your slowest request; avoid `0` for reads that suspend for a while. |
 
 ## Reading data
 
@@ -146,10 +146,11 @@ Write it inline for a one-off read, or build it with
 than one place — same value either way, and every consumer of a read takes it.
 
 **`current`** is the entry's last fulfilled value, or `undefined` on a first
-load — snapshotted when the read is created, so every retry of that read sees
-the same value. It lets a loader re-read *as much as it already had* rather than
-only what the key describes: the accumulated pages of a list, a cursor to resume
-from, a revision to send as `If-None-Match`. It survives invalidation, which
+load — snapshotted when the read is created, so a publication landing while the
+read starts cannot change what the loader was handed. It lets a loader re-read
+*as much as it already had* rather than only what the key describes: the
+accumulated pages of a list, a cursor to resume from, a revision to send as
+`If-None-Match`. It survives invalidation, which
 clears the cached promise and not the last fulfilled value, and is `undefined`
 again once the entry itself is gone — [removed](#remove--removeall), collected,
 or invalidated while nothing was subscribed to hold it — so a loader must always
@@ -773,7 +774,6 @@ option is a type error at the `laneRead` call:
 | --- | --- |
 | `staleTime`, `whenStale` | Freshness is the publisher's decision. Nothing local can re-read this key, so "stale" has no action attached to it. |
 | `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` | Each one triggers a re-fetch, which is exactly the ownership violation this read exists to prevent. |
-| `retry`, `retryDelay` | There is no request to retry. |
 | `loaderMeta` | Nothing here is handed to a loader. |
 
 #### What it does while it waits
@@ -911,8 +911,8 @@ Notes:
 
 - **Each member behaves exactly like `useLane`** — transitions, stale-on-error,
   focus / reconnect, `refetchOnMount`, GC, and reacting to (shared) option changes
-  (`staleTime` / `refetchOnFocus` / `refetchOnReconnect` re-subscribe; `retry` /
-  `whenStale` apply on the next read). A batch is N `useLane`s feeding one
+  (`staleTime` / `refetchOnFocus` / `refetchOnReconnect` re-subscribe;
+  `whenStale` applies on the next read). A batch is N `useLane`s feeding one
   `Promise.all`.
 - **Adding a read** subscribes and loads just that read; the reads already on
   screen are not refetched. **Removing one** unsubscribes it.
@@ -1069,12 +1069,9 @@ Notes:
   retry — a button calling `loadMore` again, which resumes from the same cursor.
   A caller that would rather not route through the rendered value can await
   `loadMore` instead: it hands back the entry's next promise, which *resolves*
-  with `refreshError` set rather than rejecting.
-  Note that `retry` / `retryDelay` do **not** apply here: they belong to the read
-  path, and an append is an `update`, so a failed page is surfaced rather than
-  retried. (The equivalent React Query list has the same shape — `hasNextPage`
-  stays `true` after a failed `fetchNextPage` — and gates on
-  `isFetchNextPageError` instead.)
+  with `refreshError` set rather than rejecting. (The equivalent React Query list
+  has the same shape — `hasNextPage` stays `true` after a failed `fetchNextPage`
+  — and gates on `isFetchNextPageError` instead.)
 - **Depth is only as durable as the entry.** Remounting reuses the cached value
   with no request at all, and the depth comes back with it, so the *next* refresh
   covers every page again. An `invalidate` while *nothing* is mounted is the
@@ -1195,8 +1192,10 @@ prefetch<T, C = T>(
 ): Promise<LaneRead<T>>;
 ```
 
-Only the fetch-shaping options on the read apply (`retry` / `retryDelay`);
-`staleTime` / `whenStale` stay the eventual reader's call.
+`prefetch` takes the read's key, its loader, and its `loaderMeta` — the three
+things running one needs. Everything else on the read describes what a *reader*
+does with the value (`staleTime` / `whenStale` / `refetchOn*`), and warming is not
+the read, so those stay the eventual reader's call.
 
 `prefetch` is a method on the
 [`Lane` instance](#mutation-convergence--the-lane-instance)
@@ -1223,11 +1222,10 @@ const warm = () =>
   reclaimed by the lane's sweep (within `gcTime`); if a reader mounts first, the
   entry becomes live and is kept.
 - **Freshness is the reader's call.** `prefetch` only warms; `staleTime` /
-  `whenStale` are decided by the eventual `useLane`, so `LanePrefetchOptions`
-  exposes only `retry` / `retryDelay`. A
+  `whenStale` are decided by the eventual `useLane`. A
   [spec](#lanereadspec--key--loader-colocation) is warmed the same way — its
-  `retry` / `retryDelay` apply and its freshness options are left to the reader,
-  so `lane.prefetch(taskLanes.detail(id))` is the whole hover handler. This is the
+  freshness options are left to the reader, so
+  `lane.prefetch(taskLanes.detail(id))` is the whole hover handler. This is the
   one instance method that takes a read rather than a key, because warming means
   running the loader.
 
@@ -1242,8 +1240,6 @@ type LaneUseOptions = {
   loaderMeta?: LaneRegister["loaderMeta"];
   staleTime?: number;
   whenStale?: "revalidate" | "refetch";
-  retry?: number;
-  retryDelay?: (attempt: number, error: unknown) => number;
   refetchOnFocus?: boolean;
   refetchOnMount?: boolean;
   refetchOnReconnect?: boolean;
@@ -1258,8 +1254,6 @@ type LaneUseOptions = {
 | `loaderMeta` | the lane's | Read this entry with a different `meta` than the lane carries — see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key). Not part of the key. In a batch, a member's own value wins over the batch's. |
 | `staleTime` | `Infinity` | How long (ms) a fulfilled value is considered fresh. Once stale, a read's behavior is decided by `whenStale`, and the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. The default means **nothing is ever stale until you say what stale means** — so `whenStale: "refetch"` and all three revalidation triggers do nothing without a `staleTime`, and warn in development. `staleTime` is also the rate limit on the triggers it gates: a value refreshed within it is not refreshed again however many times they fire. `staleTime: 0` asks for "always stale", which includes a mount refetching the value that same mount just loaded — the read runs during render and the trigger fires from an effect, so the two stack. |
 | `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value (or a prior error) and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. |
-| `retry` | `0` | Number of automatic retries for a failed load. Aborts stop the retry loop. |
-| `retryDelay` | exponential backoff, `min(1000 · 2^attempt, 30000)` | Delay (ms) before retry `attempt`. |
 | `refetchOnFocus` | `false` | Reloads stale entries on window focus. Needs a `staleTime` to fire at all — with the `Infinity` default nothing is stale, and Lane warns in development. |
 | `refetchOnMount` | `false` | Reloads stale entries when a reader mounts. Needs a `staleTime` to fire at all. `staleTime: 0` makes it fire on every mount — including the mount that just loaded the value, since the read runs during render and this fires from an effect. |
 | `refetchOnReconnect` | `false` | Same as `refetchOnFocus`, driven by the browser `online` event. |
@@ -1311,8 +1305,10 @@ under [Reading data](#prefetch).
 
 ```ts
 type Lane = {
-  prefetch<T>(key: LaneKey, loader: LaneLoader<T>, options?: LanePrefetchOptions): Promise<LaneRead<T>>;
-  prefetch<T>(spec: LaneReadSpec<T>): Promise<LaneRead<T>>;
+  // The trailing argument is required exactly when `LaneRegister` declares a
+  // `loaderMeta` — this read happens outside React, so it cannot take the
+  // provider's. See `prefetch` under Reading data.
+  prefetch<T, C = T>(read: LaneReadSpec<T, C>, ...args: LaneLoaderMetaArgs): Promise<LaneRead<T>>;
   // Opens the *readers'* transitions in a scope. Call it inside an action that
   // is already running in one — see `startInvalidationTransition` above.
   startInvalidationTransition(scope: LaneScope): void;
@@ -1817,8 +1813,6 @@ Two anti-patterns to name, because both look reasonable:
 - **Abort.** Loaders receive an `AbortSignal` that fires when the read is
   discarded by invalidation, removal, an authoritative `set` over a pending read,
   or GC.
-- **Retry.** `retry` / `retryDelay` retry failed loads (default: none;
-  exponential backoff capped at 30s when enabled). Aborts stop the loop.
 - **Structural sharing.** <a id="structural-sharing"></a> When a reload
   resolves with data deeply equal to the previous value, previous references are
   reused so memoized consumers do not re-render. This is a guarantee, not just
@@ -1860,8 +1854,8 @@ Two anti-patterns to name, because both look reasonable:
 `InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
 `Lane`, `LaneClientLoader`, `LaneEntryInfo`, `LaneEventSource`, `LaneExternalLoader`, `LaneExternalReadSpec`, `LaneExternalResult`, `LaneGatedExternalReadSpec`, `LaneGatedExternalResult`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidate`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneLoaderMeta`, `LaneLoaderMetaArgs`, `LaneLoaderMetaProp`, `LaneOptions`,
-`LaneKeyOf`, `LanePlainKey`, `LanePrefetchOptions`, `LaneProviderProps`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneRegister`,
-`LaneResult`, `LaneRetryDelay`, `LaneRevalidateHandlers`,
+`LaneKeyOf`, `LanePlainKey`, `LaneProviderProps`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneRegister`,
+`LaneResult`, `LaneRevalidateHandlers`,
 `LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`,
 `ReactNativeAppState`, `ReactNativeEventSourceOptions`, `ReactNativeNetInfo`.
 

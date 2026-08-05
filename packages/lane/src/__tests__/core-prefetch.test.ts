@@ -87,17 +87,4 @@ describe("prefetch", () => {
 
     unsubscribe();
   });
-
-  it("retries a failing prefetch per the options", async () => {
-    const lane = createLane();
-    const loader = vi
-      .fn<() => Promise<string>>()
-      .mockRejectedValueOnce(new Error("flaky"))
-      .mockResolvedValueOnce("warm");
-
-    await expect(
-      lane.prefetch({ key: ["tasks"], loader, retry: 1, retryDelay: () => 0 }),
-    ).resolves.toEqual({ revision: expect.any(Number), data: "warm" });
-    expect(loader).toHaveBeenCalledTimes(2);
-  });
 });

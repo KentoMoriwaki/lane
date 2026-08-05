@@ -252,7 +252,7 @@ function toDescriptor<T, C>(read: LaneReadSpec<T, C>): Descriptor<T, C> {
  * Lane (the read path resolves `options?.staleTime ?? 0`, an absent loader gates a
  * read off, an absent trigger is off). This is the only place in the library with
  * two tiers to disagree about, so it is the only place the distinction was ever
- * observable — and the reason to spend eight `??` here is that it keeps the rule
+ * observable — and the reason to spend six `??` here is that it keeps the rule
  * sayable once for all of Lane.
  *
  * Naming them also drops `key` / `loader` from the result, which a spread of the
@@ -279,8 +279,6 @@ function optionsFor<T, C>(
     refetchOnFocus: own.refetchOnFocus ?? shared.refetchOnFocus,
     refetchOnMount: own.refetchOnMount ?? shared.refetchOnMount,
     refetchOnReconnect: own.refetchOnReconnect ?? shared.refetchOnReconnect,
-    retry: own.retry ?? shared.retry,
-    retryDelay: own.retryDelay ?? shared.retryDelay,
     staleTime: own.staleTime ?? shared.staleTime,
     whenStale: own.whenStale ?? shared.whenStale,
   };

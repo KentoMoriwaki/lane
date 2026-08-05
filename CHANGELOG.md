@@ -91,6 +91,35 @@ All notable changes to `use-lane` are documented here. The format is based on
   stays under its unchanged 2.55 kB guard, and the ceiling moves
   5.55 → 5.58 kB.
 
+### Removed
+
+- **Breaking: `retry` / `retryDelay` are gone**, and with them the
+  `LaneRetryDelay` type export. Retrying a failed request is your fetcher's job.
+
+  Lane owns one thing: a promise's identity and its timing relative to React's
+  rendering. That is the work nothing else can do, because only Lane knows what
+  is on screen, whether anyone is still subscribed, and when React will commit —
+  which is why stale-on-error, `refetchOnFocus`, `staleTime` / `gcTime`, dedupe,
+  and `revision` belong here. Retry needs none of those facts. It is a loop
+  around one request, decided entirely by that request's own outcome, and a
+  loader can write it because it is already handed the `AbortSignal` the loop
+  needs. Shipping it here only meant Lane's copy ran instead of the API client's
+  — the same layer that already owns timeouts, auth refresh, error reporting, and
+  response normalization for every other caller in the app.
+
+  Nothing replaces it: move the policy into the loader, or into the client the
+  loader calls. Behavior is unchanged apart from failed loads no longer being
+  re-attempted — a rejection still reaches the read exactly as it did, so
+  stale-on-error, aborts, and the Error Boundary path are untouched. One special
+  case leaves with it: `external` reads were exempted from retry so that a key
+  nobody publishes failed after one timeout instead of `retry + 1` of them, and
+  with no retries there is nothing to exempt.
+
+  It gives back **161 B** on the store, **181 B** on the typical `LaneProvider` +
+  `useLane` pair, and **175 B** on the ceiling. The three budgets tighten to
+  match: the store 2.55 → 2.39 kB (2.37 kB actual), typical 4 → 3.82 kB
+  (3.79 kB), and the ceiling 5.58 → 5.41 kB (5.4 kB).
+
 ## [0.8.0] - 2026-08-05
 
 ### Added

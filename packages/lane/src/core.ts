@@ -16,7 +16,6 @@ import type {
   LaneOptions,
   LaneRead,
   LaneReadSpec,
-  LaneRetryDelay,
   LaneScope,
   LaneUpdater,
   LaneValue,
@@ -26,8 +25,6 @@ import type {
 export type LaneInvalidationSource = "background" | "transition";
 
 export type LaneReadOptions = {
-  retry?: number;
-  retryDelay?: LaneRetryDelay;
   staleTime?: number;
   whenStale?: LaneWhenStale;
   /**
@@ -166,9 +163,6 @@ type LaneEntry = {
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
 
-const DEFAULT_RETRY_DELAY: LaneRetryDelay = (attempt) =>
-  Math.min(1_000 * 2 ** attempt, 30_000);
-
 const laneStates = new WeakMap<Lane, LaneState>();
 
 export function createLane(options: LaneOptions = {}): Lane {
@@ -205,8 +199,6 @@ export function createLane(options: LaneOptions = {}): Lane {
         // Same precedence as a hook read: the read's own override wins over the
         // value supplied alongside it.
         loaderMeta: read.loaderMeta ?? args[0]?.loaderMeta,
-        retry: read.retry,
-        retryDelay: read.retryDelay,
         whenStale: "revalidate",
       });
     },
@@ -407,11 +399,10 @@ export function readOrCreate<T, C = T>(
   }
 
   const controller = new AbortController();
-  // Snapshot the last fulfilled value now, so every retry of this read sees the
-  // same `current` and a value published while the read is in flight cannot
-  // change what it was started from. It outlives invalidation (which clears the
-  // cache, not `lastFulfilled`) and is `undefined` once the entry itself is
-  // gone.
+  // Snapshot the last fulfilled value now, so a publication landing between here
+  // and the loader's first call cannot change what the read was started from. It
+  // outlives invalidation (which clears the cache, not `lastFulfilled`) and is
+  // `undefined` once the entry itself is gone.
   const current = entry.lastFulfilled?.value as C | undefined;
   const promise = runLoader(loader, key, controller.signal, options, current);
 
@@ -911,58 +902,19 @@ function runLoader<T, C>(
   options: LaneReadOptions | undefined,
   current: C | undefined,
 ): Promise<T> {
-  // `external` is never retried, whatever the read asked for. Its rejection is a
-  // timeout, so a retry would not re-attempt anything — it would start the clock
-  // again, and a key nobody publishes would fail only after `retry + 1` full
-  // timeouts instead of one. (The external spec has no `retry` option; this
-  // covers the read written inline against the wider signature.)
-  const retry = isExternalLoader(loader) ? 0 : (options?.retry ?? 0);
-  const retryDelay = options?.retryDelay ?? DEFAULT_RETRY_DELAY;
-  // Snapshotted with the read, like `current`: every retry below sees the value
-  // the read started with, not whatever the provider holds when the retry fires.
-  const meta = options?.loaderMeta as LaneLoaderMeta;
-  let attempt = 0;
-
-  const attemptLoad = (): Promise<T> =>
-    Promise.resolve()
-      .then(() => loader({ current, key, meta, signal }))
-      .catch((error: unknown) => {
-        if (signal.aborted || attempt >= retry) {
-          throw error;
-        }
-
-        const delay = retryDelay(attempt, error);
-        attempt += 1;
-
-        return sleep(delay, signal).then(() => {
-          if (signal.aborted) {
-            throw error;
-          }
-
-          return attemptLoad();
-        });
-      });
-
-  return attemptLoad();
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-
-    const timer = setTimeout(finish, ms);
-
-    function finish(): void {
-      signal.removeEventListener("abort", finish);
-      clearTimeout(timer);
-      resolve();
-    }
-
-    signal.addEventListener("abort", finish);
-  });
+  // Started off a resolved promise rather than called outright, so a loader that
+  // throws synchronously rejects the read like any other failure instead of
+  // throwing out of the render that created it. Reading `loaderMeta` inside that
+  // callback is safe where `current` had to be snapshotted: `options` is built
+  // fresh per read and held by nobody, so nothing can move it across the defer.
+  return Promise.resolve().then(() =>
+    loader({
+      current,
+      key,
+      meta: options?.loaderMeta as LaneLoaderMeta,
+      signal,
+    }),
+  );
 }
 
 function createEntry(

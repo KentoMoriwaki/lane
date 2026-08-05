@@ -48,23 +48,24 @@ type LaneSubscription = (
 type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
 
 /**
- * "Open your invalidation transition, there is nothing to read yet."
+ * "An invalidation is coming for your key — open its transition now."
  *
  * Separate from {@link LaneSubscription} because it is the one notification that
- * does not describe a cache: no source to pick a surface with (an announcement
- * is always the explicit one), and nothing to re-read. A subscriber that acts on
- * it schedules nothing — see `useLane`, where an empty `startTransition` is the
- * whole handler.
+ * does not describe a cache: no source to pick a surface with (this is always
+ * the explicit one), and nothing to re-read. A subscriber that acts on it
+ * schedules nothing — see `useLane`, where an empty `startTransition` is the
+ * whole handler, and the flag it raises is the `isInvalidationPending` this is
+ * named after.
  */
-type LaneAnnounceSubscription = (entry: LaneEntryInfo) => void;
+type LaneInvalidationPendingSubscription = (entry: LaneEntryInfo) => void;
 
 // A subscriber is a pure notify hook plus a GC anchor — it carries no policy.
 // When to revalidate (focus / reconnect / mount / stale) is the reader's
 // concern, expressed as per-read invalidations; the store only notifies. Even
 // focus / reconnect stay out of here — they are DOM concerns the provider owns.
 export type LaneSubscriber = {
-  onAnnounce?: LaneAnnounceSubscription;
   onInvalidate?: LaneSubscription;
+  onInvalidationPending?: LaneInvalidationPendingSubscription;
   onRemove?: LaneRemoveSubscription;
 };
 
@@ -190,7 +191,7 @@ export function createLane(options: LaneOptions = {}): Lane {
       });
     },
     startInvalidationTransition(scope) {
-      announceScope(state, scope);
+      startScopeInvalidationTransition(state, scope);
     },
     invalidate(key, options = {}) {
       const entry = state.entries.get(serializeKey(key));
@@ -748,17 +749,24 @@ function notifyInvalidate(
  * rather than half-applied. Announcing one is the same claim `invalidate` makes
  * and cannot back — the client does not know whether a publication is coming.
  */
-function announceScope(state: LaneState, scope: LaneScope): void {
+function startScopeInvalidationTransition(
+  state: LaneState,
+  scope: LaneScope,
+): void {
   const entries = matchingEntries(state.entries, scope);
 
   assertScopeClientOwned(entries, "startInvalidationTransition");
 
   for (const entry of entries) {
-    const info = entryInfo(entry);
+    notifyInvalidationPending(entry);
+  }
+}
 
-    for (const subscriber of [...entry.subscribers]) {
-      subscriber.onAnnounce?.(info);
-    }
+function notifyInvalidationPending(entry: LaneEntry): void {
+  const info = entryInfo(entry);
+
+  for (const subscriber of [...entry.subscribers]) {
+    subscriber.onInvalidationPending?.(info);
   }
 }
 

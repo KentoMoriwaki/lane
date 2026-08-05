@@ -208,7 +208,7 @@ export function useLane<T, C = T>(
   // announcing scope schedules and cannot commit before that scope does. That is
   // what holds this reader pending for the caller's whole action, and what makes
   // every reader in the announced scope flip in the same tick.
-  const onAnnounce = useEffectEvent(() => {
+  const onInvalidationPending = useEffectEvent(() => {
     startTransition(() => {});
   });
 
@@ -394,8 +394,8 @@ export function useLane<T, C = T>(
     // whose identity is the source's — so it lives in the effect, not behind an
     // event: anything new it comes to read is forced into the deps.
     const unsubscribe = subscribeLane(lane, keyId, sourceKey, {
-      onAnnounce: () => {
-        onAnnounce();
+      onInvalidationPending: () => {
+        onInvalidationPending();
       },
       onInvalidate: (entry, source) => {
         onInvalidate(lane, entry.keyId, entry.key, source);

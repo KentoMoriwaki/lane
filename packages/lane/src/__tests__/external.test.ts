@@ -561,10 +561,13 @@ describe("an external reader", () => {
 
     const fallbacksBeforeReveal = fallbackRenders;
 
-    // The same guarantee the client-owned republish has (see activity.test.ts):
-    // the reveal adopts the seed through the hydration source switch, in the
-    // revealing render, so nothing loading is ever shown. Nothing about the read
-    // paths knows this key is external.
+    // The reveal adopts the seed through the hydration source switch, in the
+    // revealing render, so nothing loading is ever shown. This is where that
+    // guarantee lives: `external` is what makes a reader a consumer of the
+    // publication lineage at all, and a client-owned read of a seeded key
+    // converges through the reveal reconciliation instead (see
+    // activity.test.ts). The read *paths* still know nothing — the loader
+    // decides who is woken, never how the entry is read.
     await act(async () => {
       container.root.render(hydratedExternalApp(lane, second, "visible"));
       await settlePromiseHandlers();

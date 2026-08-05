@@ -25,6 +25,13 @@ const hydrationResources = new WeakMap<
  * the adoption commits with it, in one pass, with no fallback in between. That
  * is what keeps a framework's "fetch, then reveal" intact through Lane.
  *
+ * **Only an external read consumes it.** `useLane` reads it with `use` under a
+ * condition, so a read carrying a client loader never becomes a dependent fiber
+ * and a publication does not re-render it — which is what keeps a boundary that
+ * republishes on every navigation from reaching into reads it has nothing to say
+ * about. The reasoning, and what an over-broad wake-up actually costs an
+ * unsubscribed reader, is at that call site.
+ *
  * The value is a chain rather than the nearest boundary's snapshots, because
  * boundaries nest and a reader's seeds may come from any ancestor: each
  * boundary links its snapshots to the value above it, so the identity a reader

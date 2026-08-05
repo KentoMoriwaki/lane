@@ -454,6 +454,31 @@ All notable changes to `use-lane` are documented here. The format is based on
   longer disagree about whether an update is `isInvalidationPending` or
   `isBackgroundPending`.
 
+- **A republish no longer reaches reads that own their own value.** A
+  `<LaneHydration>` boundary announces a publication to the readers below it
+  through context, which is the only channel that reaches a hidden `<Activity>`
+  subtree — its readers are unsubscribed, so no notification can. Every read
+  observed that announcement, including reads with a client loader, which have no
+  publication to wait for; only `loader: external` does now.
+
+  Being woken for nothing is not free for an *unsubscribed* reader, which is the
+  population this channel exists for. Re-reading the store is a no-op only while
+  the entry still holds what the reader is showing, and two cases break that once
+  a hidden reader has stopped anchoring its entry: `whenStale: "refetch"` sees an
+  idle stale value and discards it, and a value the GC sweep already evicted is
+  re-created by the read-through. Either one started a fetch for a subtree that
+  may never be revealed, at the moment some unrelated boundary happened to
+  republish — in an App Router app, on every navigation.
+
+  A client-owned read of a seeded key still converges, through the channels it
+  shares with `lane.set`: the notification while it is subscribed, and the reveal
+  reconciliation while it is not. What moves is only *when* — a hidden one adopts
+  at its reveal rather than during the offscreen render that carried the payload,
+  so it can suspend for a flush where it previously did not. Reading a published
+  key with `loader: external` keeps the single-commit, no-fallback reveal
+  unchanged; a key the client fetches for itself is one it should not also be
+  seeded with.
+
 ### Changed
 
 - **`"use client"` is now a per-file boundary, so keys and read definitions work

@@ -120,7 +120,7 @@ export function ErrorLab() {
 
   return (
     <main className="mx-auto max-w-4xl space-y-4 px-4 py-10">
-      <h1 className="text-xl font-bold">error-lab</h1>
+      <h1 className="text-xl font-bold">read-lab</h1>
 
       {/* Outside the lane: what the loaders do, how the store is built, and
           what starts a new one. Everything a single read decides is on a card. */}

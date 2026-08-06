@@ -1,14 +1,23 @@
-# Error Lab
+# Read Lab
 
-A bench for **deciding** use-lane's error-handling spec, not for checking the
-one it has. The unit tests (`core-gc.test.ts`, `core-stale-on-error.test.ts`,
-`read-error.test.ts`) own the logic; this app exists to answer "what would this app pattern, with
-these read options, actually do?" while you change both and watch.
+A bench for watching what a read does over its life — failing, waiting, being
+collected, coming back — while you change how the app is written and how the read
+is configured. It exists to **decide** things, not to check what is already
+decided: the unit tests own the logic, and this answers "what would this pattern,
+with these options, actually do?"
 
-It is not activity-lab: no kit, no Timeline, no production-build rule.
+It started as `error-lab`, for [issue #80](https://github.com/KentoMoriwaki/lane/issues/80)'s
+error-handling questions, and outgrew the name. Deciding those questions turned
+out to mean touching retention (`gcTime`, `warmTime`), freshness (`staleTime` and
+the triggers), what a throw takes with it, and what React does to a reader across
+a reveal — which is the same subject seen from four sides: **a read, and the
+entry behind it, over time.**
+
+It is not activity-lab: no kit, no Timeline, no production-build rule. That one
+measures React and Next themselves; this one exercises Lane against them.
 
 ```sh
-pnpm --filter @lane/error-lab dev   # http://localhost:3008
+pnpm --filter @lane/read-lab dev   # http://localhost:3008
 ```
 
 Two rules the rig depends on, both already in the code:

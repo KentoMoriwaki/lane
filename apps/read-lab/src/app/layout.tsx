@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Error Lab",
+  title: "Read Lab",
   description:
-    "A bench for deciding use-lane's error-handling spec by watching what actually happens.",
+    "A bench for watching what a use-lane read does over its life — failing, waiting, being collected, coming back.",
 };
 
 export default function RootLayout({

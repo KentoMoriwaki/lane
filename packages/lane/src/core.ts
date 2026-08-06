@@ -35,6 +35,13 @@ export type LaneInvalidationSource = "background" | "transition";
  */
 export type LaneReadOptions = {
   /**
+   * How long the value is kept for a reader who has not arrived yet, from the
+   * moment it settles. The read is what created an entry nobody is holding, and
+   * the reason it did — a hover prefetch, a render that suspended — is the only
+   * thing that says how long waiting for the first holder is worth it.
+   */
+  warmTime?: number;
+  /**
    * The lane's `loaderMeta`, handed to the loader as `context.meta`. It rides in
    * the read options rather than in the read because it belongs to the lane, not
    * to the definition — which is what keeps a read's arguments to exactly what
@@ -89,6 +96,7 @@ export type LaneSubscriber = {
 type LaneState = {
   entries: Map<string, LaneEntry>;
   gcTime: number;
+  warmTime: number;
   sweepTimer: ReturnType<typeof setTimeout> | undefined;
   /** When {@link sweepTimer} is due, so a nearer deadline can replace it. */
   sweepAt: number | undefined;
@@ -180,6 +188,7 @@ export function createLane(options: LaneOptions = {}): Lane {
     entries: new Map(),
     gcTime: options.gcTime ?? DEFAULT_GC_TIME,
     revisionCounter: 0,
+    warmTime: options.warmTime ?? DEFAULT_WARM_TIME,
     sweepAt: undefined,
     sweepTimer: undefined,
   };
@@ -191,10 +200,11 @@ export function createLane(options: LaneOptions = {}): Lane {
       // (e.g. repeated link hover) dedupes onto the in-flight or settled cache,
       // because a read never discards one.
       //
-      // The read's own options stay out of it: `staleTime` decides when a
-      // *reader* refreshes and `gcTime` how long a value outlives one, and this
-      // is not a reader. A warmed entry is held on the lane's policy until
-      // somebody arrives to hold it.
+      // `staleTime` and `gcTime` stay out of it: they describe a reader — when
+      // one refreshes, and how long a value outlives one — and this is not a
+      // reader. `warmTime` is exactly this call's business: warming a value is
+      // a bet that somebody will come for it, and this is where the bet is
+      // placed.
       if (isExternalLoader(read.loader)) {
         // Rejected by `LaneReadSpec`'s loader type as well; this catches the
         // spec that reached here as `any` or through a cast. Warming an
@@ -210,6 +220,7 @@ export function createLane(options: LaneOptions = {}): Lane {
         // Same precedence as a hook read: the read's own override wins over the
         // value supplied alongside it.
         loaderMeta: read.loaderMeta ?? args[0]?.loaderMeta,
+        warmTime: read.warmTime,
       });
     },
     startInvalidationTransition(scope) {
@@ -416,7 +427,7 @@ export function readOrCreate<T, C = T>(
   const current = entry.lastFulfilled?.value as C | undefined;
   const promise = runLoader(loader, key, controller.signal, options, current);
 
-  return setEntryCache(state, entry, promise, controller);
+  return setEntryCache(state, entry, promise, controller, options);
 }
 
 /**
@@ -683,7 +694,7 @@ function updateLaneEntry<T>(
   );
   // The updater adopts the in-flight result, so the previous controller must
   // stay un-aborted and keeps guarding the chained cache.
-  const updated = setEntryCache(state, entry, valueOrPromise, cache.controller);
+  const updated = setEntryCache(state, entry, valueOrPromise, cache.controller, undefined);
 
   notifyInvalidate(entry, "transition");
 
@@ -710,7 +721,7 @@ function publishEntryValue<T>(
     entry.external ? publicationReason(valueOrPromise) : undefined,
   );
 
-  return setEntryCache(state, entry, valueOrPromise, undefined);
+  return setEntryCache(state, entry, valueOrPromise, undefined, undefined);
 }
 
 function cleanupEntry(state: LaneState, entry: LaneEntry): void {
@@ -860,16 +871,12 @@ function createEntry(state: LaneState, key: LaneKey, keyId: string): LaneEntry {
   return {
     cache: undefined,
     external: false,
-    // Born idle — read but not yet held by anyone: a prefetch, or a render that
-    // suspended and has not committed. On the *lane's* policy, never a read's:
-    // a read's `gcTime` says how long its value outlives *it*, and nobody has
-    // left yet. Charging a warmed entry the arriving reader's deadline would
-    // collect the very value the prefetch exists to hand it, and would abort a
-    // load a suspended reader is still waiting on.
-    //
-    // No timer is armed here; the read path never arms one. An orphan is
-    // reclaimed by whatever sweep the next unsubscribe schedules.
-    evictAt: Date.now() + state.gcTime,
+    // No deadline yet, and none for as long as the read is in flight: an entry
+    // nobody holds is not evidence that nobody is coming, and a load still
+    // running is evidence that somebody might be — a suspended render is exactly
+    // that, and collecting it would abort a read someone is still waiting on.
+    // The clock starts where the wait can be judged: at the settlement.
+    evictAt: undefined,
     key,
     keyId,
     lastFulfilled: undefined,
@@ -899,11 +906,37 @@ function assertScopeClientOwned(
   }
 }
 
+/**
+ * Start the pre-arrival clock on an entry that has just settled with nobody
+ * holding it — a prefetch nobody read, or a render that suspended and unmounted
+ * before it could commit. The two are the same situation: a value was loaded for
+ * a reader who has not arrived, and `warmTime` is how long arriving is still
+ * considered possible.
+ *
+ * Deliberately not `gcTime`. That one answers "somebody had this and left, how
+ * long is it worth keeping for their return" — a different question with no
+ * reason to share an answer, and using it here was reading a memory policy as
+ * evidence about a reader who never came.
+ */
+function startWarmClock(
+  state: LaneState,
+  entry: LaneEntry,
+  options: LaneReadOptions | undefined,
+): void {
+  if (entry.subscribers.size > 0) {
+    return;
+  }
+
+  entry.evictAt = Date.now() + (options?.warmTime ?? state.warmTime);
+  scheduleSweep(state);
+}
+
 function setEntryCache<T>(
   state: LaneState,
   entry: LaneEntry,
   valueOrPromise: LaneValue<T>,
   controller: AbortController | undefined,
+  options: LaneReadOptions | undefined,
 ): Promise<LaneRead<T>> {
   const startedAt = Date.now();
 
@@ -919,6 +952,7 @@ function setEntryCache<T>(
       settlement: { at: startedAt, kind: "fulfilled" },
       startedAt,
     };
+    startWarmClock(state, entry, options);
 
     return settled;
   }
@@ -929,6 +963,14 @@ function setEntryCache<T>(
     promise: undefined as unknown as Promise<unknown>,
     settlement: undefined,
     startedAt,
+  };
+
+  // Every way this read can end goes through here, which is also the one moment
+  // the pre-arrival clock can start: settling is when "nobody is holding this"
+  // stops being ambiguous.
+  const settle = (settlement: LanePromiseSettlement) => {
+    cache.settlement = settlement;
+    startWarmClock(state, entry, options);
   };
 
   /**
@@ -950,7 +992,7 @@ function setEntryCache<T>(
     const fallback = entry.lastFulfilled;
 
     if (!fallback) {
-      cache.settlement = { at: Date.now(), kind: "rejected" };
+      settle({ at: Date.now(), kind: "rejected" });
 
       // Wrapped on the way out, because this is the throw that unmounts the
       // reader: whatever it was holding — the subscription, its `invalidate` —
@@ -962,7 +1004,7 @@ function setEntryCache<T>(
         : new LaneReadError(entry.key, entry.keyId, error);
     }
 
-    cache.settlement = { at: fallback.at, kind: "fulfilled" };
+    settle({ at: fallback.at, kind: "fulfilled" });
 
     // `entry.revision` (via `settledRead`) is the fallback's: the two are
     // written together, and the fallback existing means this entry is
@@ -1001,7 +1043,7 @@ function setEntryCache<T>(
       const at = Date.now();
       const shared = shareWithLastFulfilled(entry, value);
 
-      cache.settlement = { at, kind: "fulfilled" };
+      settle({ at, kind: "fulfilled" });
       rememberFulfilled(state, entry, at, shared);
 
       return settledRead(entry, shared);
@@ -1319,6 +1361,18 @@ function shouldInvalidateEntry(
  * `staleTime: 0` is how you ask for "always stale" and take responsibility for it.
  */
 const DEFAULT_STALE_TIME = Number.POSITIVE_INFINITY;
+
+/**
+ * How long a settled entry nobody holds waits for its first reader.
+ *
+ * Shorter than `gcTime`'s default, and independent of it: this is spent on an
+ * arrival that has not happened, not on a reader who was there and may return.
+ * Both situations it covers are short ones — the seconds between a hover
+ * prefetch and the click, and a render that suspended and went away — so a
+ * minute is generous for either. A prefetch placed further ahead of its reader
+ * than that is a bet the read should state itself.
+ */
+const DEFAULT_WARM_TIME = 60_000;
 
 const warned = new Set<string>();
 

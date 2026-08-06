@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, Suspense, use, type ReactNode } from "react";
-import { useLane } from "use-lane";
+import { LaneReadError, useLane, useLaneInstance } from "use-lane";
 import { Button, Select, Toggle } from "./controls";
 import {
   LAB_KEY_NAMES,
@@ -10,8 +10,6 @@ import {
   type LabWorld,
   type Variation,
 } from "./lane";
-
-export type ResetMode = "clear" | "invalidate" | "remove";
 
 type BoundaryProps = {
   children: ReactNode;
@@ -26,12 +24,6 @@ type BoundaryProps = {
    * reproducing.
    */
   resetKey?: unknown;
-  /**
-   * The store half of a reset, run before the clear. The clear is the
-   * boundary's own and always happens; what an app does *besides* clearing is
-   * the axis — nothing, invalidate the key, or remove it.
-   */
-  onReset: (mode: ResetMode) => void;
 };
 
 type BoundaryState = { error: unknown; resetKey: unknown };
@@ -62,23 +54,13 @@ class Boundary extends Component<BoundaryProps, BoundaryState> {
     return { error: null, resetKey: props.resetKey };
   }
 
-  /**
-   * The reset lives in the fallback, where an app's does: it exists only while
-   * there is something to reset, so it cannot be pressed into an empty
-   * boundary — which matters because two of the three touch the store.
-   *
-   * The store first, then the clear: clearing re-renders the children against
-   * whatever the key holds at that moment, so an operation applied after it
-   * would be applied to a reader that has already read.
-   */
-  reset = (mode: ResetMode) => {
-    this.props.onReset(mode);
+  clear = () => {
     this.setState({ error: null });
   };
 
   render(): ReactNode {
     return this.state.error !== null ? (
-      <ErrorFrame onReset={this.reset} />
+      <ErrorFrame error={this.state.error} clear={this.clear} />
     ) : (
       this.props.children
     );
@@ -131,18 +113,16 @@ function IntegratedPanel({
 function SeparatedPanel({
   world,
   variation,
-  onReset,
 }: {
   world: LabWorld;
   variation: Variation;
-  onReset: (mode: ResetMode) => void;
 }) {
   const { promise, isInvalidationPending, isBackgroundPending } = useLane(
     readOf(world, variation),
   );
 
   return (
-    <Boundary resetKey={promise} onReset={onReset}>
+    <Boundary resetKey={promise}>
       <Suspense fallback={<SkeletonFrame />}>
         <PromiseChild
           promise={promise}
@@ -186,16 +166,6 @@ export function VariationCard({
   onChange: (patch: Partial<Variation>) => void;
   onRemove: () => void;
 }) {
-  const onReset = (mode: ResetMode) => {
-    const key = world.reads[variation.keyName].key;
-
-    if (mode === "invalidate") {
-      world.lane.invalidate(key);
-    } else if (mode === "remove") {
-      world.lane.remove(key);
-    }
-  };
-
   return (
     <div className="space-y-3 rounded border border-zinc-300 bg-white p-3">
       <div className="flex items-center gap-2">
@@ -226,17 +196,13 @@ export function VariationCard({
         variation.pattern === "integrated" ? (
           // The boundary is outside the reader, so the reader's throw unmounts
           // it — subscription and all.
-          <Boundary onReset={onReset}>
+          <Boundary>
             <Suspense fallback={<SkeletonFrame />}>
               <IntegratedPanel world={world} variation={variation} />
             </Suspense>
           </Boundary>
         ) : (
-          <SeparatedPanel
-            world={world}
-            variation={variation}
-            onReset={onReset}
-          />
+          <SeparatedPanel world={world} variation={variation} />
         )
       ) : (
         <UnmountedFrame />
@@ -397,22 +363,37 @@ function SkeletonFrame() {
   );
 }
 
-function ErrorFrame({ onReset }: { onReset: (mode: ResetMode) => void }) {
+/**
+ * One button, and it knows nothing about this card. The failed read threw a
+ * `LaneReadError` carrying its key, and the lane is a context read away — so
+ * the fallback can invalidate what failed without being told what it was
+ * reading. That is the whole recovery: the store first, then the boundary's own
+ * clear, because clearing re-renders the children against whatever the key
+ * holds at that moment.
+ */
+function ErrorFrame({ error, clear }: { error: unknown; clear: () => void }) {
+  const lane = useLaneInstance();
+
   return (
     <Frame state="error" className="border-red-300 bg-red-50">
       <div className="flex items-center gap-4">
-        <span className="text-3xl leading-none text-red-400">&#10005;</span>
-        <div className="flex flex-col items-stretch gap-1">
-          <Button small onClick={() => onReset("clear")}>
-            Reset
-          </Button>
-          <Button small onClick={() => onReset("invalidate")}>
-            Reset(Invalidate)
-          </Button>
-          <Button small onClick={() => onReset("remove")}>
-            Reset(Remove)
-          </Button>
-        </div>
+        <span
+          title={String(error)}
+          className="text-3xl leading-none text-red-400"
+        >
+          &#10005;
+        </span>
+        <Button
+          onClick={() => {
+            if (error instanceof LaneReadError) {
+              lane.invalidate(error.key);
+            }
+
+            clear();
+          }}
+        >
+          Retry
+        </Button>
       </div>
     </Frame>
   );

@@ -69,14 +69,16 @@ the store is built; nothing a single read decides:
   because it cannot be provoked by hand.
 - **mounted** — whether this reader is on screen, which is also whether it is
   one of the key's subscribers.
-- **Reset / Reset(Invalidate) / Reset(Remove)**, inside the error frame — what
-  the app does about an error it caught, where an app would put it: in the
-  fallback, so it exists only while there is something to reset. All three clear
-  the boundary; two touch the store first. That is the `onReset` axis, as three
-  buttons rather than a mode to arm.
+- **Retry**, inside the error frame — where an app would put it: in the
+  fallback, so it exists only while there is something to reset. It is wired to
+  nothing on this card. The failed read threw a `LaneReadError` carrying its
+  key, and the lane is a context read away, so the fallback invalidates what
+  failed without being told what it was reading. Store first, then the
+  boundary's own clear.
 
 `refreshError` is rendered inline: the frame turns amber and keeps its value,
-with the error on the ⚠ as a tooltip. The two pending flags are the frame's
+with the error on the ⚠ as a tooltip — and unwrapped, because a reader still
+holding its own `invalidate` has nothing to be carried. The two pending flags are the frame's
 edges — explicit on top, background underneath. `separated` always hands the
 boundary `resetKey={promise}`; there is no knob for leaving it off, because
 that is a bug in an app rather than an arrangement worth reproducing.
@@ -86,7 +88,7 @@ while running it (the frames, and the counters):
 
 1. Land on the page (failure = never) — that is the positive control.
 2. failure = always, then **Remove** on that card's key.
-3. **Reset**, then **Reset(Invalidate)**, then **Reset(Remove)**.
+3. **Retry**.
 4. Add a second card on the same key, one integrated and one separated, and run
    2–3 again with both up.
 5. Uncheck **mounted** on one of them and run it again.

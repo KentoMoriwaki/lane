@@ -162,11 +162,15 @@ describe("cross-reader consistency", () => {
       expect(tornFrames(frames)).toEqual([]);
       // What the reader that read v2 actually showed in the meantime was its
       // fallback — a loading state beside a stale value, never a second value.
-      expect(frames.list).toEqual([
-        "[A=v1]B:loading",
-        "[A=v2]B:loading",
-        "[A=v2][B=v2]",
-      ]);
+      //
+      // Two frames rather than three, and that is the reconciliation being the
+      // *only* correction A schedules. It used to be followed by a passive
+      // catch-up that re-read the store and set the same promise again at
+      // transition priority, which gave A's root a second lane and a retry of
+      // its own: A came back from its fallback one commit ahead of B's first
+      // paint. With the subscription opened in the layout phase there is nothing
+      // left for that catch-up to find, and the two boundaries wake together.
+      expect(frames.list).toEqual(["[A=v1]B:loading", "[A=v2][B=v2]"]);
     });
 
     it("does not tear when the transition only waits on its own key", async () => {
@@ -359,12 +363,15 @@ describe("cross-reader consistency", () => {
   });
 
   describe("pending flags", () => {
-    it("joins the transition of the notification it missed", async () => {
-      // Effects run in tree order, so `Invalidate` fires between B subscribing
-      // and A subscribing. B is notified and enters its explicit transition; A
-      // committed on the previous promise and only discovers the change when it
-      // subscribes, a moment later. Both are converging on the same update, so
-      // both must report the same pending flag.
+    it("joins the transition of the notification, whenever it arrives", async () => {
+      // `Invalidate` fires from a mount effect placed between the two readers,
+      // so it lands after one of them has finished mounting and while the other
+      // still has passive effects to run. Both are subscribed by then — that
+      // happens in the layout phase — so both are notified directly and converge
+      // on the same update, which means both must report the same pending flag.
+      // A reader that had to work out afterwards *that* something changed could
+      // only guess at *which* transition asked for it, and would report the
+      // background flag against its sibling's explicit one.
       const lane = createLane({ gcTime: Infinity });
       const reload = deferred<string>();
       const loader = vi.fn(() => reload.promise);
@@ -391,7 +398,7 @@ describe("cross-reader consistency", () => {
       );
       await settle(app);
 
-      // A caught up through the same explicit transition, not the background one.
+      // Both are in the same explicit transition, not one of each.
       expect(text(app)).toBe("[B=v1:t1b0][A=v1:t1b0]");
 
       await act(async () => {
@@ -405,6 +412,8 @@ describe("cross-reader consistency", () => {
     });
 
     it("stays in the background for a background notification", async () => {
+      // The same shape with the other source — a background refresh must not be
+      // promoted into the flag a user action raises.
       const lane = createLane({ gcTime: Infinity });
       const reload = deferred<string>();
       const loader = vi.fn(() => reload.promise);
@@ -438,6 +447,51 @@ describe("cross-reader consistency", () => {
       await settle(app);
 
       expect(text(app)).toBe("[B=v2:t0b0][A=v2:t0b0]");
+    });
+
+    it("receives a notification landing in its own commit's layout phase", async () => {
+      // The window a reader used to be blind in: after its reconciliation has
+      // read the store and before its passive effects run. `LayoutInvalidate`
+      // sits in it by construction — a layout effect ordered after the mounting
+      // reader's — and nothing the store keeps afterwards says which transition
+      // that invalidation asked for. A is subscribed one line before it fires,
+      // so it takes the notification in the same tick as B, which mounted a
+      // commit ago. Agreement here is the notification having been received
+      // rather than reconstructed.
+      const lane = createLane({ gcTime: Infinity });
+      const reload = deferred<string>();
+      const loader = vi.fn(() => reload.promise);
+      lane.set(KEY, "v1");
+
+      const frames = newFrames();
+      const app = await render(frames, () =>
+        el(LaneProvider, { lane }, boundary("boot", [
+          el(Reader, { id: "B", frames, flags: true, loader, key: "B" }),
+        ])),
+      );
+      await settle(app);
+      expect(text(app)).toBe("[B=v1:t0b0]");
+
+      await rerender(app, () =>
+        el(LaneProvider, { lane }, boundary("boot", [
+          el(Reader, { id: "B", frames, flags: true, loader, key: "B" }),
+          el(Reader, { id: "A", frames, flags: true, loader, key: "A" }),
+          el(LayoutInvalidate, { lane, key: "inv" }),
+        ])),
+      );
+      await settle(app);
+
+      expect(text(app)).toBe("[B=v1:t1b0][A=v1:t1b0]");
+      expect(loader).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        reload.resolve("v2");
+        await settlePromiseHandlers();
+      });
+      await settle(app);
+
+      expect(text(app)).toBe("[B=v2:t0b0][A=v2:t0b0]");
+      expect(tornFrames(frames)).toEqual([]);
     });
   });
 
@@ -658,11 +712,21 @@ function Reader({
 }
 
 // Invalidates KEY once, from a mount effect. Placed between two readers so it
-// runs after the first has subscribed and before the second has.
+// runs after the first has gone live and before the second has.
 function Invalidate({ lane, background = false }: { lane: Lane; background?: boolean }) {
   React.useEffect(() => {
     lane.invalidate(KEY, background ? { background: true } : undefined);
   }, [lane, background]);
+
+  return null;
+}
+
+// The same, from a mount *layout* effect. Placed after a mounting reader, it
+// fires inside that reader's own commit — subscribed already, but only just.
+function LayoutInvalidate({ lane }: { lane: Lane }) {
+  React.useLayoutEffect(() => {
+    lane.invalidate(KEY);
+  }, [lane]);
 
   return null;
 }
@@ -855,6 +919,18 @@ async function render(
   });
 
   return { container, root };
+}
+
+// Re-renders an existing root, for the tests that need a reader to mount into a
+// commit some *other* reader is already subscribed in.
+async function rerender(
+  app: App,
+  build: () => React.ReactElement,
+): Promise<void> {
+  await act(async () => {
+    app.root.render(build());
+    await settlePromiseHandlers();
+  });
 }
 
 function unmount(app: App): void {

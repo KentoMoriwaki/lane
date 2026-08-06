@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { latestNotifySource } from "../core";
 import { readOrCreate } from "./test-utils";
 import { hydrateMany } from "../hydrate";
 import { createLane, LaneOwnershipError } from "../index";
@@ -508,23 +507,9 @@ describe("conditional invalidation", () => {
 // the focus/reconnect cases in react-integration.test.ts); the store has no
 // notion of them. Its role here is the conditional invalidation each reader
 // fires — covered by the "conditional invalidation" suite above.
-
-describe("latestNotifySource", () => {
-  it("records the source of the last notification for a key", () => {
-    const lane = createLane();
-
-    // Never notified — a reader catching up here has nothing user-driven to join.
-    lane.set(["tasks"], "cached");
-    expect(latestNotifySource(lane, serializeKey(["other"]))).toBeUndefined();
-
-    // `set` publishes through the explicit transition.
-    expect(latestNotifySource(lane, serializeKey(["tasks"]))).toBe("transition");
-
-    subscribeInvalidate(lane, ["tasks"], () => {});
-    lane.invalidate(["tasks"], { background: true });
-    expect(latestNotifySource(lane, serializeKey(["tasks"]))).toBe("background");
-
-    lane.invalidate(["tasks"]);
-    expect(latestNotifySource(lane, serializeKey(["tasks"]))).toBe("transition");
-  });
-});
+//
+// The store likewise records nothing about *which* transition a notification
+// carried. It used to — a reader that subscribed after one had gone out read the
+// source back off the entry — but a reader now subscribes in the layout phase
+// and receives the notification itself, so the only place that fact lives is the
+// call. The reader-side half is pinned in tearing.test.ts ("pending flags").

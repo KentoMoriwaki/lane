@@ -6,13 +6,13 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useRef,
   useState,
   useTransition,
 } from "react";
 import {
   invalidateEntry,
   invalidationSource,
-  latestNotifySource,
   peekEntryPromise,
   readOrCreate,
   subscribeLane,
@@ -50,6 +50,25 @@ import type {
 type LaneAnyReadSpec<T, C> = LaneUseOptions & {
   key: LaneKey;
   loader: LaneLoader<T, C> | undefined;
+};
+
+/**
+ * A reader's subscription, opened in the layout phase of a commit and closed in
+ * the passive phase of the one that ends it. The two halves live in different
+ * effects, so the handle is what carries one to the other; `lane` and `keyId`
+ * are what let the opening half recognise a subscription it already owns.
+ *
+ * The asymmetry is the design, and each half is argued at its own site below.
+ * Opening in the layout phase puts the subscription immediately after the
+ * reconciliation that reads the store, with nothing between them, so no store
+ * change can reach neither channel. Closing in the passive phase keeps the
+ * subscription alive across a re-suspension, which tears down layout effects and
+ * leaves passive ones mounted.
+ */
+type LaneReaderSubscription = {
+  close: () => void;
+  keyId: string;
+  lane: Lane;
 };
 
 /**
@@ -140,8 +159,8 @@ export function useLane<T, C = T>(
   // store holds by then — which is how a reader switching keys converges on a
   // write it was never notified of (it is still subscribed to the old key). A ref
   // would survive the discarded render and leave the branch already satisfied, so
-  // the retry would commit the *previous* key's promise and wait for the
-  // post-subscribe catch-up to repair it.
+  // the retry would commit the *previous* key's promise and wait for a
+  // notification on the new key to repair it.
   //
   // `key` rides along as the key object of record for the current source: it is
   // replaced only when the source switches, so its identity follows `keyId` —
@@ -258,58 +277,6 @@ export function useLane<T, C = T>(
     startTransition(() => {});
   });
 
-  // The last link in the chain of checks, and the only one that can close its
-  // window. Renders re-read the store on every attempt (initializer, source
-  // switch), the layout reconciliation checks again inside the commit — but
-  // the subscription only starts in this passive effect, and a store change
-  // landing between that reconciliation and this subscribe (a timer, a socket,
-  // another component's effect) reaches neither: the checks are over and the
-  // notifications have not begun. A visible reader that misses it has no
-  // re-appearance coming to reconcile it, so however narrow the window, the
-  // failure mode is rendering an abandoned promise forever.
-  //
-  // This is the notification channel's completeness patch, not the reveal's —
-  // the reader is a continued appearance, so the correction impersonates the
-  // notification it missed, transition semantics included. Hidden-reveal and
-  // republish convergence, which once ran through here, belong to the layout
-  // reconciliation and the hydration source switch above.
-  const syncAfterSubscribe = useEffectEvent((
-    targetLane: Lane,
-    targetKeyId: string,
-    targetKey: LaneKey,
-  ) => {
-    if (loader === undefined) {
-      return;
-    }
-
-    const nextPromise = readOrCreate(
-      targetLane,
-      targetKeyId,
-      targetKey,
-      loader,
-      readOptions,
-    );
-
-    if (nextPromise === promise) {
-      return;
-    }
-
-    const apply = () => {
-      setPromise(nextPromise);
-    };
-
-    // Converge through the same kind of transition as the notification this
-    // reader was not subscribed in time to receive, so siblings of one key agree
-    // on which pending flag the update sets. Nothing recorded means nothing
-    // user-driven to join: stay in the background.
-    if (latestNotifySource(targetLane, targetKeyId) === "transition") {
-      startTransition(apply);
-      return;
-    }
-
-    startBackgroundTransition(apply);
-  });
-
   const refetchOnMount = useEffectEvent(
     (targetLane: Lane, targetKeyId: string) => {
       const invalidateOptions = revalidateOptions(
@@ -403,10 +370,27 @@ export function useLane<T, C = T>(
     }
   });
 
-  // The effect depends on — and hands the event — the read's full identity:
-  // `lane`, the canonical `keyId`, and `sourceKey`, whose object identity
-  // follows it. The event exists only for what must *not* be reactive here
-  // (`promise`, `loader`, `readOptions`).
+  // Both halves of the subscription depend on — and hand the events — the read's
+  // full identity: `lane`, the canonical `keyId`, and `sourceKey`, whose object
+  // identity follows it. The events exist only for what must *not* be reactive
+  // here (`promise`, `loader`, `readOptions`).
+  const subscriptionRef = useRef<LaneReaderSubscription | undefined>(undefined);
+
+  // The reconciliation and the *opening* half of the subscription, in that order
+  // and with nothing between them. That adjacency is the point: renders re-read
+  // the store on every attempt (initializer, source switch), this reconciles
+  // once more inside the commit, and the subscription starts in the same
+  // synchronous breath — so a store change lands either before the re-read,
+  // where the reconciliation sees it, or after the subscribe, where a
+  // notification carries it. There is no third place. A visible reader that fell
+  // into one would have no re-appearance coming to repair it, so however narrow
+  // the window, the failure mode it removes is rendering an abandoned promise
+  // forever.
+  //
+  // Reconciling first is what keeps the two from overlapping: the store read
+  // that decides the first revealed frame happens while this reader is still
+  // outside the subscriber set, so nothing it starts there can arrive as a
+  // notification to itself.
   useLayoutEffect(() => {
     if (!enabled) {
       return;
@@ -416,30 +400,34 @@ export function useLane<T, C = T>(
     // above.
     // oxlint-disable-next-line react/react-compiler
     reconcileOnReveal(lane, keyId, sourceKey);
-  }, [enabled, lane, keyId, sourceKey]);
 
-  // Deliberately a *passive* effect. A boundary that re-suspends hides the
-  // subtree it had already committed and tears down its layout effects while
-  // leaving passive ones mounted, so a passive subscription keeps receiving
-  // notifications for as long as the fallback is up. Re-hydration is built on
-  // exactly that: `LaneHydration` suspends and publishes from a macrotask rather
-  // than from an effect (see `hydration.ts`), which reaches already-mounted
-  // readers only because hiding them did not unsubscribe them. Moving this to
-  // `useLayoutEffect` would silently sever that. The layout reconciliation
-  // above is the counterpart for what passive timing cannot cover — the first
-  // frame of a reveal — and carries no subscription of its own.
-  useEffect(() => {
-    // A disabled read owns no entry: no subscription, no GC anchor, no
-    // revalidation. The effect re-runs when `enabled` flips and subscribes then.
-    // The subscription is pure notify + GC; option changes never re-run it.
-    if (!enabled) {
+    const open = subscriptionRef.current;
+
+    // A re-suspension re-creates layout effects over a subscription the passive
+    // half never closed. Same lane, same key, still in the store's subscriber
+    // set: there is nothing to open, and opening a second one would leave the
+    // first with nobody holding its close.
+    if (open && open.lane === lane && open.keyId === keyId) {
       return;
     }
 
+    // Live from here, including for a notification that lands while React is
+    // still flushing this commit's layout effects. Neither of the two updates a
+    // notification schedules changes priority with the phase it is scheduled
+    // from: the pending flag is an optimistic update React pins to the sync lane
+    // and entangles with the transition through its revert lane, and the promise
+    // rides that transition. All the phase decides is *when* that sync work
+    // flushes — before this commit's paint rather than after the next one — and
+    // an `invalidate` fired from a layout effect is a deliberate choice of phase
+    // by its caller. Holding it back until this reader's own passive effect
+    // would defer it to a phase nobody asked for, and would not even be
+    // consistent: a sibling of this key that mounted a commit earlier is already
+    // live and takes the same notification here regardless.
+    //
     // The subscription is plainly reactive — `sourceKey` is the key object
     // whose identity is the source's — so it lives in the effect, not behind an
     // event: anything new it comes to read is forced into the deps.
-    const unsubscribe = subscribeLane(lane, keyId, sourceKey, {
+    const close = subscribeLane(lane, keyId, sourceKey, {
       onInvalidationPending: () => {
         onInvalidationPending();
       },
@@ -451,9 +439,51 @@ export function useLane<T, C = T>(
       },
     });
 
-    syncAfterSubscribe(lane, keyId, sourceKey);
+    // oxlint-disable-next-line react/react-compiler
+    subscriptionRef.current = { close, keyId, lane };
+  }, [enabled, lane, keyId, sourceKey]);
 
-    return unsubscribe;
+  // The *closing* half, and nothing else — deliberately passive. A boundary that
+  // re-suspends hides the subtree it had already committed and tears down its
+  // layout effects while leaving passive ones mounted, so a subscription closed
+  // from here survives for as long as the fallback is up. Re-hydration is built
+  // on exactly that: `LaneHydration` suspends and publishes from a macrotask
+  // rather than from an effect (see `hydration.ts`), which reaches
+  // already-mounted readers only because hiding them did not unsubscribe them.
+  // Closing from the layout half would silently sever that.
+  //
+  // So the pair is asymmetric on purpose: opening early is what makes the
+  // notification channel complete, closing late is what keeps it alive through a
+  // fallback, and this effect exists for the cleanup alone.
+  useEffect(() => {
+    // A disabled read owns no entry: no subscription, no GC anchor, no
+    // revalidation. Both halves re-run when `enabled` flips and subscribe then.
+    // The subscription is pure notify + GC; option changes never re-run it.
+    if (!enabled) {
+      return;
+    }
+
+    const subscription = subscriptionRef.current;
+
+    // Always there — layout effects run before passive ones in the same commit
+    // and these two carry the same deps, so the half above has just written it.
+    // The check is the type's, not a case.
+    if (!subscription) {
+      return;
+    }
+
+    return () => {
+      subscription.close();
+
+      // Only if it is still the current one. A source switch runs the opening
+      // half for the *new* key before this cleanup runs for the old one, so the
+      // handle is captured rather than re-read, and the ref is left alone unless
+      // this is the subscription it still names.
+      if (subscriptionRef.current === subscription) {
+        // oxlint-disable-next-line react/react-compiler
+        subscriptionRef.current = undefined;
+      }
+    };
   }, [enabled, lane, keyId, sourceKey]);
 
   useEffect(() => {

@@ -22,10 +22,15 @@ notifies every subscriber synchronously, in one tick, so their transitions share
 React's per-event transition lane and land together. No frame shows them
 disagreeing.
 
-**Readers of one key agree on which pending flag is set.** A reader that
-subscribes a moment too late to receive a notification still converges through
-the same kind of transition it missed, so it reports `isInvalidationPending` or
-`isBackgroundPending` to match its siblings rather than always the latter.
+**Readers of one key agree on which pending flag is set.** A reader subscribes
+in the layout phase of the commit that mounts it — on the line after the
+reconciliation that reads the store — so there is no window in which a change
+reaches neither channel, and every reader of a key learns about an update from
+the notification itself rather than by noticing afterwards that the store moved.
+Which transition an update converges through is something only the notification
+knows, so a reader that had to work it out after the fact could report
+`isBackgroundPending` where its siblings report `isInvalidationPending`. None of
+them has to.
 
 **An uncommitted mount is never pinned to a superseded promise.** A suspended
 fiber has not committed, so React re-runs its `useState` initializer on every

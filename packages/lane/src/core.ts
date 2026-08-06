@@ -131,12 +131,6 @@ type LaneEntry = {
   // last unsubscribe; cleared while subscribed). The central GC sweep evicts
   // entries idle for longer than the lane's gcTime.
   idleSince: number | undefined;
-  // The source of the most recent notification for this key. A reader that
-  // subscribes after one has already gone out has no notification to read the
-  // source from, so it reads it here and converges through the matching
-  // transition — otherwise siblings of one key disagree about which pending flag
-  // is set for the same update.
-  lastNotifySource: LaneInvalidationSource | undefined;
   /**
    * The identity of the content this entry currently holds — advanced (from the
    * lane-wide counter) exactly when a fulfillment's value is a *new reference*,
@@ -608,19 +602,6 @@ export function peekEntryPromise(
   return entry && cache ? cachedPromise(entry, cache) : undefined;
 }
 
-/**
- * The source of the last notification for a key, for a reader catching up on one
- * it was not subscribed in time to receive. `undefined` when the key has never
- * been notified — or no longer exists — in which case the reader has no reason
- * to treat its catch-up as user-driven.
- */
-export function latestNotifySource(
-  lane: Lane,
-  keyId: string,
-): LaneInvalidationSource | undefined {
-  return getLaneState(lane).entries.get(keyId)?.lastNotifySource;
-}
-
 export function onInvalidate(
   lane: Lane,
   key: LaneKey,
@@ -781,8 +762,6 @@ function notifyInvalidate(
 ): void {
   const info = entryInfo(entry);
 
-  entry.lastNotifySource = source;
-
   for (const subscriber of [...entry.subscribers]) {
     subscriber.onInvalidate?.(info, source);
   }
@@ -795,11 +774,6 @@ function notifyInvalidate(
  * caller has not changed yet, which is the pre-mutation data. So this schedules
  * no work and answers no question about the entry — it only reaches subscribers,
  * and what they do with it is open their transition.
- *
- * `lastNotifySource` is deliberately left alone. It records what a reader that
- * subscribes late should join, and an announcement is not something to catch up
- * *to*: by the time such a reader arrives the window has either closed or the
- * real invalidation is on its way, and both of those set it themselves.
  *
  * Checked over the whole match before anything is announced, for the reason
  * `updateAll` is: a scope that happens to reach a published key is refused
@@ -925,7 +899,6 @@ function createEntry(
     cache: undefined,
     external: false,
     idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
-    lastNotifySource: undefined,
     key,
     keyId,
     lastFulfilled: undefined,

@@ -56,9 +56,8 @@ export class LaneExternalTimeoutError extends Error {
  *
  * **It is a real loader, and that is the design.** The alternative — a second
  * read function, or a flag every read path has to test — would put a branch in
- * `useLane`'s `useState` initializer, its source switch, its reveal
- * reconciliation, and its subscribe catch-up, all to express something the loader
- * slot already says. So the slot carries three values instead: a function is
+ * `useLane`'s `useState` initializer, its source switch, and its reveal
+ * reconciliation, all to express something the loader slot already says. So the slot carries three values instead: a function is
  * client-owned, `external` is published from outside, `undefined` is disabled.
  * Every read path stays one unconditional `readOrCreate`.
  *

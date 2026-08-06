@@ -13,7 +13,7 @@ const hydrationResources = new WeakMap<
 /**
  * The lineage of publications this subtree was last rendered under.
  *
- * Notification reaches every reader whose passive subscription is alive, but a
+ * Notification reaches every reader whose subscription is alive, but a
  * hidden `<Activity>` has none — and a revisit that re-streams a payload is
  * exactly a republish aimed at such a tree. The context is the render-carried
  * copy of that announcement: `useLane` keeps the value it rendered under in

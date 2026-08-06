@@ -1,14 +1,16 @@
 "use client";
 
-import { Component, Suspense, use, type ReactNode } from "react";
+import { Component, Suspense, use, useState, type ReactNode } from "react";
 import { LaneReadError, useLane, useLaneInstance } from "use-lane";
 import { Button, Select, Toggle } from "./controls";
 import {
   LAB_KEY_NAMES,
   READ_GC_TIMES,
   STALE_TIMES,
+  WARM_TIMES,
   type LabRead,
   type LabWorld,
+  type RefreshErrorMode,
   type Variation,
 } from "./lane";
 
@@ -73,6 +75,7 @@ function readOf(world: LabWorld, variation: Variation): LabRead {
   return {
     ...world.reads[variation.keyName],
     gcTime: READ_GC_TIMES[variation.gcTime],
+    warmTime: WARM_TIMES[variation.warmTime],
     staleTime: STALE_TIMES[variation.staleTime],
     refetchOnMount: variation.refetchOnMount,
     refetchOnFocus: variation.refetchOnFocus,
@@ -100,6 +103,7 @@ function IntegratedPanel({
     <DataFrame
       value={data}
       refreshError={refreshError}
+      mode={variation.refreshError}
       invalidationPending={isInvalidationPending}
       backgroundPending={isBackgroundPending}
     />
@@ -127,6 +131,7 @@ function SeparatedPanel({
       <Suspense fallback={<SkeletonFrame />}>
         <PromiseChild
           promise={promise}
+          mode={variation.refreshError}
           invalidationPending={isInvalidationPending}
           backgroundPending={isBackgroundPending}
         />
@@ -137,10 +142,12 @@ function SeparatedPanel({
 
 function PromiseChild({
   promise,
+  mode,
   invalidationPending,
   backgroundPending,
 }: {
   promise: Promise<{ data: string; refreshError?: unknown }>;
+  mode: RefreshErrorMode;
   invalidationPending: boolean;
   backgroundPending: boolean;
 }) {
@@ -150,6 +157,7 @@ function PromiseChild({
     <DataFrame
       value={data}
       refreshError={refreshError}
+      mode={mode}
       invalidationPending={invalidationPending}
       backgroundPending={backgroundPending}
     />
@@ -217,10 +225,22 @@ export function VariationCard({
           onChange={(gcTime) => onChange({ gcTime })}
         />
         <Select
+          label="warmTime"
+          options={["lane", "0", "3s"] as const}
+          value={variation.warmTime}
+          onChange={(warmTime) => onChange({ warmTime })}
+        />
+        <Select
           label="staleTime"
           options={["none", "0", "5s"] as const}
           value={variation.staleTime}
           onChange={(staleTime) => onChange({ staleTime })}
+        />
+        <Select
+          label="refreshError"
+          options={["inline", "throw"] as const}
+          value={variation.refreshError}
+          onChange={(refreshError) => onChange({ refreshError })}
         />
         <Toggle
           small
@@ -312,14 +332,23 @@ function PendingEdges({
 function DataFrame({
   value,
   refreshError,
+  mode,
   invalidationPending,
   backgroundPending,
 }: {
   value: string;
   refreshError: unknown;
+  mode: RefreshErrorMode;
   invalidationPending: boolean;
   backgroundPending: boolean;
 }) {
+  // Thrown from the component that renders the data, which is where an app
+  // would do it — and the whole difference is what goes with it. Everything
+  // below this line, the input included, is replaced by the fallback.
+  if (refreshError !== undefined && mode === "throw") {
+    throw refreshError;
+  }
+
   const stale = refreshError !== undefined;
 
   return (
@@ -334,20 +363,42 @@ function DataFrame({
         invalidation={invalidationPending}
         background={backgroundPending}
       />
-      <span className="flex items-center gap-3">
-        {stale ? (
-          <span
-            title={String(refreshError)}
-            className="text-2xl leading-none text-amber-500"
-          >
-            &#9888;
+      <div className="flex flex-col items-center gap-2">
+        <span className="flex items-center gap-3">
+          {stale ? (
+            <span
+              title={String(refreshError)}
+              className="text-2xl leading-none text-amber-500"
+            >
+              &#9888;
+            </span>
+          ) : null}
+          <span data-value={value} className="font-mono text-3xl text-zinc-900">
+            {value}
           </span>
-        ) : null}
-        <span data-value={value} className="font-mono text-3xl text-zinc-900">
-          {value}
         </span>
-      </span>
+        <LocalState />
+      </div>
     </Frame>
+  );
+}
+
+/**
+ * State that belongs to the subtree and to nothing else — type into it and it is
+ * whatever the app would have had here: a half-filled form, a scroll position, an
+ * open menu. Anything that unmounts this subtree takes it, which is what makes
+ * the `refreshError: throw` axis cost something visible.
+ */
+function LocalState() {
+  const [text, setText] = useState("");
+
+  return (
+    <input
+      value={text}
+      onChange={(event) => setText(event.target.value)}
+      placeholder="local state"
+      className="w-40 rounded border border-zinc-200 px-2 py-0.5 text-center text-xs"
+    />
   );
 }
 

@@ -60,6 +60,30 @@ export const READ_GC_TIMES: Record<ReadGcTimeSetting, number | undefined> = {
   "5s": 5_000,
 };
 
+/**
+ * How long this card's value waits for a reader who never arrived — a card left
+ * unmounted while its load was in flight. Short values are what make it
+ * watchable at all; the lane's default is a minute.
+ */
+export type WarmTimeSetting = "lane" | "0" | "3s";
+
+export const WARM_TIMES: Record<WarmTimeSetting, number | undefined> = {
+  lane: undefined,
+  "0": 0,
+  "3s": 3_000,
+};
+
+/**
+ * What the card does with a `refreshError` — the field a failed refresh over
+ * existing data comes back in.
+ *
+ * - `inline`: render the data *and* the error, which is what the docs ask for.
+ * - `throw`: hand it to the boundary, losing the subtree. The axis exists to
+ *   put a price on that, so the frame carries a text input: whatever is typed
+ *   into it is the local state a throw destroys.
+ */
+export type RefreshErrorMode = "inline" | "throw";
+
 /** Two keys, so that "somebody else is reading this" is a thing you can arrange. */
 export type LabKeyName = "A" | "B";
 
@@ -93,6 +117,9 @@ export type Variation = {
   mounted: boolean;
   /** What a remount of this card is served: what it left, or a fresh load. */
   gcTime: ReadGcTimeSetting;
+  /** How long its value waits for it if it never arrives. */
+  warmTime: WarmTimeSetting;
+  refreshError: RefreshErrorMode;
   staleTime: StaleTimeSetting;
   /**
    * The revalidation triggers, a different mechanism from the two above: those
@@ -116,6 +143,8 @@ export function createVariation(patch: Partial<Variation> = {}): Variation {
     keyName: "A",
     mounted: true,
     gcTime: "lane",
+    warmTime: "lane",
+    refreshError: "inline",
     staleTime: "none",
     refetchOnMount: false,
     refetchOnFocus: false,

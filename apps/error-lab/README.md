@@ -64,16 +64,21 @@ the store is built; nothing a single read decides:
   comparison this lab was built for.
 - **key A | B** — which key this card reads. Two cards on the same key are two
   subscribers of it.
-- **gcTime / staleTime / onMount / onFocus** — this card's read options, and
-  the two halves of freshness. `gcTime` is what this card's value is worth once
-  this card stops holding it: `0` makes every remount a fresh load (which
-  suspends, because the entry is gone), `lane` defers to the instance policy
-  above. `staleTime` plus the triggers is the other half — refreshing what a
-  mounted reader is showing, underneath it, from an effect. `none` is an absent
-  `staleTime`, which is `Infinity`, so the triggers are on and silent and
-  development says so. Focus fires on a tab switch, throttled to 5s by the
-  provider; `refetchOnReconnect` is left out because it cannot be provoked by
-  hand.
+- **gcTime / warmTime / staleTime / onMount / onFocus** — this card's read
+  options. `gcTime` is what its value is worth once *it* stops holding it: `0`
+  makes every remount a fresh load (which suspends, because the entry is gone).
+  `warmTime` is the other side of the same coin — how long the value waits for a
+  reader who never arrived, which is what an unmount *during* the load leaves
+  behind. `lane` defers to the instance policy for either. `staleTime` plus the
+  triggers is freshness while a reader is mounted: refreshing what is on screen,
+  underneath it, from an effect. `none` is an absent `staleTime`, which is
+  `Infinity`, so the triggers are on and silent and development says so. Focus
+  fires on a tab switch, throttled to 5s by the provider; `refetchOnReconnect` is
+  left out because it cannot be provoked by hand.
+- **refreshError: inline | throw** — what the card does with a failed refresh
+  over data it is still showing. `inline` renders both. `throw` hands it to the
+  boundary. The frame carries a text input for this axis: whatever is typed into
+  it is the local state a throw destroys.
 - **mounted** — whether this reader is on screen, which is also whether it is
   one of the key's subscribers.
 - **Retry**, inside the error frame — where an app would put it: in the
@@ -83,9 +88,10 @@ the store is built; nothing a single read decides:
   failed without being told what it was reading. Store first, then the
   boundary's own clear.
 
-`refreshError` is rendered inline: the frame turns amber and keeps its value,
-with the error on the ⚠ as a tooltip — and unwrapped, because a reader still
-holding its own `invalidate` has nothing to be carried. The two pending flags
+`refreshError` arrives unwrapped, because a reader still holding its own
+`invalidate` has nothing to be carried. Rendered inline it turns the frame amber
+and keeps the value, with the error on the ⚠ as a tooltip; thrown, it reaches the
+boundary as the loader left it — an error with no key on it. The two pending flags
 are the frame's edges — explicit on top, background underneath. `separated` always hands the
 boundary `resetKey={promise}`; there is no knob for leaving it off, because
 that is a bug in an app rather than an arrangement worth reproducing.
@@ -100,6 +106,15 @@ while running it (the frames, and the counters):
    2–3 again with both up.
 5. Uncheck **mounted** on one of them and run it again.
 6. **Reload** to start over — the switches and the cards stay where you put them.
+
+And for what a thrown `refreshError` costs (Q3):
+
+1. failure = never, and let a card reach its value.
+2. Type something into the frame's input.
+3. failure = always, then **Invalidate** on that card's key — watch the input.
+4. Set that card's **refreshError** to `throw` and do 1–3 again.
+5. With it thrown, try to get back: **Retry**, then the key's **Invalidate**,
+   then **Remove**.
 
 That is Q1 and the front of Q2 in
 [issue #80](https://github.com/KentoMoriwaki/lane/issues/80): *is a Reset that

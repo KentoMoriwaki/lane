@@ -218,7 +218,7 @@ describe("Activity", () => {
     expect(app.container.textContent).toBe("v2|background:0|transition:0");
   });
 
-  it('discards a stale value on reveal under whenStale: "refetch"', async () => {
+  it("re-reads on reveal when the value's gcTime ran out while hidden", async () => {
     vi.useFakeTimers();
 
     const lane = createLane();
@@ -228,7 +228,7 @@ describe("Activity", () => {
       lane,
       loader: loads.loader,
       mode: "visible",
-      options: { staleTime: 10, whenStale: "refetch" },
+      options: { gcTime: 10 },
     });
     loads.resolveLast("v1");
     await flushReact();
@@ -243,10 +243,11 @@ describe("Activity", () => {
 
     await app.rerender("visible");
 
-    // The reveal runs before the reader re-subscribes, so to `reuseCache` it
-    // is a genuine idle remount: the stale-and-adopted value is discarded and
-    // the reveal suspends on a fresh read — staleness promoted to a drop only
-    // because the read opted in.
+    // Hiding unsubscribed the reader, which set the entry's deadline from the
+    // `gcTime` it was read with; the wait above passed it, so the sweep took the
+    // entry. The reveal's read-through then finds nothing and suspends on a
+    // fresh read — the same path as the removed-entry case above, reached by a
+    // deadline instead of by a call.
     expect(loads.calls).toBe(2);
     expect(valueElement(app).style.display).toBe("none");
     expect(app.container.textContent).toContain("loading");
@@ -441,8 +442,7 @@ describe("Activity", () => {
     const renderApp = (mode: Mode, snapshots: LaneHydrationSnapshots) =>
       root.render(
         hydrationActivityApp(lane, loads.loader, mode, snapshots, {
-          staleTime: 10,
-          whenStale: "refetch",
+          gcTime: 10,
         }),
       );
 

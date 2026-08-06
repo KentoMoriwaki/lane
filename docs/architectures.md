@@ -130,7 +130,7 @@ URL / interaction
 ```
 
 This is the architecture that competes most directly with a SWR or TanStack Query
-implementation, and the one where Lane's `staleTime`, `whenStale`, and the
+implementation, and the one where Lane's `staleTime`, `gcTime`, and the
 `refetchOn*` triggers apply — they are instructions to a loader, so a
 server-owned read has none of them.
 

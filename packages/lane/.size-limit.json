@@ -7,7 +7,7 @@
       "react",
       "react-dom"
     ],
-    "limit": "2.44 kB"
+    "limit": "2.4 kB"
   },
   {
     "name": "typical: LaneProvider + useLane",
@@ -17,7 +17,7 @@
       "react",
       "react-dom"
     ],
-    "limit": "3.9 kB"
+    "limit": "3.88 kB"
   },
   {
     "name": "everything (ceiling)",
@@ -27,6 +27,6 @@
       "react",
       "react-dom"
     ],
-    "limit": "5.5 kB"
+    "limit": "5.54 kB"
   }
 ]

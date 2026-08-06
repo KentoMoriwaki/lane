@@ -772,7 +772,7 @@ option is a type error at the `laneRead` call:
 
 | Absent option | Why |
 | --- | --- |
-| `staleTime`, `whenStale` | Freshness is the publisher's decision. Nothing local can re-read this key, so "stale" has no action attached to it. |
+| `staleTime`, `gcTime` | Freshness and retention are the publisher's decision. Nothing local can re-read this key, so "stale" has no action attached to it. |
 | `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` | Each one triggers a re-fetch, which is exactly the ownership violation this read exists to prevent. |
 | `loaderMeta` | Nothing here is handed to a loader. |
 
@@ -912,7 +912,7 @@ Notes:
 - **Each member behaves exactly like `useLane`** — transitions, stale-on-error,
   focus / reconnect, `refetchOnMount`, GC, and reacting to (shared) option changes
   (`staleTime` / `refetchOnFocus` / `refetchOnReconnect` re-subscribe;
-  `whenStale` applies on the next read). A batch is N `useLane`s feeding one
+  the new options apply on the next read). A batch is N `useLane`s feeding one
   `Promise.all`.
 - **Adding a read** subscribes and loads just that read; the reads already on
   screen are not refetched. **Removing one** unsubscribes it.
@@ -1194,7 +1194,7 @@ prefetch<T, C = T>(
 
 `prefetch` takes the read's key, its loader, and its `loaderMeta` — the three
 things running one needs. Everything else on the read describes what a *reader*
-does with the value (`staleTime` / `whenStale` / `refetchOn*`), and warming is not
+does with the value (`staleTime` / `gcTime` / `refetchOn*`), and warming is not
 the read, so those stay the eventual reader's call.
 
 `prefetch` is a method on the
@@ -1222,7 +1222,7 @@ const warm = () =>
   reclaimed by the lane's sweep (within `gcTime`); if a reader mounts first, the
   entry becomes live and is kept.
 - **Freshness is the reader's call.** `prefetch` only warms; `staleTime` /
-  `whenStale` are decided by the eventual `useLane`. A
+  `gcTime` are decided by the eventual `useLane`. A
   [spec](#lanereadspec--key--loader-colocation) is warmed the same way — its
   freshness options are left to the reader, so
   `lane.prefetch(taskLanes.detail(id))` is the whole hover handler. This is the
@@ -1239,7 +1239,7 @@ prefetch that nobody consumes does not surface as an unhandled rejection.
 type LaneUseOptions = {
   loaderMeta?: LaneRegister["loaderMeta"];
   staleTime?: number;
-  whenStale?: "revalidate" | "refetch";
+  gcTime?: number;
   refetchOnFocus?: boolean;
   refetchOnMount?: boolean;
   refetchOnReconnect?: boolean;
@@ -1252,8 +1252,8 @@ type LaneUseOptions = {
 | Option | Default | Description |
 | --- | --- | --- |
 | `loaderMeta` | the lane's | Read this entry with a different `meta` than the lane carries — see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key). Not part of the key. In a batch, a member's own value wins over the batch's. |
-| `staleTime` | `Infinity` | How long (ms) a fulfilled value is considered fresh. Once stale, a read's behavior is decided by `whenStale`, and the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. The default means **nothing is ever stale until you say what stale means** — so `whenStale: "refetch"` and all three revalidation triggers do nothing without a `staleTime`, and warn in development. `staleTime` is also the rate limit on the triggers it gates: a value refreshed within it is not refreshed again however many times they fire. `staleTime: 0` asks for "always stale", which includes a mount refetching the value that same mount just loaded — the read runs during render and the trigger fires from an effect, so the two stack. |
-| `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. A rejection is never discarded by a read — retrying is an event, and a render is not one; see [`LaneReadError`](#lanereaderror). |
+| `staleTime` | `Infinity` | How long (ms) a fulfilled value is considered fresh. Once stale, the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads — which refresh what a reader is showing rather than taking it away. The default means **nothing is ever stale until you say what stale means** — so all three revalidation triggers do nothing without a `staleTime`, and warn in development. `staleTime` is also the rate limit on the triggers it gates: a value refreshed within it is not refreshed again however many times they fire. `staleTime: 0` asks for "always stale", which includes a mount refetching the value that same mount just loaded — the read runs during render and the trigger fires from an effect, so the two stack. |
+| `gcTime` | the lane's | How long (ms) **this read's** value is worth keeping once nothing holds it — this read's override of [`createLane`](#createlaneoptions)'s, and the way to say "do not serve this again after I leave". `0` makes every remount a fresh load; `Infinity` keeps it. It reads as a memory setting and is a freshness one too, because for an *idle* entry those are the same question: a value nobody holds is kept for exactly one reason, the reader who might come back. Which is why the load a remount starts after the deadline **suspends** — the entry is gone, so the wait joins whatever transition the remount is part of, instead of committing a stale value and refreshing it afterwards. The deadline is set when the entry goes idle, from the `gcTime` of whoever held it last; eviction is never synchronous, so an unsubscribe and a resubscribe in one task (StrictMode's double invoke, a re-suspension) collect nothing. |
 | `refetchOnFocus` | `false` | Reloads stale entries on window focus. Needs a `staleTime` to fire at all — with the `Infinity` default nothing is stale, and Lane warns in development. |
 | `refetchOnMount` | `false` | Reloads stale entries when a reader mounts. Needs a `staleTime` to fire at all. `staleTime: 0` makes it fire on every mount — including the mount that just loaded the value, since the read runs during render and this fires from an effect. |
 | `refetchOnReconnect` | `false` | Same as `refetchOnFocus`, driven by the browser `online` event. |
@@ -1419,15 +1419,13 @@ failed during SSR reaches the browser as an ordinary error.
 #### Why a rejection is never retried by a read
 
 A cached rejection is served to every later read of the key until the key is
-invalidated, removed, or collected — including under `whenStale: "refetch"`,
-which discards stale *values* and never errors.
+invalidated, removed, or collected. No read retries one.
 
 Retrying is an event; a render is not one. React renders a suspended reader as
 many times as it likes and throws the work away, so a retry decided during a read
 fires again on every attempt: the reader is handed a fresh pending promise each
 time, suspends instead of throwing, and the failure never reaches the boundary at
-all. A `whenStale: "refetch"` read against a server that is down would spin
-forever showing a fallback.
+all: against a server that is down, the fallback would spin forever.
 
 So recovery is always something that *happens*: an `invalidate`, a `remove`, a
 revalidation trigger firing from an effect, or garbage collection. Reads only
@@ -1665,7 +1663,7 @@ Where the key lands is decided by what it already had:
 | nothing to revert to | the read settles **rejected** — the only end a transition holding no data can reach |
 
 The rejection is then as sticky as any other failed first load: it is reused until
-the key is invalidated, removed, collected, or read with `whenStale: "refetch"`.
+the key is invalidated, removed, or collected.
 An Error Boundary reset alone re-reads the same rejected promise, so pair a retry
 with an `invalidate`. That is deliberately not special-cased — a cancelled first
 load recovers the way every other one does.
@@ -1889,14 +1887,12 @@ Two anti-patterns to name, because both look reasonable:
   value) and is dropped by [`remove`](#remove--removeall), by garbage collection,
   and by an invalidation of an entry no reader is holding — that last one deletes
   the entry outright, since it has neither a cache nor a subscriber left.
-- **Stale reads.** `staleTime` sets how long a value stays fresh; on a stale
-  read, `whenStale` decides what happens. `"revalidate"` (default) keeps showing
-  the cached value and refreshes in the background. `"refetch"` discards an idle
-  stale value and suspends on a fresh load — never discarding
-  an in-flight read or a value a live subscriber is showing, and never a
-  rejection ([`LaneReadError`](#lanereaderror) says why). This is orthogonal to `refetchOnMount`
-  / `refetchOnFocus` / `refetchOnReconnect`, which decide *when* a background
-  revalidation is triggered, not what a read shows.
+- **Stale reads.** A read never takes a value away — not for staleness, not for a
+  prior error ([`LaneReadError`](#lanereaderror) says why). `staleTime` sets how
+  long a value stays fresh, and what acts on that is `refetchOnMount` /
+  `refetchOnFocus` / `refetchOnReconnect`, firing from an effect to refresh what
+  a reader is showing *underneath* it. What a remount is served instead is decided
+  by whether the entry survived: see `gcTime` above.
 - **Abort.** Loaders receive an `AbortSignal` that fires when the read is
   discarded by invalidation, removal, an authoritative `set` over a pending read,
   or GC.

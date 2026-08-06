@@ -38,7 +38,7 @@ import {
 
 export type ReaderOpts = Pick<
   LaneUseOptions,
-  "refetchOnMount" | "whenStale" | "staleTime"
+  "refetchOnMount" | "gcTime" | "staleTime"
 >;
 
 const AGITATIONS: readonly AgitatorKind[] = [

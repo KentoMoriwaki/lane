@@ -254,11 +254,11 @@ for the rest.
 
 ### Let readers of one key agree on freshness
 
-`whenStale` and `staleTime` are read-time options, and the read that the store
-keeps is the one that happens first. Readers of the same key that disagree about
-them get a policy decided by mount order, which is a predictability problem well
-before it is a consistency one. Share the options object, or derive it from one
-place.
+`staleTime` and `gcTime` are the reader's, and readers of one key that disagree
+about them get a policy decided by whoever acted last: the earliest trigger
+refreshes for everyone, and the last reader to leave decides how long the value
+outlives them all. Neither is wrong, and both are hard to predict from any one
+component. Share the options object, or derive it from one place.
 
 A [published key](./api-reference.md#external--a-read-the-owner-publishes) cannot
 have this problem: its read spec carries no freshness options at all, so every

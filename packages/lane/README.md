@@ -211,7 +211,7 @@ function RenameButton({ userId }: { userId: string }) {
 
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
 `updateAll`, `remove` / `removeAll` — all keyed; `set` / `update` are checked
-when given a typed key. `useLane` options: `staleTime`, `whenStale`,
+when given a typed key. `useLane` options: `staleTime`, `gcTime`,
 `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
 `createLane` options: `gcTime`. Loaders receive `{ key, signal, current }`, where
 `current` is the entry's last fulfilled value.

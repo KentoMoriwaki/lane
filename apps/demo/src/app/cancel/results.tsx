@@ -17,17 +17,10 @@ import { searchKey, searchLoader } from "./search-lane";
  * `#seq` is the server's own counter, so a value that came back from the cache
  * rather than the network keeps the sequence number it was first served with.
  */
-export function SearchResults({
-  topic,
-  whenStale,
-}: {
-  topic: string;
-  whenStale: "revalidate" | "refetch";
-}) {
+export function SearchResults({ topic }: { topic: string }) {
   const { promise, isInvalidationPending } = useLane({
     key: searchKey(topic),
     loader: searchLoader(topic),
-    whenStale,
   });
   const { data, refreshError } = use(promise);
 

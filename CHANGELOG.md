@@ -132,7 +132,61 @@ All notable changes to `use-lane` are documented here. The format is based on
   because a store that can fail is what throws it. Budgets move 2.37 → 2.44 kB,
   3.84 → 3.9 kB, and the ceiling 5.42 → 5.5 kB.
 
+- **`gcTime` is a read option.** The lane's value becomes the default rather than
+  the policy: how long a value is worth serving again belongs to the data, not to
+  the app.
+
+  ```tsx
+  useLane({ key, loader, gcTime: 0 });        // a remount always loads fresh
+  useLane({ key, loader, gcTime: 5_000 });    // come straight back and reuse it
+  ```
+
+  The deadline is set when the entry goes idle, from the `gcTime` of whoever held
+  it last — at zero subscribers the departing reader is the only one there is to
+  ask, and anything shorter would mean remembering readers that are already gone.
+  One coalesced timer per lane still does the collecting, now armed for the
+  nearest deadline instead of on a fixed cycle, so a short-lived key is not held
+  by a long-lived one.
+
+  **Collection is never synchronous**, however short the `gcTime`. `0` means "the
+  deadline is now", not "collect inside this call": StrictMode runs subscribe →
+  cleanup → subscribe within one commit, and a re-suspension tears down and
+  re-creates layout effects, and either would otherwise collect an entry between
+  the two halves of a reader that never left. (`createLane({ gcTime: 0 })` used to
+  sweep synchronously on unsubscribe; it no longer does.)
+
 ### Changed
+
+- **Removed `whenStale` (and `LaneWhenStale`); a read never discards anything.**
+  `whenStale: "refetch"` discarded a stale value during a *read* so the next one
+  would suspend on a fresh load. What it bought — the wait joining the caller's
+  transition, rather than committing a stale value and refreshing it afterwards —
+  is real and is kept, but it never came from the discarding: it comes from the
+  read finding nothing, which is what an evicted entry also gives.
+
+  So the behavior moves to retention, where it can be an event instead of a
+  render. `gcTime: 0` on a read is what `whenStale: "refetch"` was reaching for,
+  and the same option covers everything between that and `Infinity` — one clock,
+  measured from the moment nothing holds the entry.
+
+  Two things follow, and both were the point. A read now mutates nothing another
+  reader is holding, so the subscriber gate is gone: whether `refetch` did
+  anything used to depend on whether some unrelated component happened to still
+  hold the key, including one that held it without displaying it. And the
+  per-cache `adopted` flag is gone with it — it existed to tell a pre-commit
+  suspense retry from a genuine remount, a distinction only the discarding
+  needed.
+
+  Migrating: `whenStale: "refetch"` + `staleTime: N` becomes `gcTime: N`, with
+  the clock now running from the last unsubscribe rather than from the
+  settlement. `whenStale: "revalidate"` was the default and can be deleted;
+  refreshing what a mounted reader is showing stays `staleTime` +
+  `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect`.
+
+  The store shrinks by **48 B** and the typical `LaneProvider` + `useLane` pair by
+  **20 B**; the everything-ceiling grows **40 B** for the per-key deadline
+  bookkeeping in `useLanesAll`. Budgets move 2.44 → 2.4 kB, 3.9 → 3.88 kB, and
+  5.5 → 5.54 kB.
 
 - **A read never retries a rejection, `whenStale: "refetch"` included.** It used
   to discard a cached rejection and start a fresh load, which was the only

@@ -57,19 +57,6 @@ export function TransportControls({
           labels={["dropped", "forwarded"]}
         />
       </ControlRow>
-
-      <ControlRow
-        label="whenStale"
-        note="What a rejected cache is worth. A cancelled first load settles rejected and is read again straight away — by the retry of the render that never committed — so this decides whether that retry reuses the rejection or starts over."
-      >
-        <Toggle
-          checked={settings.whenStale === "refetch"}
-          onChange={(refetch) =>
-            onChange({ whenStale: refetch ? "refetch" : "revalidate" })
-          }
-          labels={["revalidate", "refetch"]}
-        />
-      </ControlRow>
     </ControlGroup>
   );
 }

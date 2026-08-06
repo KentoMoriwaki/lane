@@ -309,10 +309,7 @@ function CancelLab() {
               )}
             >
               <Suspense fallback={<ResultsSkeleton />}>
-                <SearchResults
-                  topic={committed}
-                  whenStale={settings.whenStale}
-                />
+                <SearchResults topic={committed} />
               </Suspense>
             </FirstLoadBoundary>
           )}

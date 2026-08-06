@@ -81,19 +81,19 @@ export type LaneLoaderContext<C = unknown> = {
    * is not part of its key. See {@link LaneRegister} for how it is declared and
    * why it lives on the lane rather than on the read.
    *
-   * Snapshotted when the read is created, like `current`, so every retry of that
-   * read sees the value the read started with.
+   * Snapshotted when the read is created, like `current`: a read already in
+   * flight keeps the value the lane carried when it started.
    */
   meta: LaneLoaderMeta;
   /**
    * The entry's last fulfilled value, or `undefined` on a first load.
    *
-   * Snapshotted when the read is created, so every retry of that read sees the
-   * same value. It survives invalidation — invalidating clears the cached
-   * promise, not the last fulfilled value — which is what lets a loader re-read
-   * *as much as it already had* instead of only what its key describes: the
-   * accumulated pages of a list, a cursor to resume from, a revision to send as
-   * `If-None-Match`.
+   * Snapshotted when the read is created, so a publication landing while the
+   * read starts cannot change what the loader was handed. It survives
+   * invalidation — invalidating clears the cached promise, not the last
+   * fulfilled value — which is what lets a loader re-read *as much as it already
+   * had* instead of only what its key describes: the accumulated pages of a
+   * list, a cursor to resume from, a revision to send as `If-None-Match`.
    *
    * It is `undefined` again once the entry itself is gone (removed, collected,
    * or invalidated while nothing was subscribed to hold it), so a loader must
@@ -169,7 +169,7 @@ export type LaneExternalLoader = LaneLoader<never, unknown> & {
  * A read whose value arrives from outside: the owner publishes it (an RSC payload
  * through `<LaneHydration>`, a router's loader data), and the client only reads.
  *
- * The shape is the enforcement. There is no `staleTime` / `whenStale` / `retry` /
+ * The shape is the enforcement. There is no `staleTime` / `whenStale` /
  * `refetchOn*` / `loaderMeta`, because every one of them is an instruction to a
  * loader this read does not have — so writing one is an excess property at the
  * `laneRead` call, which is where the mistake was made. What the entry holds
@@ -198,8 +198,6 @@ export type LaneGatedExternalReadSpec<T> = {
  * annotation the read needs anyway.
  */
 type LaneKeyMaybeOf<T> = LaneKey & { readonly [laneDataTag]?: T };
-
-export type LaneRetryDelay = (attempt: number, error: unknown) => number;
 
 declare const laneDataTag: unique symbol;
 
@@ -333,8 +331,10 @@ export type Lane = {
   /**
    * Warm a read before any reader mounts. This is the one method that takes a
    * whole read rather than a key, because it is the one that *performs* a read.
-   * Only the fetch-shaping options apply (`retry` / `retryDelay`) — `staleTime` /
-   * `whenStale` stay the eventual reader's call.
+   * It takes the read's key, its loader, and its `loaderMeta` — the three things
+   * running one needs. Everything else on the read describes what a *reader*
+   * does with the value (`staleTime` / `whenStale` / `refetchOn*`), and warming
+   * is not the read, so those stay the eventual reader's call.
    *
    * It is also the one read that happens outside React, so it is the one place
    * `loaderMeta` is passed by hand rather than taken from the provider — and only
@@ -668,8 +668,6 @@ export type LaneUseOptions = {
    * decide *when* a background revalidation is triggered, independently.
    */
   whenStale?: LaneWhenStale;
-  retry?: number;
-  retryDelay?: LaneRetryDelay;
   refetchOnFocus?: LaneRefetchOnFocus;
   refetchOnMount?: LaneRefetchOnMount;
   refetchOnReconnect?: LaneRefetchOnReconnect;

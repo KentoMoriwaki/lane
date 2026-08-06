@@ -33,6 +33,7 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `refetchInterval` | a **userland poll** — a self-scheduled `invalidate` |
 | `refetchOnWindowFocus` | `refetchOnFocus` (`LaneProvider` wires focus / reconnect) — pair it with a `staleTime`, or it never fires |
 | `refetchOnMount: "always"` | no equivalent — `refetchOnMount: true, staleTime: 0`, or `invalidate(key, { onlyIf: "settled" })` |
+| `retry` / `retryDelay` | no equivalent — retrying a failed request belongs to your fetcher / API client, which already has the `signal` |
 | `staleTime` / `gcTime` | `staleTime` (read option, defaults to `Infinity` — react-query defaults to `0`) / `gcTime` (`createLane`) |
 | `QueryClientProvider` | `LaneProvider` |
 

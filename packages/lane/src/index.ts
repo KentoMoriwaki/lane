@@ -63,7 +63,6 @@ export type {
   LaneRefetchOnMount,
   LaneRefetchOnReconnect,
   LaneResult,
-  LaneRetryDelay,
   LaneScope,
   LaneSnapshot,
   LaneUpdater,

@@ -163,28 +163,6 @@ describe("the external wait", () => {
     expect((waiting.error as Error).message).toContain('["task","t1"]');
   });
 
-  it("times out once, however many retries the read was given", async () => {
-    vi.useFakeTimers();
-
-    const lane = createLane();
-    // Not expressible through `laneRead<T>({ loader: external })` — the external
-    // spec has no `retry`. A read written inline against the wider signature can
-    // still ask, and a retry would only restart the clock on a key that is not
-    // being published, so the wait ignores it.
-    const waiting = track(
-      readOrCreate<string>(lane, ["task", "t1"], external, {
-        retry: 3,
-        retryDelay: () => 0,
-      }),
-    );
-
-    await vi.advanceTimersByTimeAsync(EXTERNAL_TIMEOUT);
-    await flushMicrotasks();
-
-    expect(waiting.status).toBe("rejected");
-    expect(waiting.error).toBeInstanceOf(LaneExternalTimeoutError);
-  });
-
   it("lets a publication overwrite an entry the timeout left rejected", async () => {
     vi.useFakeTimers();
 
@@ -720,8 +698,6 @@ function typeExpectations(lane: Lane, enabled: boolean): void {
   laneRead<Task>({ key: ["task", "t1"], loader: external, staleTime: 60_000 });
   // @ts-expect-error — same for every revalidation trigger,
   laneRead<Task>({ key: ["task", "t1"], loader: external, refetchOnMount: true });
-  // @ts-expect-error — for retries,
-  laneRead<Task>({ key: ["task", "t1"], loader: external, retry: 2 });
   // @ts-expect-error — and for what a loader would be handed.
   laneRead<Task>({ key: ["task", "t1"], loader: external, loaderMeta: undefined });
 

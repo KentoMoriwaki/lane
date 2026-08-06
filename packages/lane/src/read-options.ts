@@ -7,7 +7,7 @@ import type {
 } from "./types";
 
 /**
- * The fetch-shaping subset a read passes to `readOrCreate`, with the meta
+ * The subset of a read's options that reaches `readOrCreate`, with the meta
  * resolved: the read's own `loaderMeta` where it sets one, the lane's otherwise.
  *
  * The lane's value is a second argument rather than a field of `options` because
@@ -23,8 +23,6 @@ export function toReadOptions(
 ): LaneReadOptions {
   return {
     loaderMeta: options.loaderMeta ?? loaderMeta,
-    retry: options.retry,
-    retryDelay: options.retryDelay,
     staleTime: options.staleTime,
     whenStale: options.whenStale,
   };

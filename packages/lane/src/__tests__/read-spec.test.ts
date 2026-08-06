@@ -275,30 +275,24 @@ describe("prefetching a spec", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
-  it("takes the spec's retry policy but not its freshness policy", async () => {
+  it("does not take the spec's freshness policy", async () => {
     const lane = createLane();
-    const loader = vi
-      .fn<LaneLoader<string>>()
-      .mockImplementationOnce(async () => {
-        throw new Error("boom");
-      })
-      .mockImplementationOnce(async () => "recovered");
+    const loader = vi.fn<LaneLoader<string>>().mockResolvedValue("warmed");
     const spec = laneRead({
       key: ["task", "t1"],
       loader,
-      retry: 1,
-      retryDelay: () => 0,
       // A read-time decision; prefetch pins "revalidate" so the second call
       // below dedupes onto the warm cache instead of discarding it.
+      staleTime: 0,
       whenStale: "refetch",
     });
 
     const warmed = await lane.prefetch(spec);
-    expect(warmed.data).toBe("recovered");
-    expect(loader).toHaveBeenCalledTimes(2);
+    expect(warmed.data).toBe("warmed");
+    expect(loader).toHaveBeenCalledTimes(1);
 
     await lane.prefetch(spec);
-    expect(loader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -20,7 +20,7 @@ Whatever the host, an integration comes down to five decisions:
 | **Ownership** | Per key: publish it from the host's data layer with [`LaneHydration`](./api-reference.md#lanehydration) and read it with [`external`](./api-reference.md#external--a-read-the-owner-publishes), or let the client own it and fetch on first read. Not both — a published key is read-only from the client. |
 | **Navigation** | Commit route changes inside a React transition so a suspending read keeps the current screen instead of flashing a Suspense fallback. |
 | **Convergence** | Client-owned: `invalidate` (re-read) or publish confirmed data with `set` / `update`. Published: mutate the source and let the host revalidate — the republication is the convergence. |
-| **Retention** | For client-owned keys, a Lane policy — `gcTime` + `whenStale` — not the router. For published keys, [reachability](./api-reference.md#external-retention): the host's payload and committed readers decide, and `gcTime` does not apply. |
+| **Retention** | For client-owned keys, a Lane policy — `gcTime`, on the lane or on the read — not the router. For published keys, [reachability](./api-reference.md#external-retention): the host's payload and committed readers decide, and `gcTime` does not apply. |
 
 The glue that connects the router's data to Lane (e.g. a `withHydration` HOC) lives
 in *your app*: neither Lane nor the router ships it, because neither knows about
@@ -86,14 +86,16 @@ publishes it ([retention](./api-reference.md#external-retention)):
 
 - **`key = f(URL)`** — the entry's identity is the route, so returning re-reads the
   same entry instead of a fresh one.
-- **`gcTime`** (instance-wide, on [`createLane`](./api-reference.md#createlaneoptions))
-  — how long an inactive route's entry is retained after you navigate away; this is
-  your back/forward window. `Infinity` pins everything for the session (like a
-  framework router cache; costs memory).
-- **`whenStale`** — `"revalidate"` (default) keeps showing the cached value and
-  refreshes in the background, so a stale revisit does **not** suspend (no flash).
-  `"refetch"` discards the stale value and suspends — which can flash on
-  back/forward. Prefer `"revalidate"` for route-backing reads.
+- **`gcTime`** (on [`createLane`](./api-reference.md#createlaneoptions) for the
+  lane, or on the read for one route) — how long an inactive route's entry is
+  retained after you navigate away; this is your back/forward window, and the
+  only thing that decides whether a revisit suspends. Generous keeps the return
+  instant; `Infinity` pins everything for the session (like a framework router
+  cache; costs memory). `0` makes every revisit a fresh load, which is a flash on
+  back/forward — do that only for a route whose data must not be shown twice.
+  Staleness alone never takes a value away: refreshing what a returning reader is
+  showing is `staleTime` + `refetchOnMount`'s job, and it happens underneath the
+  value rather than instead of it.
 
 This is the same shape a Next.js App Router cache has — `URL → key → in-memory
 cache → data` — except you choose the policy explicitly instead of inheriting a
@@ -190,15 +192,15 @@ function UsersRoute() {
     key: ["users"],
     loader: ({ signal }) => fetchUsers(signal),
     staleTime: 5_000,
-    whenStale: "revalidate", // so back/forward to a stale route does not suspend
+    refetchOnMount: true, // returning refreshes underneath the value it shows
   });
   return <UserList users={use(promise).data} />;
 }
 ```
 
 Caveat: a back/forward that lands on a *suspending* read can flash (the `popstate`
-constraint above). Mitigate with `whenStale: "revalidate"` + an adequate `gcTime`
-so the entry is warm on return. Declarative mode also does not surface a navigation
+constraint above). Mitigate with an adequate `gcTime` so the entry is warm on
+return and the read does not suspend at all. Declarative mode also does not surface a navigation
 pending state — wrap `navigate` in your own `useTransition` if you want a progress
 indicator.
 
@@ -294,4 +296,4 @@ full Data-mode behavior (loader → hydration → `useLane`, no-flash back/forwa
 
 - [Supported architectures](./architectures.md) — the per-key ownership rule: RSC props, published (`external`), or client-owned.
 - [Design notes](./design-notes.md) — why Lane is transition-native by construction.
-- [API reference](./api-reference.md) — `LaneHydration`, `useLane`, `gcTime`, `whenStale`.
+- [API reference](./api-reference.md) — `LaneHydration`, `useLane`, `gcTime`.

@@ -69,5 +69,4 @@ export type {
   LaneUpdater,
   LaneUseOptions,
   LaneValue,
-  LaneWhenStale,
 } from "./types";

@@ -275,16 +275,17 @@ describe("prefetching a spec", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
-  it("does not take the spec's freshness policy", async () => {
+  it("does not take the spec's reader-side policy", async () => {
     const lane = createLane();
     const loader = vi.fn<LaneLoader<string>>().mockResolvedValue("warmed");
     const spec = laneRead({
       key: ["task", "t1"],
       loader,
-      // A read-time decision; prefetch pins "revalidate" so the second call
-      // below dedupes onto the warm cache instead of discarding it.
+      // Both describe a reader — when one refreshes, and how long a value
+      // outlives one. A prefetch is not a reader, so the second call below
+      // dedupes onto the warm cache rather than re-warming it.
       staleTime: 0,
-      whenStale: "refetch",
+      gcTime: 0,
     });
 
     const warmed = await lane.prefetch(spec);

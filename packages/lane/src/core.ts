@@ -20,14 +20,20 @@ import type {
   LaneScope,
   LaneUpdater,
   LaneValue,
-  LaneWhenStale,
 } from "./types";
 
 export type LaneInvalidationSource = "background" | "transition";
 
+/**
+ * What the store needs from a read, which is now only what the *loader* needs.
+ *
+ * `staleTime` and `gcTime` are not here, and their absence is the design: one
+ * decides when a mounted reader refreshes (an effect fires it, as an
+ * invalidation), the other how long an entry outlives its last reader (the
+ * subscription carries it). Neither is a question a read answers, so neither
+ * reaches the read path.
+ */
 export type LaneReadOptions = {
-  staleTime?: number;
-  whenStale?: LaneWhenStale;
   /**
    * The lane's `loaderMeta`, handed to the loader as `context.meta`. It rides in
    * the read options rather than in the read because it belongs to the lane, not
@@ -65,12 +71,27 @@ export type LaneSubscriber = {
   onInvalidate?: LaneSubscription;
   onInvalidationPending?: LaneInvalidationPendingSubscription;
   onRemove?: LaneRemoveSubscription;
+  /**
+   * This reader's `gcTime`, read at the moment it leaves — the one piece of
+   * policy a subscriber carries, and it carries it because the store cannot ask
+   * anyone else. When the count reaches zero the only subscriber left is the one
+   * leaving, so "the shortest among the current subscribers" and "the departing
+   * reader's" are the same value; making it any shorter would mean remembering
+   * readers that are already gone, and letting a departed component's option
+   * decide what a future one gets.
+   *
+   * A function rather than a number because a reader's options are re-read on
+   * every render and the subscription is not re-opened for them.
+   */
+  gcTime?: () => number | undefined;
 };
 
 type LaneState = {
   entries: Map<string, LaneEntry>;
   gcTime: number;
-  sweepTimer: ReturnType<typeof setInterval> | undefined;
+  sweepTimer: ReturnType<typeof setTimeout> | undefined;
+  /** When {@link sweepTimer} is due, so a nearer deadline can replace it. */
+  sweepAt: number | undefined;
   /**
    * Mints {@link LaneEntry.revision} values, one counter for the whole lane.
    * Lane-wide rather than per-entry so that an entry evicted and re-created can
@@ -102,16 +123,6 @@ type LanePromiseCache = {
   settlement: LanePromiseSettlement | undefined;
   startedAt: number;
   controller: AbortController | undefined;
-  // Whether a reader has ever committed on *this* cache — set when one
-  // subscribes while it is current, and true from birth for a cache installed
-  // while the key already has a live reader.
-  //
-  // It is per-cache rather than per-entry because it guards a suspense retry: an
-  // uncommitted read has no subscriber, so an entry-wide "has ever been
-  // subscribed" flag stops protecting the moment the key has been mounted once,
-  // and `whenStale: "refetch"` then re-judges its own just-settled value stale on
-  // every retry and refetches forever.
-  adopted: boolean;
   // Set by `cancel` on a read that is still in flight. Every other abort path
   // displaces the cache in the same breath, so a late settlement is already
   // dropped by the identity check below; a cancel deliberately leaves the cache
@@ -128,10 +139,14 @@ type LaneEntry = {
   cache: LanePromiseCache | undefined;
   subscribers: Set<LaneSubscriber>;
   lastFulfilled: { value: unknown; at: number } | undefined;
-  // Timestamp the entry last had zero subscribers (set on creation and on the
-  // last unsubscribe; cleared while subscribed). The central GC sweep evicts
-  // entries idle for longer than the lane's gcTime.
-  idleSince: number | undefined;
+  /**
+   * When this entry stops being worth keeping — set when it becomes idle (on
+   * creation, and on the last unsubscribe) from the `gcTime` of whoever was
+   * last holding it, and cleared while it has subscribers. `undefined` means
+   * "someone is holding it", which is the only state the sweep skips;
+   * `Infinity` means idle and kept anyway.
+   */
+  evictAt: number | undefined;
   /**
    * The identity of the content this entry currently holds — advanced (from the
    * lane-wide counter) exactly when a fulfillment's value is a *new reference*,
@@ -165,20 +180,21 @@ export function createLane(options: LaneOptions = {}): Lane {
     entries: new Map(),
     gcTime: options.gcTime ?? DEFAULT_GC_TIME,
     revisionCounter: 0,
+    sweepAt: undefined,
     sweepTimer: undefined,
   };
 
   const lane: Lane = {
     prefetch<T, C = T>(read: LaneReadSpec<T, C>, ...args: LaneLoaderMetaArgs) {
       // Warm the cache without subscribing or suspending: start the load and
-      // hand back the promise for a later reader to adopt. Pin "revalidate" so a
-      // re-fired prefetch (e.g. repeated link hover) dedupes onto the in-flight
-      // or settled cache instead of refetching. Like any read it arms no GC
-      // timer — an unadopted prefetch is an orphan, reclaimed by the lane-wide
-      // sweep on whatever cycle a later unsubscribe triggers.
+      // hand back the promise for a later reader to adopt. A re-fired prefetch
+      // (e.g. repeated link hover) dedupes onto the in-flight or settled cache,
+      // because a read never discards one.
       //
-      // A read's `staleTime` / `whenStale` are deliberately ignored here: those
-      // are read-time decisions and this is not the read.
+      // The read's own options stay out of it: `staleTime` decides when a
+      // *reader* refreshes and `gcTime` how long a value outlives one, and this
+      // is not a reader. A warmed entry is held on the lane's policy until
+      // somebody arrives to hold it.
       if (isExternalLoader(read.loader)) {
         // Rejected by `LaneReadSpec`'s loader type as well; this catches the
         // spec that reached here as `any` or through a cast. Warming an
@@ -194,7 +210,6 @@ export function createLane(options: LaneOptions = {}): Lane {
         // Same precedence as a hook read: the read's own override wins over the
         // value supplied alongside it.
         loaderMeta: read.loaderMeta ?? args[0]?.loaderMeta,
-        whenStale: "revalidate",
       });
     },
     startInvalidationTransition(scope) {
@@ -387,7 +402,7 @@ export function readOrCreate<T, C = T>(
     );
   }
 
-  const reusable = reuseCache(entry, options);
+  const reusable = reuseCache(entry);
 
   if (reusable) {
     return reusable as Promise<LaneRead<T>>;
@@ -405,47 +420,28 @@ export function readOrCreate<T, C = T>(
 }
 
 /**
- * Whether a read reuses the cached promise.
+ * The promise a read reuses, if the entry has one.
  *
- * `"revalidate"` (default) always reuses an existing cache — staleness is
- * refreshed separately in the background, so a reader shows the cached value
- * and converges through a transition (the long-standing behavior).
+ * This is the whole of it: a read looks, and takes what is there. It does not
+ * discard a stale value, retry a rejection, or judge anything — every one of
+ * those is a decision about *when* something should happen, and a render is not
+ * a moment. React renders a suspended reader as many times as it likes and
+ * throws the work away, so a read that acted would act again on every attempt;
+ * and a read that dropped what other readers are holding would have to tell
+ * them, during someone else's render, which React does not allow.
  *
- * `"refetch"` discards a stale value and suspends on a fresh read, but never
- * discards an in-flight read (would break same-transition sharing), a value a
- * live subscriber is showing (would yank a shared promise from active readers),
- * or a fulfilled value *no reader has committed on* — that last case is a
- * pre-commit suspense retry (or a first adoption of a prefetched/hydrated
- * value), not a remount, and discarding it would loop forever: React re-reads on
- * each retry, re-judges the just-settled value stale, and refetches without ever
- * committing. So a stale fulfilled value is only discarded on a genuine idle
- * remount of previously-live data.
+ * So values leave the store only through events: `invalidate`, `remove`, a
+ * publication, or eviction once nothing holds the entry (see
+ * {@link LaneEntry.evictAt} — the read-time freshness option that used to do
+ * this became the per-read `gcTime`). Staleness while a reader is mounted is
+ * the revalidation triggers' business, and they fire from effects.
  *
- * A rejection is never discarded here. Retrying is an event — a mount, a
- * trigger, an `invalidate` — and a render is not one: React may render a
- * suspended reader any number of times and throw the work away, so a retry
- * decided during render fires again on every attempt. The reader would then
- * receive a fresh pending promise each time and suspend instead of throwing,
- * which means the failure never reaches the boundary and the loop never ends.
- * The fulfilled path above escapes this only because its discard produces an
- * unadopted cache, which the guard below then refuses to discard again; a
- * rejection has no such stopping property, so it is not started.
- *
- * Adoption is tracked per *cache*, not per entry. An entry-wide "has ever been
- * subscribed" flag looks equivalent and is not: it stays true once the key has
- * been mounted at all, so the retry after a remount's *own* refetch is judged a
- * remount too — and the loop this guard exists to prevent reappears on the
- * second visit to any key.
- *
- * An external entry adds one case before any of that: its value may simply be
- * *gone*. Nothing else changes — a collected value reads as an absent one, so
- * the read goes through the loader (which, being `external`, waits for the next
+ * The one case that is not a plain lookup belongs to an external entry, whose
+ * value may simply be *gone*: a collected value reads as an absent one, so the
+ * read goes through the loader (which, being `external`, waits for the next
  * publication) exactly as it would for a key never read before.
  */
-function reuseCache(
-  entry: LaneEntry,
-  options: LaneReadOptions | undefined,
-): Promise<unknown> | undefined {
+function reuseCache(entry: LaneEntry): Promise<unknown> | undefined {
   const cache = entry.cache;
 
   if (!cache) {
@@ -463,35 +459,7 @@ function reuseCache(
     return undefined;
   }
 
-  if ((options?.whenStale ?? "revalidate") !== "refetch") {
-    return promise;
-  }
-
-  if (
-    typeof process !== "undefined" &&
-    process.env.NODE_ENV !== "production" &&
-    options?.staleTime === undefined
-  ) {
-    warnDev(
-      '`whenStale: "refetch"` discards a stale value on an idle remount, but ' +
-        "`staleTime` defaults to Infinity, so nothing is ever stale and the read " +
-        'always reuses the cache — the same as the default "revalidate". Set a ' +
-        "`staleTime` to say how long a value stays fresh.",
-    );
-  }
-
-  if (cache.settlement === undefined || entry.subscribers.size > 0) {
-    return promise;
-  }
-
-  // Never adopted → a pre-commit retry or a first prefetch/hydration read, not a
-  // remount; reuse so it can't loop. Only a value some reader actually committed
-  // on is stale enough to throw away.
-  if (!cache.adopted) {
-    return promise;
-  }
-
-  return isStale(cache, options?.staleTime) ? undefined : promise;
+  return promise;
 }
 
 export function invalidateEntry(
@@ -547,13 +515,7 @@ export function subscribeLane(
   const entry = getOrCreateEntry(state, key, keyId);
 
   entry.subscribers.add(subscriber);
-  entry.idleSince = undefined; // active: not a GC candidate
-
-  if (entry.cache) {
-    // This reader committed on the cache it is holding, so a later idle read of
-    // that same cache is a true remount rather than a retry.
-    entry.cache.adopted = true;
-  }
+  entry.evictAt = undefined; // held: not a GC candidate
 
   return () => {
     entry.subscribers.delete(subscriber);
@@ -579,10 +541,11 @@ export function subscribeLane(
       return;
     }
 
-    // Idle with a cache: retained for reuse, collected by the central sweep
-    // once it has been idle for the lane's gcTime.
-    entry.idleSince = Date.now();
-    ensureSweep(state);
+    // Idle with a cache: retained for reuse until this reader's `gcTime` is up.
+    // The departing reader is the one that decides, because at zero subscribers
+    // it is the only one there is to ask.
+    entry.evictAt = Date.now() + resolveGcTime(state, subscriber.gcTime?.());
+    scheduleSweep(state);
   };
 }
 
@@ -822,7 +785,7 @@ function getOrCreateEntry(
     return existing;
   }
 
-  const entry = createEntry(key, keyId);
+  const entry = createEntry(state, key, keyId);
   state.entries.set(keyId, entry);
 
   return entry;
@@ -893,14 +856,20 @@ function runLoader<T, C>(
   );
 }
 
-function createEntry(
-  key: LaneKey,
-  keyId: string,
-): LaneEntry {
+function createEntry(state: LaneState, key: LaneKey, keyId: string): LaneEntry {
   return {
     cache: undefined,
     external: false,
-    idleSince: Date.now(), // born idle: reclaimable as an orphan by a later sweep
+    // Born idle — read but not yet held by anyone: a prefetch, or a render that
+    // suspended and has not committed. On the *lane's* policy, never a read's:
+    // a read's `gcTime` says how long its value outlives *it*, and nobody has
+    // left yet. Charging a warmed entry the arriving reader's deadline would
+    // collect the very value the prefetch exists to hand it, and would abort a
+    // load a suspended reader is still waiting on.
+    //
+    // No timer is armed here; the read path never arms one. An orphan is
+    // reclaimed by whatever sweep the next unsubscribe schedules.
+    evictAt: Date.now() + state.gcTime,
     key,
     keyId,
     lastFulfilled: undefined,
@@ -944,9 +913,6 @@ function setEntryCache<T>(
     const settled = Promise.resolve<LaneRead<T>>(settledRead(entry, value));
 
     entry.cache = {
-      // A cache installed while the key already has a live reader is adopted on
-      // arrival — that reader is showing it without any further subscribe.
-      adopted: entry.subscribers.size > 0,
       cancelled: false,
       controller,
       promise: cacheSlot(entry, settled),
@@ -958,7 +924,6 @@ function setEntryCache<T>(
   }
 
   const cache: LanePromiseCache = {
-    adopted: entry.subscribers.size > 0,
     cancelled: false,
     controller,
     promise: undefined as unknown as Promise<unknown>,
@@ -1184,66 +1149,95 @@ function removeEntryCache(entry: LaneEntry): void {
 }
 
 /**
- * One coalesced GC timer per lane. Armed only when an entry loses its last
- * subscriber — the moment it becomes collectible. A single interval then sweeps
- * the whole lane and evicts every entry idle longer than `gcTime`, stopping
- * itself once nothing is idle. Being lane-wide, the same sweep also reclaims
- * orphans (entries read but never subscribed, e.g. an abandoned render) on
- * whatever cycle a real unsubscribe next triggers — so the read path never arms
- * a timer. Eviction timing is intentionally approximate; a late collection only
- * keeps a value reusable a little longer, which is harmless. `gcTime: Infinity`
- * opts out entirely.
+ * A read's `gcTime`, or the lane's where it has none. The lane's value is the
+ * default rather than a floor or a ceiling: a read that says nothing gets the
+ * instance policy, and one that says something means it.
  */
-function ensureSweep(state: LaneState): void {
-  // Infinity (or NaN) opts out of collection entirely.
-  if (!Number.isFinite(state.gcTime)) {
+function resolveGcTime(state: LaneState, gcTime: number | undefined): number {
+  return gcTime ?? state.gcTime;
+}
+
+/**
+ * One coalesced GC timer per lane, armed for the *nearest* deadline rather than
+ * on a fixed cycle. Entries now expire on their own schedules — `gcTime` is a
+ * read option, so two keys in one lane can disagree by minutes — and an interval
+ * long enough for one would keep the other reusable long past its time.
+ *
+ * One timer rather than one per entry: an idle entry then costs a number instead
+ * of a pending timer plus its closure, hot keys that mount and unmount in a loop
+ * re-arm nothing unless they move the nearest deadline, and a throttled
+ * background tab (or React Native) has one late wake-up to catch up on instead of
+ * hundreds firing at once. The scan it pays for in exchange is a walk of a map
+ * that is a few hundred entries at its largest.
+ *
+ * **Eviction is never synchronous**, however short the `gcTime`. `0` means "the
+ * deadline is now", not "collect inside this call": React's StrictMode runs
+ * subscribe → cleanup → subscribe within one commit, a re-suspension tears down
+ * and re-creates layout effects, and either would collect an entry between the
+ * two halves of a reader that never actually left. Going through the timer makes
+ * those free — a resubscribe clears `evictAt` first, and the sweep skips what
+ * nobody is waiting on. Leaving in the same task is not leaving.
+ */
+function scheduleSweep(state: LaneState): void {
+  let nearest: number | undefined;
+
+  for (const entry of state.entries.values()) {
+    // External entries are not the lane's to collect — their value lives as long
+    // as the publisher's payload or a committed reader keeps it reachable, and
+    // an idle timer would only race that. They are skipped rather than given a
+    // deadline, so they never hold a timer open either.
+    if (entry.external || entry.evictAt === undefined) {
+      continue;
+    }
+
+    if (Number.isFinite(entry.evictAt) && (nearest === undefined || entry.evictAt < nearest)) {
+      nearest = entry.evictAt;
+    }
+  }
+
+  if (nearest === undefined) {
+    if (state.sweepTimer !== undefined) {
+      clearTimeout(state.sweepTimer);
+      state.sweepTimer = undefined;
+      state.sweepAt = undefined;
+    }
+
     return;
   }
 
-  // Non-positive gcTime means "collect as soon as idle": sweep once now rather
-  // than arming a 0ms interval that would spin the event loop.
-  if (state.gcTime <= 0) {
-    sweep(state);
+  // The armed timer already fires at or before the nearest deadline: it will
+  // collect this entry too, and re-arm for whatever is left.
+  if (state.sweepTimer !== undefined && state.sweepAt !== undefined && state.sweepAt <= nearest) {
     return;
   }
 
   if (state.sweepTimer !== undefined) {
-    return;
+    clearTimeout(state.sweepTimer);
   }
 
-  const timer = setInterval(() => sweep(state), state.gcTime);
+  const timer = setTimeout(() => sweep(state), Math.max(0, nearest - Date.now()));
   state.sweepTimer = timer;
+  state.sweepAt = nearest;
   unrefTimer(timer);
 }
 
 function sweep(state: LaneState): void {
   const now = Date.now();
-  let idleRemaining = false;
+
+  state.sweepTimer = undefined;
+  state.sweepAt = undefined;
 
   for (const entry of [...state.entries.values()]) {
-    // External entries are not the lane's to collect — their value lives as long
-    // as the publisher's payload or a committed reader keeps it reachable, and
-    // an idle timer would only race that. They are skipped rather than marked
-    // idle, so they never hold the sweep open either.
-    if (
-      entry.external ||
-      entry.subscribers.size > 0 ||
-      entry.idleSince === undefined
-    ) {
+    if (entry.external || entry.evictAt === undefined) {
       continue;
     }
 
-    if (now - entry.idleSince >= state.gcTime) {
+    if (now >= entry.evictAt) {
       evictEntry(state, entry);
-    } else {
-      idleRemaining = true;
     }
   }
 
-  if (!idleRemaining && state.sweepTimer !== undefined) {
-    clearInterval(state.sweepTimer);
-    state.sweepTimer = undefined;
-  }
+  scheduleSweep(state);
 }
 
 function evictEntry(state: LaneState, entry: LaneEntry): void {

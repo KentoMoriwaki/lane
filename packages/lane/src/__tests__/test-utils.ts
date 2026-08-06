@@ -89,10 +89,13 @@ export function subscribeRemove(
 
 // A bare subscription: a notify hook plus the GC anchor. Enough for tests that
 // only need an entry to have a live subscriber (GC, catch-up, notification).
+// `policy` is what a reader carries besides the hooks — its `gcTime`, read when
+// it leaves.
 export function subscribe(
   lane: Lane,
   key: LaneKey,
+  policy: Pick<LaneSubscriber, "gcTime"> = {},
   listener: TestSubscription = vi.fn(),
 ): () => void {
-  return subscribeLane(lane, key, { onInvalidate: listener });
+  return subscribeLane(lane, key, { ...policy, onInvalidate: listener });
 }

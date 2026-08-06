@@ -21,11 +21,7 @@ export function toReadOptions(
   options: LaneUseOptions,
   loaderMeta: LaneLoaderMeta,
 ): LaneReadOptions {
-  return {
-    loaderMeta: options.loaderMeta ?? loaderMeta,
-    staleTime: options.staleTime,
-    whenStale: options.whenStale,
-  };
+  return { loaderMeta: options.loaderMeta ?? loaderMeta };
 }
 
 /**

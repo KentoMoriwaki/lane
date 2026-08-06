@@ -858,17 +858,14 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
-  it("whenStale 'refetch' discards a stale value and refetches on remount", async () => {
+  // The read's own retention, over a lane that would have kept the value
+  // forever: how long *this* read's value outlives the reader holding it.
+  it("a read's gcTime decides whether a remount reuses or reloads", async () => {
     vi.useFakeTimers();
 
-    // gcTime Infinity keeps the entry, so the remount refetch is a stale-reuse
-    // decision, not garbage collection.
     const lane = createLane({ gcTime: Infinity });
     const loader = vi.fn(async () => "loaded");
-    const options = {
-      whenStale: "refetch" as const,
-      staleTime: 100,
-    };
+    const options = { gcTime: 100 };
 
     const app = await renderLaneApp({ lane, loader, options });
     await waitForText(app.container, "loaded|background:0|transition:0|refresh:none");
@@ -876,7 +873,16 @@ describe("React integration", () => {
 
     unmountApp(app);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(200); // past staleTime
+      await vi.advanceTimersByTimeAsync(50); // still within it
+    });
+
+    const early = await renderLaneApp({ lane, loader, options });
+    await waitForText(early.container, "loaded|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    unmountApp(early);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200); // past it
     });
 
     const remounted = await renderLaneApp({ lane, loader, options });
@@ -884,7 +890,9 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
-  it("whenStale 'revalidate' (default) reuses a stale value on remount", async () => {
+  // Staleness alone does not: a value nothing has taken away is served again,
+  // and refreshing what a reader is showing is the triggers' business.
+  it("reuses a stale value on remount when nothing collected it", async () => {
     vi.useFakeTimers();
 
     const lane = createLane({ gcTime: Infinity });
@@ -934,10 +942,12 @@ describe("React integration", () => {
   });
 
   it("does not refetch a fast sibling that goes stale while a slow sibling suspends", async () => {
-    // Two refetch reads in one component. The component commits only when both
-    // resolve in the same render pass, so it stays un-mounted (subscribers 0)
-    // until then. When the fast read settles and the slow one is still in
-    // flight, the retry must not treat the fast read as a stale idle remount.
+    // Two reads with the most aggressive retention there is, in one component.
+    // It commits only when both resolve in the same render pass, so it stays
+    // un-mounted (subscribers 0) until then — and `gcTime: 0` describes what
+    // happens after a reader *leaves*, which neither of these has done. A
+    // settled sibling waiting on a slow one is not a departure, and the retry
+    // that re-reads it must find it.
     const lane = createLane();
     const gatesA: Array<ReturnType<typeof deferred<string>>> = [];
     const loaderA = vi.fn(() => {
@@ -1381,18 +1391,8 @@ function TwoReadProbe({
   loaderA: LaneLoader<string>;
   loaderB: LaneLoader<string>;
 }) {
-  const a = useLane({
-    key: ["a"],
-    loader: loaderA,
-    whenStale: "refetch",
-    staleTime: 0,
-  });
-  const b = useLane({
-    key: ["b"],
-    loader: loaderB,
-    whenStale: "refetch",
-    staleTime: 0,
-  });
+  const a = useLane({ key: ["a"], loader: loaderA, gcTime: 0 });
+  const b = useLane({ key: ["b"], loader: loaderB, gcTime: 0 });
   const va = React.use(a.promise).data;
   const vb = React.use(b.promise).data;
   return React.createElement("div", null, `${va}|${vb}`);

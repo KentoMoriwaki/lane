@@ -157,7 +157,7 @@ describe("cancel", () => {
   it("does not notify subscribers", async () => {
     const lane = createLane();
     const listener = vi.fn();
-    subscribe(lane, ["tasks"], listener);
+    subscribe(lane, ["tasks"], {}, listener);
 
     const pending = pendingLoader();
     readOrCreate(lane, ["tasks"], pending.loader);

@@ -613,8 +613,6 @@ export type LaneGatedExternalResult<T> = Omit<
   "invalidate" | "startInvalidationTransition"
 >;
 
-export type LaneWhenStale = "revalidate" | "refetch";
-
 /**
  * A revalidation trigger. `true` refreshes a value once it is stale — which is
  * `staleTime`'s job to define, so the two go together.
@@ -671,20 +669,35 @@ export type LaneUseOptions = {
    */
   staleTime?: number;
   /**
-   * What a read does when the cached value is stale (older than `staleTime`):
-   * - `"revalidate"` (default): reuse the cached value and let it be refreshed
-   *   in the background (via `refetchOnMount`/focus/reconnect/poll) — the reader
-   *   keeps showing it and converges to fresh through a transition.
-   * - `"refetch"`: discard the stale value and suspend on a fresh read. Never
-   *   discards an in-flight read or a value a live subscriber is showing, so it
-   *   only forces a fresh load on an otherwise idle remount — and never a
-   *   rejection, which no read retries: retrying is an event, and a render is
-   *   not one (see {@link LaneReadError}).
+   * How long this read's value is worth keeping once nothing is holding it —
+   * this read's override of the lane's {@link LaneOptions.gcTime}, and the way
+   * to say "do not serve this again after I leave".
    *
-   * This is the read-time freshness behavior; `refetchOnMount`/focus/reconnect
-   * decide *when* a background revalidation is triggered, independently.
+   * ```
+   * gcTime: 0        // a remount always loads fresh
+   * gcTime: 5_000    // come straight back and reuse it; linger and reload
+   * gcTime: Infinity // keep it
+   * ```
+   *
+   * It reads as a memory setting and is a freshness one too, because for an
+   * *idle* entry those are the same question: a value nobody holds is kept for
+   * exactly one reason — the reader who might come back — so "how long is it
+   * worth keeping" and "how long is it worth serving" have one answer. Which is
+   * why the load a remount starts after the deadline suspends: the entry is
+   * simply gone, so the wait joins whatever transition the remount is part of,
+   * instead of committing a stale value and refreshing it afterwards.
+   *
+   * Freshness *while a reader is mounted* is the other mechanism — `staleTime`
+   * with `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect`, which
+   * refresh what is on screen without taking it away.
+   *
+   * The deadline is set when the entry goes idle, from the `gcTime` of whoever
+   * held it last (at zero subscribers, the departing reader is the only one
+   * there is to ask). Eviction is never synchronous, so an unsubscribe and a
+   * resubscribe within one task — StrictMode's double invoke, a re-suspension —
+   * collect nothing.
    */
-  whenStale?: LaneWhenStale;
+  gcTime?: number;
   refetchOnFocus?: LaneRefetchOnFocus;
   refetchOnMount?: LaneRefetchOnMount;
   refetchOnReconnect?: LaneRefetchOnReconnect;
@@ -696,11 +709,20 @@ export type LaneUseOptions = {
 export type LaneOptions = {
   /**
    * How long (ms) an inactive entry (no subscribers) is retained before it is
-   * garbage-collected. Idle-time based — unrelated to `staleTime`/freshness.
-   * An instance-wide memory policy, not a per-read concern. Default 5 minutes;
-   * `Infinity` opts out. Eviction is coalesced into one timer per lane, so the
-   * exact moment is approximate (it never needs to be precise — a late eviction
-   * just keeps the value reusable a little longer).
+   * garbage-collected — the default for reads that do not set their own
+   * {@link LaneUseOptions.gcTime}. Idle-time based, and unrelated to
+   * `staleTime`: freshness is about refreshing what a reader is showing, this is
+   * about what is left for the next one. Default 5 minutes; `Infinity` opts out.
+   *
+   * The instance value is a default rather than a floor or a ceiling. Retention
+   * used to be instance-wide on the argument that it is a memory policy; it is
+   * that and also a *reuse* policy, and how long a value is worth serving again
+   * belongs to the data rather than to the app.
+   *
+   * Collection is coalesced into one timer per lane, armed for the nearest
+   * deadline. It is never synchronous, however short the `gcTime`: an
+   * unsubscribe and a resubscribe within one task — StrictMode's double invoke,
+   * a re-suspension — collect nothing.
    */
   gcTime?: number;
 };

@@ -702,7 +702,7 @@ refetch status into `useState` / `useEffect`.
 
 **Do** use the read/instance options for revalidation and freshness:
 `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`, `staleTime`,
-`whenStale`, and `gcTime`. See
+`gcTime`, and the revalidation triggers. See
 [lifecycle behavior](./api-reference.md#lifecycle-behavior).
 
 ### Turning a trigger on without a `staleTime`

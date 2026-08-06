@@ -277,6 +277,13 @@ export function useLane<T, C = T>(
     startTransition(() => {});
   });
 
+  // The one piece of policy the subscription carries, and the store asks for it
+  // at the moment this reader leaves: how long its value is worth keeping once
+  // nothing holds it. An event rather than a value on the subscriber object,
+  // because options are re-read every render and the subscription is not
+  // re-opened for them — what matters is what the read said last.
+  const gcTime = useEffectEvent(() => read.gcTime);
+
   const refetchOnMount = useEffectEvent(
     (targetLane: Lane, targetKeyId: string) => {
       const invalidateOptions = revalidateOptions(
@@ -428,6 +435,7 @@ export function useLane<T, C = T>(
     // whose identity is the source's — so it lives in the effect, not behind an
     // event: anything new it comes to read is forced into the deps.
     const close = subscribeLane(lane, keyId, sourceKey, {
+      gcTime: () => gcTime(),
       onInvalidationPending: () => {
         onInvalidationPending();
       },

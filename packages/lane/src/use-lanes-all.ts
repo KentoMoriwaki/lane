@@ -146,6 +146,28 @@ export function useLanesAll<T, C = T>(
     revalidateAll(lane, descriptors, options, "refetchOnReconnect");
   });
 
+  // The subscription's one piece of policy, read when a key's last member
+  // leaves. Members sharing a key share its subscription, so the shortest of
+  // them decides — the same rule the store applies between separate readers, and
+  // for the same reason: a value nobody said to keep is not kept.
+  const gcTimeFor = useEffectEvent((keyId: string) => {
+    let shortest: number | undefined;
+
+    for (const descriptor of descriptors) {
+      if (descriptor.keyId !== keyId) {
+        continue;
+      }
+
+      const own = optionsFor(options, descriptor).gcTime;
+
+      if (own !== undefined && (shortest === undefined || own < shortest)) {
+        shortest = own;
+      }
+    }
+
+    return shortest;
+  });
+
   // The one imperative bit: keyId → unsubscribe. The effect reconciles the live
   // subscriptions to the current keys — dropping departed keys and subscribing
   // newly present ones (firing their mount refetch). Subscriptions are pure
@@ -179,6 +201,7 @@ export function useLanesAll<T, C = T>(
       active.set(
         keyId,
         subscribeLane(lane, keyId, key, {
+          gcTime: () => gcTimeFor(keyId),
           onInvalidate: () => refresh(false),
           onRemove: () => refresh(true),
         }),
@@ -280,7 +303,7 @@ function optionsFor<T, C>(
     refetchOnMount: own.refetchOnMount ?? shared.refetchOnMount,
     refetchOnReconnect: own.refetchOnReconnect ?? shared.refetchOnReconnect,
     staleTime: own.staleTime ?? shared.staleTime,
-    whenStale: own.whenStale ?? shared.whenStale,
+    gcTime: own.gcTime ?? shared.gcTime,
   };
 }
 

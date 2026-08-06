@@ -110,7 +110,7 @@ type LaneOptions = {
 | Option | Default | Description |
 | --- | --- | --- |
 | `gcTime` | `300000` (5 min) | How long (ms) an entry is kept **after its last reader leaves** — the default for reads that do not set their own. Idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. |
-| `warmTime` | `300000` (5 min) | How long a settled entry **nobody has ever held** waits for its first reader — the default for reads that do not set their own. The same number as `gcTime`'s default and not the same policy: this one is spent waiting for somebody to arrive, that one on somebody who left. |
+| `warmTime` | `60000` (1 min) | How long a settled entry **nobody has ever held** waits for its first reader — the default for reads that do not set their own. Shorter than `gcTime`'s and unrelated to it: this is spent on an arrival that has not happened, that one on a reader who was there and may return. Both situations here are short — the seconds between a hover and the click, a navigation that changed its mind — so a minute is generous for either; a prefetch placed further ahead than that should state its own. |
 
 ## Reading data
 

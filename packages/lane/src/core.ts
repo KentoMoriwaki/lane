@@ -1363,11 +1363,16 @@ function shouldInvalidateEntry(
 const DEFAULT_STALE_TIME = Number.POSITIVE_INFINITY;
 
 /**
- * How long a settled entry nobody holds waits for its first reader. The same
- * number as `gcTime`'s default and not the same policy: this one is spent
- * waiting for somebody to arrive, that one on somebody who left.
+ * How long a settled entry nobody holds waits for its first reader.
+ *
+ * Shorter than `gcTime`'s default, and independent of it: this is spent on an
+ * arrival that has not happened, not on a reader who was there and may return.
+ * Both situations it covers are short ones — the seconds between a hover
+ * prefetch and the click, and a render that suspended and went away — so a
+ * minute is generous for either. A prefetch placed further ahead of its reader
+ * than that is a bet the read should state itself.
  */
-const DEFAULT_WARM_TIME = 5 * 60 * 1000;
+const DEFAULT_WARM_TIME = 60_000;
 
 const warned = new Set<string>();
 

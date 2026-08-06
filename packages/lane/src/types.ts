@@ -751,11 +751,15 @@ export type LaneOptions = {
   /**
    * How long a settled entry *nobody has ever held* waits for its first reader —
    * the default for reads that do not set their own
-   * {@link LaneUseOptions.warmTime}. Default 5 minutes.
+   * {@link LaneUseOptions.warmTime}. Default 1 minute.
    *
-   * The same number as `gcTime`'s default and not the same policy: this one is
-   * spent waiting for somebody to arrive (a prefetch nobody read yet, a render
-   * that suspended and unmounted), that one on somebody who left.
+   * Shorter than `gcTime`'s default and unrelated to it: this is spent on an
+   * arrival that has not happened (a prefetch nobody read yet, a render that
+   * suspended and unmounted), that one on a reader who was there and may return.
+   * Both situations here are short — the seconds between a hover and the click,
+   * a navigation that changed its mind — so a minute is generous for either, and
+   * a prefetch placed further ahead of its reader than that is a bet the read
+   * should state itself.
    */
   warmTime?: number;
 };

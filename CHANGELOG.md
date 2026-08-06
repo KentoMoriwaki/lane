@@ -18,7 +18,9 @@ All notable changes to `use-lane` are documented here. The format is based on
   Two situations that are the same one: a value warmed by `prefetch` that nobody
   read, and an entry created by a render that suspended and unmounted before it
   could commit. Both are a load done for a reader who may still be arriving, and
-  this is how long "still arriving" stays plausible.
+  this is how long "still arriving" stays plausible. It defaults to **1 minute** —
+  both situations are short ones, and a prefetch placed further ahead of its
+  reader than that is a bet the read should state itself.
 
   `gcTime` used to cover it by being read at the entry's *creation*, which
   conflated two questions sharing nothing but a unit: "somebody had this and left,

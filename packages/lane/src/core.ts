@@ -4,6 +4,7 @@ import {
   LaneOwnershipError,
   publicationReason,
 } from "./ownership";
+import { LaneReadError } from "./read-error";
 import { replaceEqualDeep } from "./structural";
 import type {
   Lane,
@@ -410,17 +411,25 @@ export function readOrCreate<T, C = T>(
  * refreshed separately in the background, so a reader shows the cached value
  * and converges through a transition (the long-standing behavior).
  *
- * `"refetch"` discards a stale value (or a prior error) and suspends on a fresh
- * read, but never discards an in-flight read (would break same-transition
- * sharing), a value a live subscriber is showing (would yank a shared promise
- * from active readers), or a fulfilled value *no reader has committed on* — that
- * last case is a pre-commit suspense retry (or a first adoption of a
- * prefetched/hydrated value), not a remount, and discarding it would loop
- * forever: React re-reads on each retry, re-judges the just-settled value stale,
- * and refetches without ever committing. So a stale fulfilled value is only
- * discarded on a genuine idle remount of previously-live data.
- * A prior error is always retried (it throws to an error boundary rather than
- * suspending, so it cannot drive that loop).
+ * `"refetch"` discards a stale value and suspends on a fresh read, but never
+ * discards an in-flight read (would break same-transition sharing), a value a
+ * live subscriber is showing (would yank a shared promise from active readers),
+ * or a fulfilled value *no reader has committed on* — that last case is a
+ * pre-commit suspense retry (or a first adoption of a prefetched/hydrated
+ * value), not a remount, and discarding it would loop forever: React re-reads on
+ * each retry, re-judges the just-settled value stale, and refetches without ever
+ * committing. So a stale fulfilled value is only discarded on a genuine idle
+ * remount of previously-live data.
+ *
+ * A rejection is never discarded here. Retrying is an event — a mount, a
+ * trigger, an `invalidate` — and a render is not one: React may render a
+ * suspended reader any number of times and throw the work away, so a retry
+ * decided during render fires again on every attempt. The reader would then
+ * receive a fresh pending promise each time and suspend instead of throwing,
+ * which means the failure never reaches the boundary and the loop never ends.
+ * The fulfilled path above escapes this only because its discard produces an
+ * unadopted cache, which the guard below then refuses to discard again; a
+ * rejection has no such stopping property, so it is not started.
  *
  * Adoption is tracked per *cache*, not per entry. An entry-wide "has ever been
  * subscribed" flag looks equivalent and is not: it stays true once the key has
@@ -473,13 +482,6 @@ function reuseCache(
 
   if (cache.settlement === undefined || entry.subscribers.size > 0) {
     return promise;
-  }
-
-  // Errors are checked before the mount gate: a rejected read throws to an error
-  // boundary instead of suspending, so it never drives the loop, and a boundary
-  // reset must be able to retry it even though the read never committed.
-  if (cache.settlement.kind === "rejected") {
-    return undefined;
   }
 
   // Never adopted → a pre-commit retry or a first prefetch/hydration read, not a
@@ -984,7 +986,15 @@ function setEntryCache<T>(
 
     if (!fallback) {
       cache.settlement = { at: Date.now(), kind: "rejected" };
-      throw error;
+
+      // Wrapped on the way out, because this is the throw that unmounts the
+      // reader: whatever it was holding — the subscription, its `invalidate` —
+      // goes with it, and the error is all that reaches the boundary. A
+      // published key is left alone; recovering it is not the client's to offer
+      // (see `LaneReadError`).
+      throw entry.external
+        ? error
+        : new LaneReadError(entry.key, entry.keyId, error);
     }
 
     cache.settlement = { at: fallback.at, kind: "fulfilled" };
@@ -1281,6 +1291,15 @@ function shouldInvalidateEntry(
 
   if (options.onlyIf === "settled") {
     return true;
+  }
+
+  // Exactly the entries whose readers are in an error boundary. Stale-on-error
+  // records its settlement as the fallback's — `fulfilled` — so a key still
+  // serving data is not one of these however its last load went, and an
+  // in-flight read was already excluded above. So "retry what is broken" cannot
+  // reach anything a reader is showing.
+  if (options.onlyIf === "rejected") {
+    return cache.settlement.kind === "rejected";
   }
 
   if (cache.settlement.kind === "rejected") {

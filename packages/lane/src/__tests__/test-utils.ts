@@ -6,6 +6,7 @@ import {
   subscribeLane as subscribeEntry,
 } from "../core";
 import { serializeKey } from "../keys";
+import { LaneReadError } from "../read-error";
 import type {
   Lane,
   LaneEntryInfo,
@@ -16,6 +17,19 @@ import type {
 import type { LaneReadOptions, LaneSubscriber } from "../core";
 
 type TestSubscription = (entry: LaneEntryInfo) => void;
+
+/**
+ * What an error boundary in these tests prints. A failed read throws a
+ * {@link LaneReadError} carrying the key; the message a boundary would show a
+ * user is the loader's, so the assertions stay about *which* failure arrived
+ * rather than about the envelope it arrived in (which `read-error.test.ts`
+ * asserts on its own).
+ */
+export function caughtMessage(error: unknown): string {
+  const cause = error instanceof LaneReadError ? error.cause : error;
+
+  return cause instanceof Error ? cause.message : String(cause);
+}
 
 // Key-addressed conveniences over the id-addressed core API: tests speak keys,
 // the store speaks canonical ids, and the serialization happens here once.

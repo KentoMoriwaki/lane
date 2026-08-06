@@ -67,7 +67,11 @@ describe("readOrCreate", () => {
     const second = readOrCreate(lane, ["tasks"], async () => "loaded");
 
     expect(second).toBe(first);
-    await expect(first).rejects.toBe(error);
+    // The loader's error, wrapped on the way out (see `read-error.test.ts`).
+    await expect(first).rejects.toMatchObject({
+      cause: error,
+      name: "LaneReadError",
+    });
     expect(loader).toHaveBeenCalledTimes(1);
   });
 });

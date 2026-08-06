@@ -1253,7 +1253,7 @@ type LaneUseOptions = {
 | --- | --- | --- |
 | `loaderMeta` | the lane's | Read this entry with a different `meta` than the lane carries — see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key). Not part of the key. In a batch, a member's own value wins over the batch's. |
 | `staleTime` | `Infinity` | How long (ms) a fulfilled value is considered fresh. Once stale, a read's behavior is decided by `whenStale`, and the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads. The default means **nothing is ever stale until you say what stale means** — so `whenStale: "refetch"` and all three revalidation triggers do nothing without a `staleTime`, and warn in development. `staleTime` is also the rate limit on the triggers it gates: a value refreshed within it is not refreshed again however many times they fire. `staleTime: 0` asks for "always stale", which includes a mount refetching the value that same mount just loaded — the read runs during render and the trigger fires from an effect, so the two stack. |
-| `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value (or a prior error) and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. |
+| `whenStale` | `"revalidate"` | What a read does when the cached value is stale (older than `staleTime`). `"revalidate"` reuses the cached value and refreshes it in the background — the reader keeps showing it and converges through a transition. `"refetch"` discards the stale value and suspends on a fresh read, but never discards an in-flight read or a value a live subscriber is showing, so it only forces a fresh load on an otherwise idle remount. A rejection is never discarded by a read — retrying is an event, and a render is not one; see [`LaneReadError`](#lanereaderror). |
 | `refetchOnFocus` | `false` | Reloads stale entries on window focus. Needs a `staleTime` to fire at all — with the `Infinity` default nothing is stale, and Lane warns in development. |
 | `refetchOnMount` | `false` | Reloads stale entries when a reader mounts. Needs a `staleTime` to fire at all. `staleTime: 0` makes it fire on every mount — including the mount that just loaded the value, since the read runs during render and this fires from an effect. |
 | `refetchOnReconnect` | `false` | Same as `refetchOnFocus`, driven by the browser `online` event. |
@@ -1356,6 +1356,83 @@ each react-query `getQueryData` use goes instead.
 > [mutating a server-owned key](#mutating-a-server-owned-key) for what to do
 > instead.
 
+### `LaneReadError`
+
+```ts
+class LaneReadError extends Error {
+  readonly key: LaneKey;
+  readonly keyId: string;
+  // `cause` is the loader's own error
+}
+```
+
+What a failed read throws — the loader's error wrapped in one that says *which
+key* failed. Only a first load (nothing to show) throws at all; a failed refresh
+over existing data resolves `{ data, refreshError }` instead, and that field
+carries the loader's error **unwrapped**.
+
+The wrapper exists because of what a throw destroys. In the common shape —
+`useLane` and `use()` in one component, under the boundary — the reader that
+suspended is also the only thing holding the key, so its subscription and the
+`invalidate` the hook handed it go with it. The error is the one artifact that
+crosses the boundary from a reader that no longer exists, which makes it the
+only thing that can carry the key out:
+
+```tsx
+function Fallback({ error, clear }: { error: unknown; clear: () => void }) {
+  const lane = useLaneInstance();
+
+  if (!(error instanceof LaneReadError)) {
+    throw error;   // not ours to recover
+  }
+
+  return (
+    <button onClick={() => { lane.invalidate(error.key); clear(); }}>
+      Retry
+    </button>
+  );
+}
+```
+
+That is a boundary that recovers a read without being told what it reads. For a
+subtree with several failed keys — one boundary catches only the first throw —
+`lane.invalidateAll(scope, { onlyIf: "rejected" })` is the same recovery without
+naming a key at all.
+
+Neither the lane instance nor a `retry()` method is carried here. The lane is a
+context read away for anything that can call a hook (a fallback is a component),
+and a method would have to answer questions the error has no business answering:
+invalidate or remove, and whether it also clears the boundary's own state. A key
+answers nothing and composes with everything.
+
+**A published key is not wrapped.** `invalidate` and `remove` both throw
+[`LaneOwnershipError`](#laneownershiperror) on one, so an external failure would
+be handing out a recovery that cannot be performed; those keep their own shape
+(and [`LaneExternalTimeoutError`](#laneexternaltimeouterror) already carries the
+same `key` for identification).
+
+**It does not survive the server.** React replaces an error thrown while
+rendering on the server with a digest before the client sees it, so a fallback
+recovering by `error.key` recovers from client-side failures only. A read that
+failed during SSR reaches the browser as an ordinary error.
+
+#### Why a rejection is never retried by a read
+
+A cached rejection is served to every later read of the key until the key is
+invalidated, removed, or collected — including under `whenStale: "refetch"`,
+which discards stale *values* and never errors.
+
+Retrying is an event; a render is not one. React renders a suspended reader as
+many times as it likes and throws the work away, so a retry decided during a read
+fires again on every attempt: the reader is handed a fresh pending promise each
+time, suspends instead of throwing, and the failure never reaches the boundary at
+all. A `whenStale: "refetch"` read against a server that is down would spin
+forever showing a fallback.
+
+So recovery is always something that *happens*: an `invalidate`, a `remove`, a
+revalidation trigger firing from an effect, or garbage collection. Reads only
+read.
+
 ### `LaneOwnershipError`
 
 ```ts
@@ -1395,7 +1472,7 @@ lane.invalidateAll(["tasks"]);
 
 ```ts
 type LaneInvalidateOptions = {
-  onlyIf?: "stale" | "settled";
+  onlyIf?: "stale" | "settled" | "rejected";
   staleTime?: number;
   background?: boolean;
   after?: Promise<unknown>;
@@ -1409,6 +1486,15 @@ type LaneInvalidateOptions = {
   retry it, and a failed *refresh* keeps the previous value, which stays as old as
   it was and so is still eligible).
 - `"settled"` → only entries with a settled promise (skips in-flight reads).
+- `"rejected"` → only entries whose last read failed **with nothing to show** —
+  exactly the keys whose readers are sitting in an Error Boundary. Stale-on-error
+  records the fallback's settlement, so a key still serving data is not one of
+  these however its last load went, and in-flight reads are excluded as above.
+  That is what makes `lane.invalidateAll(scope, { onlyIf: "rejected" })` safe to
+  fire at a whole subtree: it retries what is broken and cannot disturb what is
+  on screen. It is the blunt companion to [`LaneReadError`](#lanereaderror)'s
+  `key` — one boundary catches one throw, so a subtree with several failed keys
+  needs a way to say "retry what is broken" without naming any of them.
 - `background: true` → converge through the **background** transition
   (`isBackgroundPending`) instead of the default explicit one
   (`isInvalidationPending`). Use it for automatic refreshes so they don't read as a
@@ -1806,8 +1892,9 @@ Two anti-patterns to name, because both look reasonable:
 - **Stale reads.** `staleTime` sets how long a value stays fresh; on a stale
   read, `whenStale` decides what happens. `"revalidate"` (default) keeps showing
   the cached value and refreshes in the background. `"refetch"` discards an idle
-  stale value (or a prior error) and suspends on a fresh load — never discarding
-  an in-flight read or a value a live subscriber is showing. This is orthogonal to `refetchOnMount`
+  stale value and suspends on a fresh load — never discarding
+  an in-flight read or a value a live subscriber is showing, and never a
+  rejection ([`LaneReadError`](#lanereaderror) says why). This is orthogonal to `refetchOnMount`
   / `refetchOnFocus` / `refetchOnReconnect`, which decide *when* a background
   revalidation is triggered, not what a read shows.
 - **Abort.** Loaders receive an `AbortSignal` that fires when the read is
@@ -1861,7 +1948,7 @@ Two anti-patterns to name, because both look reasonable:
 
 Runtime exports beyond the hooks and `createLane`: `external` (see
 [`external`](#external--a-read-the-owner-publishes)), `LaneExternalTimeoutError`,
-`LaneOwnershipError`, `laneRead`,
+`LaneOwnershipError`, `LaneReadError`, `laneRead`,
 `infiniteLaneRead`, `laneKey`, `laneSnapshot` (see
 [`laneRead`](#lanereadspec--key--loader-colocation) and
 [`LaneKeyOf`](#lanekeyoft--a-key-that-knows-what-it-holds)),

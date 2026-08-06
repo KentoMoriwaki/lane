@@ -23,6 +23,7 @@ import type {
   LaneUseOptions,
 } from "../types";
 import {
+  caughtMessage,
   deferred,
   readOrCreate,
   resetVitest,
@@ -1303,7 +1304,11 @@ class CatchBoundary extends React.Component<
 
   render() {
     if (this.state.error) {
-      return React.createElement("div", null, `caught:${this.state.error.message}`);
+      return React.createElement(
+        "div",
+        null,
+        `caught:${caughtMessage(this.state.error)}`,
+      );
     }
 
     return this.props.children;

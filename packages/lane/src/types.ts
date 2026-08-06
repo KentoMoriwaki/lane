@@ -316,7 +316,23 @@ export type LaneUpdater<T> = (
 ) => LaneValue<T>;
 
 export type LaneInvalidateOptions = {
-  onlyIf?: "stale" | "settled";
+  /**
+   * Which entries in reach actually invalidate.
+   *
+   * - `"stale"`: fulfilled and older than `staleTime`. What every revalidation
+   *   trigger fires as.
+   * - `"settled"`: anything not in flight.
+   * - `"rejected"`: only entries whose last read failed *with nothing to show* —
+   *   exactly the keys whose readers are in an error boundary. Stale-on-error
+   *   records the fallback's settlement, so a key still serving data is not one
+   *   of these however its last load went, and an in-flight read is excluded as
+   *   above. That is what makes `invalidateAll(scope, { onlyIf: "rejected" })`
+   *   safe to fire at a whole subtree: it retries what is broken and cannot
+   *   disturb what is on screen. The blunt companion to
+   *   {@link LaneReadError}'s `key`, for when one boundary is holding several
+   *   failed keys and caught only the first.
+   */
+  onlyIf?: "stale" | "settled" | "rejected";
   staleTime?: number;
   /**
    * Converge through the background transition (surfaces as `isBackgroundPending`)
@@ -426,8 +442,7 @@ export type Lane = {
    * `refreshError`, since the caller asked for the stop. With nothing to revert
    * to the read settles rejected, the only end a transition holding no data can
    * reach, and recovers like any other failed first load: the rejection is reused
-   * until the key is invalidated, removed, collected, or read with
-   * `whenStale: "refetch"`.
+   * until the key is invalidated, removed, or collected.
    *
    * A settled read is not in progress, so cancelling one does nothing; use
    * `invalidate` or `remove` to discard a value.
@@ -660,9 +675,11 @@ export type LaneUseOptions = {
    * - `"revalidate"` (default): reuse the cached value and let it be refreshed
    *   in the background (via `refetchOnMount`/focus/reconnect/poll) — the reader
    *   keeps showing it and converges to fresh through a transition.
-   * - `"refetch"`: discard the stale value (or a prior error) and suspend on a
-   *   fresh read. Never discards an in-flight read or a value a live subscriber
-   *   is showing, so it only forces a fresh load on an otherwise idle remount.
+   * - `"refetch"`: discard the stale value and suspend on a fresh read. Never
+   *   discards an in-flight read or a value a live subscriber is showing, so it
+   *   only forces a fresh load on an otherwise idle remount — and never a
+   *   rejection, which no read retries: retrying is an event, and a render is
+   *   not one (see {@link LaneReadError}).
    *
    * This is the read-time freshness behavior; `refetchOnMount`/focus/reconnect
    * decide *when* a background revalidation is triggered, independently.

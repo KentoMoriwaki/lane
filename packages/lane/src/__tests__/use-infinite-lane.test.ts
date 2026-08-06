@@ -7,7 +7,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createLane, LaneProvider, useInfiniteLane } from "../index";
 import type { InfiniteLaneResult } from "../use-infinite-lane";
 import type { Lane, LaneUseOptions } from "../types";
-import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";
+import {
+  caughtMessage,
+  deferred,
+  resetVitest,
+  settlePromiseHandlers,
+} from "./test-utils";
 
 // A page is just its cursor plus the cursor after it, so a rendered list reads
 // as the cursors it was assembled from.
@@ -398,7 +403,7 @@ class CatchBoundary extends React.Component<
       return React.createElement(
         "div",
         null,
-        `caught:${this.state.error.message}`,
+        `caught:${caughtMessage(this.state.error)}`,
       );
     }
 

@@ -4,20 +4,20 @@
     "path": "dist/index.js",
     "import": "{ createLane }",
     "ignore": ["react", "react-dom"],
-    "limit": "2.39 kB"
+    "limit": "2.37 kB"
   },
   {
     "name": "typical: LaneProvider + useLane",
     "path": "dist/index.js",
     "import": "{ LaneProvider, useLane }",
     "ignore": ["react", "react-dom"],
-    "limit": "3.82 kB"
+    "limit": "3.84 kB"
   },
   {
     "name": "everything (ceiling)",
     "path": "dist/index.js",
     "import": "*",
     "ignore": ["react", "react-dom"],
-    "limit": "5.41 kB"
+    "limit": "5.42 kB"
   }
 ]

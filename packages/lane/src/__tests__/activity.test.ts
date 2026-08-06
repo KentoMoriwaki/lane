@@ -4,19 +4,20 @@
  * `<Activity>` (stable in React 19.2) preserves a hidden subtree's state while
  * cleaning up its effects — both layout and passive, measured on 19.2.
  *
- * Lane's subscription is a *passive* effect, so a hidden reader misses every
- * notification, and React re-shows the tree it committed before the hide
- * without re-rendering anything whose inputs did not change. What corrects the
- * first revealed frame is the layout reconciliation in `useLane`: layout
- * effects are re-created inside the reveal commit, before paint, and the
- * reconcile compares the committed promise against the store's current one —
- * the commit invariant that a reader only ever commits the store's current
- * promise. A replacement that settled while hidden (a value published behind
- * the reader's back) is adopted at the reveal without another loader call; a
- * repudiated or removed entry drops to the boundary's fallback with the
- * re-read starting at the reveal. The passive catch-up (`syncAfterSubscribe`)
- * still exists, but only for the microwindow between the last render and the
- * subscription — the reveal itself is the layout reconciliation's job.
+ * A hidden reader is therefore unsubscribed either way — its subscription is
+ * opened in a layout effect and closed in a passive one, and hiding runs both
+ * cleanups — so it misses every notification, and React re-shows the tree it
+ * committed before the hide without re-rendering anything whose inputs did not
+ * change. What corrects the first revealed frame is the layout reconciliation
+ * in `useLane`: layout effects are re-created inside the reveal commit, before
+ * paint, and the reconcile compares the committed promise against the store's
+ * current one — the commit invariant that a reader only ever commits the
+ * store's current promise. A replacement that settled while hidden (a value
+ * published behind the reader's back) is adopted at the reveal without another
+ * loader call; a repudiated or removed entry drops to the boundary's fallback
+ * with the re-read starting at the reveal. Nothing else can do this job: the
+ * subscription re-opened in the same layout effect only carries what happens
+ * from the reveal onwards, and nothing was listening for the hidden stretch.
  *
  * The publication lineage is the other channel into a hidden tree, and it is
  * scoped to reads that declare `loader: external` — see `use-lane.ts`. So the

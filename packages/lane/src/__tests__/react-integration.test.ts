@@ -24,6 +24,7 @@ import type {
 } from "../types";
 import {
   deferred,
+  readOrCreate,
   resetVitest,
   settlePromiseHandlers,
   subscribeInvalidate,
@@ -464,9 +465,8 @@ describe("React integration", () => {
       await settlePromiseHandlers();
     });
 
-    // Either through a fresh initial render or the post-subscribe catch-up,
-    // a second read must start instead of rendering the dropped promise
-    // forever.
+    // Either through a fresh initial render or a notification, a second read
+    // must start instead of rendering the dropped promise forever.
     for (let i = 0; i < 20 && loader.mock.calls.length < 2; i += 1) {
       await flushReact();
     }
@@ -484,7 +484,7 @@ describe("React integration", () => {
 
     // Warm mount so the remount below commits its value in the first pass:
     // the window under test sits between a *committed* reader's layout
-    // reconciliation and its passive subscription.
+    // reconciliation and its passive effects.
     lane.set(["tasks"], "v1");
     const warm = await renderLaneApp({ lane, loader });
     await waitForText(warm.container, "v1|background:0|transition:0|refresh:none");
@@ -493,10 +493,10 @@ describe("React integration", () => {
 
     // Deterministic, not a race: layout effects run in tree order, so a
     // sibling mounted after the reader invalidates after the reader's
-    // reconciliation has already run and before its passive subscription
-    // exists. Neither the render-time checks nor a notification can see it —
-    // only the post-subscribe catch-up does. Without it the reader would show
-    // v1 forever.
+    // reconciliation has already run and before its passive effects do. No
+    // render-time check can see it; the reader's subscription is opened one
+    // line after that reconciliation, so the notification reaches it and waits
+    // for the passive phase. Without that the reader would show v1 forever.
     function LayoutInvalidator() {
       React.useLayoutEffect(() => {
         lane.invalidate(["tasks"]);
@@ -528,6 +528,55 @@ describe("React integration", () => {
     await resolveReload(reload, "v2");
 
     await waitForText(app.container, "v2|background:0|transition:0|refresh:none");
+  });
+
+  it("leaves one subscription behind under StrictMode's double-invoked effects", async () => {
+    // The subscription is opened in a layout effect and closed in a passive one,
+    // and StrictMode's simulated remount drives exactly that pair out of step:
+    // it re-runs the layout *create* against a layout destroy that does not
+    // exist, with the passive cleanup in between. Opening a second one there
+    // would leave a subscriber nobody holds the close for — it never
+    // unsubscribes, so the entry never goes idle and no sweep can reclaim it.
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: 1_000 });
+    const loader = vi.fn(async () => "loaded");
+
+    const app = await render(
+      React.createElement(
+        React.StrictMode,
+        null,
+        React.createElement(LaneProvider, {
+          lane,
+          children: React.createElement(
+            React.Suspense,
+            { fallback: "loading" },
+            React.createElement(Probe, { loader }),
+          ),
+        }),
+      ),
+    );
+
+    await waitForText(
+      app.container,
+      "loaded|background:0|transition:0|refresh:none",
+    );
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // The unmount releases the last subscriber, which is the only thing that
+    // arms the lane sweep. A leaked one would keep the entry out of it forever,
+    // and the read below would come back from cache without calling the loader.
+    unmountApp(app);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "loaded",
+    });
+    expect(loader).toHaveBeenCalledTimes(2);
   });
 
   it("catches up with invalidations missed during a suspended key switch", async () => {
@@ -572,8 +621,8 @@ describe("React integration", () => {
     });
 
     // The dropped entry must force a second ["b"] read — either through a
-    // re-read of the still-uncommitted render or through the post-subscribe
-    // catch-up — instead of leaving the reader stuck on the dropped promise.
+    // re-read of the still-uncommitted render or through a notification —
+    // instead of leaving the reader stuck on the dropped promise.
     for (let i = 0; i < 20 && bReads.length > 0; i += 1) {
       await flushReact();
     }
@@ -1114,11 +1163,12 @@ describe("React integration", () => {
 
     expect(app.container.textContent).toContain("loading");
 
-    // Hiding for a fallback tears down layout effects only — passive effects stay
-    // mounted, and Lane subscribes in a passive effect. So the hidden reader is
-    // still a subscriber and re-reads on this notification directly, with no
-    // catch-up involved. (Contrast `<Activity>`, which cleans up both: see
-    // activity.test.ts.)
+    // Hiding for a fallback tears down layout effects only — passive effects
+    // stay mounted, and Lane *closes* its subscription from a passive effect
+    // even though it opens it from a layout one. That asymmetry is exactly what
+    // this covers: the hidden reader is still a subscriber and re-reads on this
+    // notification directly, with no catch-up involved. (Contrast `<Activity>`,
+    // which cleans up both: see activity.test.ts.)
     await act(async () => {
       lane.invalidate(["tasks"]);
       await settlePromiseHandlers();
@@ -1132,6 +1182,112 @@ describe("React integration", () => {
       app.container,
       "v2|background:0|transition:0|refresh:none|sibling:b1",
     );
+  });
+
+  it("closes the departed key's subscription when the read switches keys", async () => {
+    // A source switch runs the opening half for the *new* key before the
+    // closing half runs for the old one — layout before passive, in that one
+    // commit — so for a moment the reader holds two subscriptions to two
+    // entries. The cleanup has to close the one its own setup opened rather than
+    // whatever the reader is subscribed to by then, or the departed key keeps a
+    // subscriber nobody can release.
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: 1_000 });
+    const loader = vi.fn(async (context: LaneLoaderContext) =>
+      serializeKey(context.key) === serializeKey(["a"]) ? "va" : "vb",
+    );
+
+    const app = await render(keyedApp(lane, ["a"], loader));
+    await waitForText(app.container, "va|background:0|transition:0|refresh:none");
+
+    await act(async () => {
+      app.root.render(keyedApp(lane, ["b"], loader));
+      await settlePromiseHandlers();
+    });
+    await waitForText(app.container, "vb|background:0|transition:0|refresh:none");
+    expect(loader).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    // `["a"]` went idle at the switch and the sweep reclaimed it.
+    await expect(readOrCreate(lane, ["a"], loader)).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "va",
+    });
+    expect(loader).toHaveBeenCalledTimes(3);
+    expect(app.container.textContent).toBe(
+      "vb|background:0|transition:0|refresh:none",
+    );
+
+    // And the other direction, which is what says the overlap left the arriving
+    // key with a subscription somebody still holds the close for: unmounting
+    // releases `["b"]` too.
+    unmountApp(app);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    await expect(readOrCreate(lane, ["b"], loader)).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "vb",
+    });
+    expect(loader).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not open a second subscription when a fallback returns", async () => {
+    // The other side of that asymmetry. Coming back from a re-suspension
+    // re-creates the layout effects over a subscription the passive half never
+    // closed, so the opening half has to recognise its own and do nothing. If it
+    // opened a second one, only the first would ever be closed — and a
+    // subscriber nobody unsubscribes keeps the entry out of every sweep.
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: 1_000 });
+    const loader = vi.fn(async () => "loaded");
+    const blocked = deferred<string>();
+
+    const app = await render(
+      fallbackSiblingApp(lane, loader, "a", async () => "a1"),
+    );
+    await waitForText(
+      app.container,
+      "loaded|background:0|transition:0|refresh:none|sibling:a1",
+    );
+
+    // Re-suspend: layout effects torn down, passive ones left mounted.
+    await act(async () => {
+      app.root.render(
+        fallbackSiblingApp(lane, loader, "b", () => blocked.promise),
+      );
+      await settlePromiseHandlers();
+    });
+    await flushReact();
+    expect(app.container.textContent).toContain("loading");
+
+    // ...and back, which re-creates them.
+    await resolveReload(blocked, "b1");
+    await waitForText(
+      app.container,
+      "loaded|background:0|transition:0|refresh:none|sibling:b1",
+    );
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    unmountApp(app);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    // Collected, so every subscription the reader opened was also closed.
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "loaded",
+    });
+    expect(loader).toHaveBeenCalledTimes(2);
   });
 });
 

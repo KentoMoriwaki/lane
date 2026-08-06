@@ -91,6 +91,54 @@ All notable changes to `use-lane` are documented here. The format is based on
   stays under its unchanged 2.55 kB guard, and the ceiling moves
   5.55 → 5.58 kB.
 
+### Changed
+
+- **A reader opens its subscription in the layout phase and closes it in the
+  passive one.** Both halves used to live in the same passive effect, which left
+  one window nothing covered: a store change landing between the reveal
+  reconciliation and that subscribe reached neither — the checks were over and
+  the notifications had not begun. A post-subscribe catch-up closed it by
+  re-reading the store, but a re-read says *what* changed and not which
+  transition asked for it, so the entry had to carry a `lastNotifySource` for the
+  catch-up to read the answer back off. Two mechanisms and a field on every
+  entry, to reconstruct something the notification already knew.
+
+  The subscribe now happens in the layout effect, on the line after the
+  reconciliation that reads the store. Nothing runs between the two, so the
+  window is gone by construction: a change lands before the read, where the
+  reconciliation sees it, or after the subscribe, where a notification carries
+  it — with the transition it actually asked for. So an `invalidate` fired from a
+  sibling's layout effect now reaches a reader mounting in that same commit as
+  the event it was, rather than as a difference noticed afterwards. The catch-up
+  and `lastNotifySource` are both gone.
+
+  Closing stays passive, and that asymmetry is load-bearing: it is what keeps a
+  subscription alive while a boundary is re-suspended, which is the only reason
+  re-hydration reaches already-mounted readers.
+
+  Notifications are applied where they land, including inside another component's
+  layout flush. Neither update a notification schedules changes priority with the
+  phase — the pending flag is an optimistic update React pins to the sync lane
+  and entangles with the transition through its revert lane, and the promise
+  rides that transition — so all the phase decides is when that sync work
+  flushes, and a reader of the same key that mounted a commit earlier was already
+  taking it there anyway.
+
+  The guarantee is unchanged — [readers of one key still agree on which pending
+  flag is set](docs/consistency.md#what-holds) — and so is every reveal path,
+  which was always the layout reconciliation's job rather than the
+  subscription's. What changes is one commit fewer in the shape the tearing
+  tests measure: the reconciliation is now a reader's only correction, where it
+  used to be followed by a passive catch-up setting the same promise again at
+  transition priority, which gave that reader's root a second lane and a retry of
+  its own.
+
+  It gives back **19 B** on the store — the entry no longer carries
+  `lastNotifySource`, and its accessor goes with it — and costs **20 B** on the
+  typical `LaneProvider` + `useLane` pair and **12 B** on the ceiling. The design
+  guard tightens 2.39 → 2.37 kB (2.35 kB actual); the other two move by one notch
+  to keep their headroom, 3.82 → 3.84 kB (3.81 kB) and 5.41 → 5.42 kB (5.41 kB).
+
 ### Removed
 
 - **Breaking: `retry` / `retryDelay` are gone**, and with them the

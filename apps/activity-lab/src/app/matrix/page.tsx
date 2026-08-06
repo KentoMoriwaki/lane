@@ -450,22 +450,21 @@ export default function MatrixPage() {
             </select>
           </label>
           <label className="flex items-center gap-1 text-xs">
-            whenStale
+            gcTime
             <select
-              value={readerOpts.whenStale ?? "default"}
+              value={readerOpts.gcTime === undefined ? "default" : String(readerOpts.gcTime)}
               onChange={(event) => {
                 const raw = event.target.value;
                 ops.setReaderOpts({
                   ...readerOpts,
-                  whenStale:
-                    raw === "default" ? undefined : (raw as "revalidate" | "refetch"),
+                  gcTime: raw === "default" ? undefined : Number(raw),
                 });
               }}
               className="rounded border border-zinc-300 px-1 py-0.5"
             >
               <option value="default">default</option>
-              <option value="revalidate">revalidate</option>
-              <option value="refetch">refetch</option>
+              <option value="0">0</option>
+              <option value="1000">1000</option>
             </select>
           </label>
           <label className="flex items-center gap-1 text-xs">

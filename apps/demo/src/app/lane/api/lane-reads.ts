@@ -19,7 +19,7 @@ import type { TaskFilters } from "./endpoints";
  * for the publication instead of going after the data itself.
  *
  * The freshness options are gone with the loaders, and their absence is the
- * point rather than an omission: `staleTime`, `whenStale`, `refetchOnFocus` and
+ * point rather than an omission: `staleTime`, `gcTime`, `refetchOnFocus` and
  * `refetchOnMount` are all instructions to a fetcher this read does not have.
  * Freshness here is the server's to decide, and it decides it the same way it
  * decides everything else — by publishing. The type will not even let these

@@ -26,21 +26,10 @@ export type CancelLabSettings = {
    * loader cooperates is a different feature from one that always holds.
    */
   forwardSignal: boolean;
-  /**
-   * The read's own `whenStale`.
-   *
-   * It is a lab control because it decides what a *rejected* cache is worth:
-   * `"revalidate"` reuses one, `"refetch"` discards it on an idle read. A
-   * cancelled first load settles rejected and is read again immediately — by the
-   * retry of the render that was never committed — so this is not a detail about
-   * staleness here, it is what happens next.
-   */
-  whenStale: "revalidate" | "refetch";
 };
 
 export const DEFAULT_SETTINGS: CancelLabSettings = {
   latencyMs: 1200,
   cancelSuperseded: false,
   forwardSignal: true,
-  whenStale: "revalidate",
 };

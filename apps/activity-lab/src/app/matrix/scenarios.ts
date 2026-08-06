@@ -132,7 +132,7 @@ export const SCENARIOS: readonly Scenario[] = [
     id: 6,
     title: "reader オプション切替で reveal",
     focus:
-      "refetchOnMount:true(staleTime 0)/ whenStale:'refetch'(staleTime 0)それぞれで reveal 時に loader が動くか",
+      "refetchOnMount:true(staleTime 0)/ gcTime:0 それぞれで reveal 時に loader が動くか",
     async run(ops) {
       await baseline(ops);
       // The "always" trigger form was removed upstream; true + staleTime: 0 is
@@ -146,13 +146,16 @@ export const SCENARIOS: readonly Scenario[] = [
       ops.mark("reveal (refetchOnMount=true staleTime=0)");
       ops.setMode("visible");
       await ops.sleep(900);
-      ops.mark("readerOpts: whenStale=refetch staleTime=0");
-      ops.setReaderOpts({ whenStale: "refetch", staleTime: 0 });
+      // `whenStale: "refetch"` was removed upstream; `gcTime: 0` is what it
+      // was reaching for — the hidden reader unsubscribes, the entry goes with
+      // it, and the reveal reads through to a fresh load.
+      ops.mark("readerOpts: gcTime=0");
+      ops.setReaderOpts({ gcTime: 0 });
       await ops.sleep(400);
       ops.mark("hide");
       ops.setMode("hidden");
       await ops.sleep(500);
-      ops.mark("reveal (whenStale=refetch)");
+      ops.mark("reveal (gcTime=0)");
       ops.setMode("visible");
       await ops.sleep(900);
       ops.mark("readerOpts reset");

@@ -21,6 +21,7 @@ export { LaneHydration } from "./hydration";
 export { laneKey } from "./keys";
 export { LaneOwnershipError } from "./ownership";
 export { LaneProvider, useLaneInstance } from "./provider";
+export { LaneReadError } from "./read-error";
 export type { LaneProviderProps } from "./provider";
 export { laneRead } from "./read-spec";
 export { laneSnapshot } from "./snapshot";

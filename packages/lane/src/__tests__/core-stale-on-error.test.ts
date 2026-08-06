@@ -31,10 +31,14 @@ describe("stale-on-error", () => {
       throw error;
     });
 
-    await expect(first).rejects.toBe(error);
+    const thrown = await first.catch((reason: unknown) => reason);
+    expect(thrown).toMatchObject({ cause: error, name: "LaneReadError" });
+
+    // The same rejection, not merely an equal one: the entry is serving the
+    // cached promise rather than running the loader again.
     await expect(
       readOrCreate(lane, ["tasks"], async () => "later"),
-    ).rejects.toBe(error);
+    ).rejects.toBe(thrown);
   });
 
   it("preserves the original freshness time when falling back", async () => {

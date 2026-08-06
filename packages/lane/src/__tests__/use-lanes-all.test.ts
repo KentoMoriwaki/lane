@@ -6,7 +6,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createLane, LaneProvider, useLanesAll } from "../index";
 import type { Lane, LaneReadSpec, LaneUseOptions } from "../types";
-import { deferred, resetVitest, settlePromiseHandlers } from "./test-utils";
+import {
+  caughtMessage,
+  deferred,
+  resetVitest,
+  settlePromiseHandlers,
+} from "./test-utils";
 
 type Reads = readonly LaneReadSpec<string>[];
 
@@ -359,7 +364,7 @@ class CatchBoundary extends React.Component<
       return React.createElement(
         "div",
         null,
-        `caught:${this.state.error.message}`,
+        `caught:${caughtMessage(this.state.error)}`,
       );
     }
 

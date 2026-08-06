@@ -3,21 +3,30 @@
     "name": "store without React (design guard)",
     "path": "dist/index.js",
     "import": "{ createLane }",
-    "ignore": ["react", "react-dom"],
-    "limit": "2.37 kB"
+    "ignore": [
+      "react",
+      "react-dom"
+    ],
+    "limit": "2.44 kB"
   },
   {
     "name": "typical: LaneProvider + useLane",
     "path": "dist/index.js",
     "import": "{ LaneProvider, useLane }",
-    "ignore": ["react", "react-dom"],
-    "limit": "3.84 kB"
+    "ignore": [
+      "react",
+      "react-dom"
+    ],
+    "limit": "3.9 kB"
   },
   {
     "name": "everything (ceiling)",
     "path": "dist/index.js",
     "import": "*",
-    "ignore": ["react", "react-dom"],
-    "limit": "5.42 kB"
+    "ignore": [
+      "react",
+      "react-dom"
+    ],
+    "limit": "5.5 kB"
   }
 ]

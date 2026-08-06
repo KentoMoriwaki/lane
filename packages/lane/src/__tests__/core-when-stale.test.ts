@@ -173,7 +173,14 @@ describe("whenStale", () => {
     vi.restoreAllMocks();
   });
 
-  it("'refetch' always retries a prior error, even within staleTime", async () => {
+  // A read never retries a rejection, whatever `whenStale` says. Retrying is an
+  // event — an `invalidate`, a `remove`, a mount — and a render is not one:
+  // React renders a suspended reader as many times as it likes and throws the
+  // work away, so a retry decided during a read fires again on every attempt.
+  // The reader would receive a fresh pending promise each time and suspend
+  // instead of throwing, so the failure would never reach the boundary and the
+  // loading would never end.
+  it("'refetch' does not retry a prior error, however stale", async () => {
     vi.useFakeTimers();
 
     const lane = createLane();
@@ -181,16 +188,24 @@ describe("whenStale", () => {
     loader.mockRejectedValueOnce(new Error("boom"));
 
     // Initial load rejects → the entry holds a rejected, settled cache.
-    await expect(
-      readOrCreate(lane, ["k"], loader, refetch(10_000)),
-    ).rejects.toThrow("boom");
+    const thrown = await readOrCreate(lane, ["k"], loader, refetch(1_000)).catch(
+      (reason: unknown) => reason,
+    );
+    expect(thrown).toMatchObject({ cause: { message: "boom" } });
     expect(loader).toHaveBeenCalledTimes(1);
 
-    // Idle remount well within staleTime: a prior error is never reused (errors
-    // are not gated by staleTime), so the read refetches fresh.
-    await vi.advanceTimersByTimeAsync(1);
+    // Idle, and long past `staleTime`: still the same rejection, still one call.
+    // Staleness is a property of a value, and this key does not have one.
+    await vi.advanceTimersByTimeAsync(60_000);
     await expect(
-      readOrCreate(lane, ["k"], loader, refetch(10_000)),
+      readOrCreate(lane, ["k"], loader, refetch(1_000)),
+    ).rejects.toBe(thrown);
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    // The event is what retries it.
+    lane.invalidate(["k"]);
+    await expect(
+      readOrCreate(lane, ["k"], loader, refetch(1_000)),
     ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(2);
   });

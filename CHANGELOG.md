@@ -91,7 +91,64 @@ All notable changes to `use-lane` are documented here. The format is based on
   stays under its unchanged 2.55 kB guard, and the ceiling moves
   5.55 → 5.58 kB.
 
+- **A failed read throws `LaneReadError`, which carries the key that failed.**
+  Only a first load throws at all — a failed refresh over existing data still
+  resolves `{ data, refreshError }`, and that field carries the loader's error
+  unwrapped. The wrapper is for what a throw destroys: with `useLane` and `use()`
+  in one component under the boundary, the reader that suspended was also the
+  only thing holding the key, so its subscription and its `invalidate` go with
+  it. The error is the one artifact that crosses the boundary from a reader that
+  no longer exists.
+
+  ```tsx
+  function Fallback({ error, clear }) {
+    const lane = useLaneInstance();
+
+    if (!(error instanceof LaneReadError)) throw error;
+
+    return <button onClick={() => { lane.invalidate(error.key); clear(); }}>Retry</button>;
+  }
+  ```
+
+  An Error Boundary can now recover a read without being told what it reads. The
+  loader's own error is `error.cause`, which is where an app that branches on its
+  own error types reads it from. A published key is not wrapped — `invalidate`
+  and `remove` throw on one, so there is no recovery to offer — and neither is
+  anything React replaced with a digest on the server, so this recovers
+  client-side failures only.
+
+- **`invalidate` accepts `onlyIf: "rejected"`.** Exactly the entries whose last
+  read failed with nothing to show — the keys whose readers are in an Error
+  Boundary. Stale-on-error records the fallback's settlement, so a key still
+  serving data is never one of these however its last load went, and in-flight
+  reads are excluded as with `"settled"`. That is what makes
+  `lane.invalidateAll(scope, { onlyIf: "rejected" })` safe to fire at a whole
+  subtree: it retries what is broken and cannot disturb what is on screen. It is
+  the blunt companion to `LaneReadError.key`, for when one boundary is holding
+  several failed keys and caught only the first.
+
+  Together the two cost **+48 B** on the store and **+36 B** on the typical
+  `LaneProvider` + `useLane` pair — the error class reaches the store guard
+  because a store that can fail is what throws it. Budgets move 2.37 → 2.44 kB,
+  3.84 → 3.9 kB, and the ceiling 5.42 → 5.5 kB.
+
 ### Changed
+
+- **A read never retries a rejection, `whenStale: "refetch"` included.** It used
+  to discard a cached rejection and start a fresh load, which was the only
+  automatic way out of a failed first load — and it did not work. Retrying is an
+  event; a render is not one. React renders a suspended reader as many times as
+  it likes and throws the work away, so the retry fired again on every attempt:
+  the reader was handed a fresh pending promise each time, suspended instead of
+  throwing, and the failure never reached the boundary at all. Against a server
+  that stays down, the fallback spun forever and the loader ran until something
+  else stopped it.
+
+  A cached rejection is now served to every later read of the key until the key
+  is invalidated, removed, or collected. `whenStale: "refetch"` is about stale
+  *values* only. Recovery is always something that happens — `invalidate`,
+  `remove`, a revalidation trigger firing from an effect, GC — and the two
+  additions above are what make the boundary's own recovery cheap to write.
 
 - **A reader opens its subscription in the layout phase and closes it in the
   passive one.** Both halves used to live in the same passive effect, which left

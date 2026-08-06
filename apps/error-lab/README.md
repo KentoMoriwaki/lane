@@ -13,8 +13,12 @@ pnpm --filter @lane/error-lab dev   # http://localhost:3008
 
 Two rules the rig depends on, both already in the code:
 
-- **StrictMode is off** (`reactStrictMode: false`). A double mount makes loader
-  calls and subscriber counts unreadable.
+- **StrictMode is on** (Next's default). It was off at first, on the assumption
+  that a double mount makes the loader count unreadable — it does not: the second
+  render reuses the cache, and subscribe → cleanup → subscribe leaves the entry
+  held. A doubled count here is a finding, not noise, and this is the only place
+  to watch React actually keep "leaving and coming back in one task is not
+  leaving".
 - **The lane is `gcTime: Infinity` by default.** The 5-minute default would
   collect a rejected entry on its own, and "it recovered" would stop meaning
   anything. The `5s` setting is the deliberate opposite, for watching an idle

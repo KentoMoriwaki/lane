@@ -56,8 +56,12 @@ what its outcome means.
   key. Remove is what reaches a first-load failure: once the key holds a value,
   the default `whenStale: "revalidate"` keeps serving it and flipping the switch
   changes nothing.
-- **boundary: Reset** — what the app does about an error it caught. It only
-  clears; the `resetKey` and `onReset` variants come later.
+- **Reset / Reset(Invalidate) / Reset(Remove)**, inside the error frame — what
+  the app does about an error it caught, where an app would put it: in the
+  fallback, so it exists only while there is something to reset. All three
+  clear the boundary; two of them touch the store first. That is the `onReset`
+  axis, as three buttons rather than a mode to arm. `resetKey` is still fixed at
+  "none" and needs the promise handed to a child.
 - **reader: mounted** — whether the reader is on screen, which is also whether
   the key has a subscriber.
 - **loader calls** — the counter that says whether anything ran at all.

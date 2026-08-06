@@ -8,7 +8,6 @@ import {
   useState,
   useSyncExternalStore,
   type ReactNode,
-  type RefObject,
 } from "react";
 import { LaneProvider, useLane } from "use-lane";
 import {
@@ -29,9 +28,16 @@ type BoundaryProps = {
    * reader is the only one that can see the promise at all.
    */
   resetKey?: unknown;
-  /** How the Reset button reaches into the boundary to clear what it caught. */
-  clearRef: RefObject<(() => void) | null>;
+  /**
+   * The store half of a reset, run before the clear. The clear is the boundary's
+   * own and always happens; what an app does *besides* clearing is the axis —
+   * nothing, invalidate the key, or remove it — so the three are three buttons
+   * rather than a mode to pick first and then apply.
+   */
+  onReset: (mode: ResetMode) => void;
 };
+
+export type ResetMode = "clear" | "invalidate" | "remove";
 
 type BoundaryState = { error: unknown; resetKey: unknown };
 
@@ -61,18 +67,26 @@ class Boundary extends Component<BoundaryProps, BoundaryState> {
     return { error: null, resetKey: props.resetKey };
   }
 
-  componentDidMount(): void {
-    this.props.clearRef.current = () => {
-      this.setState({ error: null });
-    };
-  }
-
-  componentWillUnmount(): void {
-    this.props.clearRef.current = null;
-  }
+  /**
+   * The reset lives in the fallback, where an app's does: it exists only while
+   * there is something to reset, so it cannot be pressed into an empty
+   * boundary — which matters now that two of the three also touch the store.
+   *
+   * The store first, then the clear: clearing re-renders the children against
+   * whatever the key holds at that moment, so an operation applied after it
+   * would be applied to a reader that has already read.
+   */
+  reset = (mode: ResetMode) => {
+    this.props.onReset(mode);
+    this.setState({ error: null });
+  };
 
   render(): ReactNode {
-    return this.state.error !== null ? <ErrorFrame /> : this.props.children;
+    return this.state.error !== null ? (
+      <ErrorFrame onReset={this.reset} />
+    ) : (
+      this.props.children
+    );
   }
 }
 
@@ -118,7 +132,6 @@ function Reader({ world, options }: { world: LabWorld; options: LabOptions }) {
  */
 function World({ world, options }: { world: LabWorld; options: LabOptions }) {
   const [mounted, setMounted] = useState(true);
-  const clearRef = useRef<(() => void) | null>(null);
   const calls = useSyncExternalStore(
     world.subscribeCalls,
     world.getCalls,
@@ -147,7 +160,15 @@ function World({ world, options }: { world: LabWorld; options: LabOptions }) {
         </Row>
 
         {mounted ? (
-          <Boundary clearRef={clearRef}>
+          <Boundary
+            onReset={(mode) => {
+              if (mode === "invalidate") {
+                world.lane.invalidate(world.read.key);
+              } else if (mode === "remove") {
+                world.lane.remove(world.read.key);
+              }
+            }}
+          >
             <Suspense fallback={<SkeletonFrame />}>
               <Reader world={world} options={options} />
             </Suspense>
@@ -155,15 +176,6 @@ function World({ world, options }: { world: LabWorld; options: LabOptions }) {
         ) : (
           <UnmountedFrame />
         )}
-
-        <Row label="boundary">
-          <Button disabled={!mounted} onClick={() => clearRef.current?.()}>
-            Reset
-          </Button>
-          <span className="text-xs text-zinc-500">
-            clears the caught error, nothing else
-          </span>
-        </Row>
 
         <Row label="reader">
           <label className="flex items-center gap-1 text-sm">
@@ -197,16 +209,20 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 function Button({
   onClick,
   disabled,
+  small,
   children,
 }: {
   onClick: () => void;
   disabled?: boolean;
+  small?: boolean;
   children: ReactNode;
 }) {
   return (
     <button
       type="button"
-      className="rounded border border-zinc-300 bg-white px-3 py-1 text-sm disabled:opacity-40"
+      className={`rounded border border-zinc-300 bg-white disabled:opacity-40 ${
+        small ? "px-2 py-0.5 text-xs" : "px-3 py-1 text-sm"
+      }`}
       disabled={disabled}
       onClick={onClick}
     >
@@ -488,10 +504,23 @@ function SkeletonFrame() {
   );
 }
 
-function ErrorFrame() {
+function ErrorFrame({ onReset }: { onReset: (mode: ResetMode) => void }) {
   return (
     <Frame state="error" className="border-red-300 bg-red-50">
-      <span className="text-4xl leading-none text-red-400">&#10005;</span>
+      <div className="flex items-center gap-4">
+        <span className="text-3xl leading-none text-red-400">&#10005;</span>
+        <div className="flex flex-col items-stretch gap-1">
+          <Button small onClick={() => onReset("clear")}>
+            Reset
+          </Button>
+          <Button small onClick={() => onReset("invalidate")}>
+            Reset(Invalidate)
+          </Button>
+          <Button small onClick={() => onReset("remove")}>
+            Reset(Remove)
+          </Button>
+        </div>
+      </div>
     </Frame>
   );
 }

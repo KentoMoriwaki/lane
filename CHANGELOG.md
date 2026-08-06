@@ -157,6 +157,30 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
+- **A reveal correction no longer pre-empts the refresh it is already
+  converging to.** `useLane` re-reads the store from a layout effect whenever
+  React re-creates that reader's effects, because that is the only signal a
+  re-appearance gives: an `<Activity>` reveal, or a boundary returning from a
+  re-suspension, happens with no render for anything to arrive through, and the
+  reader would otherwise show a promise the store has replaced, forever. The
+  correction is deliberately synchronous — a passive effect flushes after paint,
+  and this decides what the first revealed frame shows.
+
+  It compared the store's promise against the one this reader had **committed**,
+  which is not the same as the one it has *adopted*: an update converging through
+  a transition is not visible through state until it renders. So a reader whose
+  own `refetchOnMount` had just fired looked out of sync while it was in fact
+  converging, and the correction re-set the same promise outside the transition —
+  dropping the value the boundary had just revealed into a fallback. React's
+  StrictMode re-creates effects within a single commit, which made every such
+  mount do it; a re-suspension is the same shape.
+
+  The reader now tracks what it has adopted and the correction skips a promise
+  that is either already committed or already on its way. Both checks are
+  load-bearing: a render's own decision (the initial read, a source switch) is
+  answered by the committed promise, and an in-flight transition by the adopted
+  one.
+
 - **Removed `whenStale` (and `LaneWhenStale`); a read never discards anything.**
   `whenStale: "refetch"` discarded a stale value during a *read* so the next one
   would suspend on a fresh load. What it bought — the wait joining the caller's

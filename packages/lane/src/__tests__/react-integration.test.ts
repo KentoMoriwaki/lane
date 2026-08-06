@@ -580,6 +580,53 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(2);
   });
 
+  // The reveal reconciliation runs whenever React re-creates this reader's layout
+  // effects, which StrictMode does within a single commit — no reveal, and no
+  // render in between for anything to become visible through. So the store's
+  // promise has to be compared against what this reader has *adopted*, not what
+  // it has committed: the mount refetch below is already converging through a
+  // background transition, and a correction that cannot see it pre-empts it
+  // synchronously and drops the value the boundary had just revealed.
+  it("does not pre-empt its own converging refresh under StrictMode", async () => {
+    const lane = createLane();
+    const gate = deferred<string>();
+    const loader = vi.fn(() => gate.promise);
+
+    await lane.set(["tasks"], "cached");
+
+    const app = await render(
+      React.createElement(
+        React.StrictMode,
+        null,
+        React.createElement(LaneProvider, {
+          lane,
+          children: React.createElement(
+            React.Suspense,
+            { fallback: "loading" },
+            React.createElement(Probe, {
+              loader,
+              options: { refetchOnMount: true, staleTime: 0 },
+            }),
+          ),
+        }),
+      ),
+    );
+
+    // The refresh the mount asked for is in flight, and the value it is
+    // refreshing is still on screen — no fallback, and the pending flag says
+    // which channel it is arriving through.
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(app.container.textContent).toBe(
+      "cached|background:1|transition:0|refresh:none",
+    );
+
+    gate.resolve("fresh");
+    await waitForText(
+      app.container,
+      "fresh|background:0|transition:0|refresh:none",
+    );
+  });
+
   it("catches up with invalidations missed during a suspended key switch", async () => {
     const lane = createLane();
     const staleB = deferred<string>();

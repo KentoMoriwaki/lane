@@ -5,6 +5,7 @@ import { LaneReadError, useLane, useLaneInstance } from "use-lane";
 import { Button, Select, Toggle } from "./controls";
 import {
   LAB_KEY_NAMES,
+  READ_GC_TIMES,
   STALE_TIMES,
   type LabRead,
   type LabWorld,
@@ -71,7 +72,7 @@ class Boundary extends Component<BoundaryProps, BoundaryState> {
 function readOf(world: LabWorld, variation: Variation): LabRead {
   return {
     ...world.reads[variation.keyName],
-    whenStale: variation.whenStale,
+    gcTime: READ_GC_TIMES[variation.gcTime],
     staleTime: STALE_TIMES[variation.staleTime],
     refetchOnMount: variation.refetchOnMount,
     refetchOnFocus: variation.refetchOnFocus,
@@ -210,10 +211,10 @@ export function VariationCard({
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Select
-          label="whenStale"
-          options={["revalidate", "refetch"] as const}
-          value={variation.whenStale}
-          onChange={(whenStale) => onChange({ whenStale })}
+          label="gcTime"
+          options={["lane", "0", "5s"] as const}
+          value={variation.gcTime}
+          onChange={(gcTime) => onChange({ gcTime })}
         />
         <Select
           label="staleTime"

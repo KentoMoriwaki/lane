@@ -1,8 +1,8 @@
 # Error Lab
 
 A bench for **deciding** use-lane's error-handling spec, not for checking the
-one it has. The unit tests (`core-when-stale.test.ts`, `core-stale-on-error.test.ts`)
-own the logic; this app exists to answer "what would this app pattern, with
+one it has. The unit tests (`core-gc.test.ts`, `core-stale-on-error.test.ts`,
+`read-error.test.ts`) own the logic; this app exists to answer "what would this app pattern, with
 these read options, actually do?" while you change both and watch.
 
 It is not activity-lab: no kit, no Timeline, no production-build rule.
@@ -46,10 +46,10 @@ the store is built; nothing a single read decides:
 
 - **key A / key B: Invalidate / Remove**, with that key's loader count — what
   the store is told, addressed by key rather than by reader. Remove is what
-  reaches a first-load failure: once a key holds a value, the default
-  `whenStale: "revalidate"` keeps serving it and flipping the switch changes
-  nothing. Two keys is what makes "somebody else is reading this one" an
-  arrangement rather than a special case.
+  reaches a first-load failure: once a key holds a value, a read serves it and
+  flipping the switch changes nothing — reads never take anything away. Two keys
+  is what makes "somebody else is reading this one" an arrangement rather than a
+  special case.
 
 **the cards** — one per variation, in a grid, each a whole reader of its own:
 
@@ -60,13 +60,16 @@ the store is built; nothing a single read decides:
   comparison this lab was built for.
 - **key A | B** — which key this card reads. Two cards on the same key are two
   subscribers of it.
-- **whenStale / staleTime / onMount / onFocus** — this card's read options.
-  `none` is an absent `staleTime`, which is `Infinity`; pairing it with
-  `refetch` warns in development, and issue #80's footnote is about what that
-  warning gets wrong for a rejected cache. The triggers are gated by `staleTime`
-  too, and fire from an effect rather than from the read. Focus fires on a tab
-  switch, throttled to 5s by the provider; `refetchOnReconnect` is left out
-  because it cannot be provoked by hand.
+- **gcTime / staleTime / onMount / onFocus** — this card's read options, and
+  the two halves of freshness. `gcTime` is what this card's value is worth once
+  this card stops holding it: `0` makes every remount a fresh load (which
+  suspends, because the entry is gone), `lane` defers to the instance policy
+  above. `staleTime` plus the triggers is the other half — refreshing what a
+  mounted reader is showing, underneath it, from an effect. `none` is an absent
+  `staleTime`, which is `Infinity`, so the triggers are on and silent and
+  development says so. Focus fires on a tab switch, throttled to 5s by the
+  provider; `refetchOnReconnect` is left out because it cannot be provoked by
+  hand.
 - **mounted** — whether this reader is on screen, which is also whether it is
   one of the key's subscribers.
 - **Retry**, inside the error frame — where an app would put it: in the
@@ -78,8 +81,8 @@ the store is built; nothing a single read decides:
 
 `refreshError` is rendered inline: the frame turns amber and keeps its value,
 with the error on the ⚠ as a tooltip — and unwrapped, because a reader still
-holding its own `invalidate` has nothing to be carried. The two pending flags are the frame's
-edges — explicit on top, background underneath. `separated` always hands the
+holding its own `invalidate` has nothing to be carried. The two pending flags
+are the frame's edges — explicit on top, background underneath. `separated` always hands the
 boundary `resetKey={promise}`; there is no knob for leaving it off, because
 that is a bug in an app rather than an arrangement worth reproducing.
 

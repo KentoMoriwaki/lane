@@ -1,11 +1,5 @@
 import { createLane, laneRead } from "use-lane";
-import type {
-  Lane,
-  LaneKeyOf,
-  LaneLoader,
-  LaneReadSpec,
-  LaneWhenStale,
-} from "use-lane";
+import type { Lane, LaneKeyOf, LaneLoader, LaneReadSpec } from "use-lane";
 
 /** Whether the loader fails. Read at the start of each call, never mid-flight. */
 export type FailureMode = "never" | "always";
@@ -54,6 +48,18 @@ export const STALE_TIMES: Record<StaleTimeSetting, number | undefined> = {
   "5s": 5_000,
 };
 
+/**
+ * How long this card's value outlives the card. `lane` is the setting a read
+ * does not make — it falls back to the instance policy in the options above.
+ */
+export type ReadGcTimeSetting = "lane" | "0" | "5s";
+
+export const READ_GC_TIMES: Record<ReadGcTimeSetting, number | undefined> = {
+  lane: undefined,
+  "0": 0,
+  "5s": 5_000,
+};
+
 /** Two keys, so that "somebody else is reading this" is a thing you can arrange. */
 export type LabKeyName = "A" | "B";
 
@@ -85,7 +91,8 @@ export type Variation = {
   pattern: VariationPattern;
   keyName: LabKeyName;
   mounted: boolean;
-  whenStale: LaneWhenStale;
+  /** What a remount of this card is served: what it left, or a fresh load. */
+  gcTime: ReadGcTimeSetting;
   staleTime: StaleTimeSetting;
   /**
    * The revalidation triggers, a different mechanism from the two above: those
@@ -108,7 +115,7 @@ export function createVariation(patch: Partial<Variation> = {}): Variation {
     pattern: "integrated",
     keyName: "A",
     mounted: true,
-    whenStale: "revalidate",
+    gcTime: "lane",
     staleTime: "none",
     refetchOnMount: false,
     refetchOnFocus: false,

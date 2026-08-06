@@ -698,6 +698,29 @@ export type LaneUseOptions = {
    * collect nothing.
    */
   gcTime?: number;
+  /**
+   * How long this read's value is kept for a reader who has *not arrived yet* —
+   * measured from the moment it settles, and spent only while nothing holds the
+   * entry.
+   *
+   * Two situations, and they are the same one: a value warmed by
+   * {@link Lane.prefetch} that nobody has read, and an entry created by a render
+   * that suspended and unmounted before it could commit. Both are a load done
+   * for a reader who may still be coming, and this says how long "still coming"
+   * stays plausible.
+   *
+   * Deliberately not {@link LaneUseOptions.gcTime}. That answers "somebody had
+   * this and left — how long is it worth keeping for their return", which shares
+   * nothing with this but a unit: one is a bet on an arrival, the other a memory
+   * policy about a departure, and there is no reason for either to name the
+   * other's number.
+   *
+   * The clock never runs while the read is in flight. An entry nobody holds is
+   * not evidence that nobody is coming, and a load still running is evidence
+   * that somebody might be — collecting one would abort a read a suspended
+   * render is still waiting on.
+   */
+  warmTime?: number;
   refetchOnFocus?: LaneRefetchOnFocus;
   refetchOnMount?: LaneRefetchOnMount;
   refetchOnReconnect?: LaneRefetchOnReconnect;
@@ -725,4 +748,14 @@ export type LaneOptions = {
    * a re-suspension — collect nothing.
    */
   gcTime?: number;
+  /**
+   * How long a settled entry *nobody has ever held* waits for its first reader —
+   * the default for reads that do not set their own
+   * {@link LaneUseOptions.warmTime}. Default 5 minutes.
+   *
+   * The same number as `gcTime`'s default and not the same policy: this one is
+   * spent waiting for somebody to arrive (a prefetch nobody read yet, a render
+   * that suspended and unmounted), that one on somebody who left.
+   */
+  warmTime?: number;
 };

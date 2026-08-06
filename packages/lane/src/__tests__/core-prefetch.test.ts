@@ -46,18 +46,17 @@ describe("prefetch", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
-  it("does not subscribe, so an unadopted prefetch is collected on a later sweep", async () => {
+  it("does not subscribe, so an unadopted prefetch is collected on its warmTime", async () => {
     vi.useFakeTimers();
 
-    const lane = createLane({ gcTime: 1_000 });
+    // The read's own bet on how long somebody will take to come for it — over a
+    // lane whose departure policy would have kept it far longer.
+    const lane = createLane({ gcTime: 60_000 });
     const loader = vi.fn(async () => "warm");
 
-    // Prefetched but never adopted: an orphan, and like any read it arms no timer.
-    await lane.prefetch({ key: ["tasks"], loader });
+    await lane.prefetch({ key: ["tasks"], loader, warmTime: 1_000 });
     expect(loader).toHaveBeenCalledTimes(1);
 
-    // A real unsubscribe elsewhere arms the sweep, which reclaims the orphan too.
-    await armSweepViaChurn(lane);
     await vi.advanceTimersByTimeAsync(1_000);
 
     // The entry is gone, so the next read fetches again.

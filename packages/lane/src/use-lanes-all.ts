@@ -296,6 +296,7 @@ function optionsFor<T, C>(
     refetchOnReconnect: own.refetchOnReconnect ?? shared.refetchOnReconnect,
     staleTime: own.staleTime ?? shared.staleTime,
     gcTime: own.gcTime ?? shared.gcTime,
+    warmTime: own.warmTime ?? shared.warmTime,
   };
 }
 

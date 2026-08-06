@@ -103,12 +103,14 @@ const lane = createLane({ gcTime: 5 * 60_000 });
 ```ts
 type LaneOptions = {
   gcTime?: number;
+  warmTime?: number;
 };
 ```
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `gcTime` | `300000` (5 min) | How long (ms) an inactive entry (no subscribers) is retained before it is garbage-collected. An instance-wide memory policy — idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. Eviction is coalesced into a single sweep per lane, so the exact moment is approximate (it never needs to be precise). A reader that has not committed yet counts as inactive from the moment it starts its first load — it suspends before it can subscribe — so `gcTime` doubles as the grace window for that first load: if it runs longer than `gcTime` and a sweep fires, the in-flight read is aborted (its `signal` fires) and refetched on the retry. Keep `gcTime` comfortably longer than your slowest request; avoid `0` for reads that suspend for a while. |
+| `gcTime` | `300000` (5 min) | How long (ms) an entry is kept **after its last reader leaves** — the default for reads that do not set their own. Idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. |
+| `warmTime` | `300000` (5 min) | How long a settled entry **nobody has ever held** waits for its first reader — the default for reads that do not set their own. The same number as `gcTime`'s default and not the same policy: this one is spent waiting for somebody to arrive, that one on somebody who left. |
 
 ## Reading data
 
@@ -1219,7 +1221,7 @@ const warm = () =>
   `"revalidate"` semantics, so it never discards an in-flight or settled cache.
 - **Not subscribed.** A prefetched entry has no reader, so it does not revalidate
   on focus, or anchor against GC. If no reader adopts it, it is an orphan
-  reclaimed by the lane's sweep (within `gcTime`); if a reader mounts first, the
+  reclaimed by the lane's sweep (within `warmTime`); if a reader mounts first, the
   entry becomes live and is kept.
 - **Freshness is the reader's call.** `prefetch` only warms; `staleTime` /
   `gcTime` are decided by the eventual `useLane`. A
@@ -1240,20 +1242,21 @@ type LaneUseOptions = {
   loaderMeta?: LaneRegister["loaderMeta"];
   staleTime?: number;
   gcTime?: number;
+  warmTime?: number;
   refetchOnFocus?: boolean;
   refetchOnMount?: boolean;
   refetchOnReconnect?: boolean;
 };
 ```
 
-> `gcTime` is **not** a per-read option — it is an instance-wide policy passed to
-> [`createLane({ gcTime })`](#laneoptions).
+> `gcTime` and `warmTime` take the lane's value when a read does not set one.
 
 | Option | Default | Description |
 | --- | --- | --- |
 | `loaderMeta` | the lane's | Read this entry with a different `meta` than the lane carries — see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key). Not part of the key. In a batch, a member's own value wins over the batch's. |
 | `staleTime` | `Infinity` | How long (ms) a fulfilled value is considered fresh. Once stale, the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads — which refresh what a reader is showing rather than taking it away. The default means **nothing is ever stale until you say what stale means** — so all three revalidation triggers do nothing without a `staleTime`, and warn in development. `staleTime` is also the rate limit on the triggers it gates: a value refreshed within it is not refreshed again however many times they fire. `staleTime: 0` asks for "always stale", which includes a mount refetching the value that same mount just loaded — the read runs during render and the trigger fires from an effect, so the two stack. |
 | `gcTime` | the lane's | How long (ms) **this read's** value is worth keeping once nothing holds it — this read's override of [`createLane`](#createlaneoptions)'s, and the way to say "do not serve this again after I leave". `0` makes every remount a fresh load; `Infinity` keeps it. It reads as a memory setting and is a freshness one too, because for an *idle* entry those are the same question: a value nobody holds is kept for exactly one reason, the reader who might come back. Which is why the load a remount starts after the deadline **suspends** — the entry is gone, so the wait joins whatever transition the remount is part of, instead of committing a stale value and refreshing it afterwards. The deadline is set when the entry goes idle, from the `gcTime` of whoever held it last; eviction is never synchronous, so an unsubscribe and a resubscribe in one task (StrictMode's double invoke, a re-suspension) collect nothing. |
+| `warmTime` | the lane's | How long **this read's** value is kept for a reader who has *not arrived yet*, measured from the moment it settles. Two situations, and they are the same one: a value warmed by [`prefetch`](#prefetch) that nobody has read, and an entry created by a render that suspended and unmounted before it could commit. Both are a load done for a reader who may still be coming, and this says how long "still coming" stays plausible. Deliberately not `gcTime`, which answers "somebody had this and left — how long is it worth keeping for their return": the two share a unit and nothing else. **The clock never runs while the read is in flight** — an entry nobody holds is not evidence that nobody is coming, and a load still running is evidence that somebody might be, so collecting one would abort a read a suspended render is still waiting on. |
 | `refetchOnFocus` | `false` | Reloads stale entries on window focus. Needs a `staleTime` to fire at all — with the `Infinity` default nothing is stale, and Lane warns in development. |
 | `refetchOnMount` | `false` | Reloads stale entries when a reader mounts. Needs a `staleTime` to fire at all. `staleTime: 0` makes it fire on every mount — including the mount that just loaded the value, since the read runs during render and this fires from an effect. |
 | `refetchOnReconnect` | `false` | Same as `refetchOnFocus`, driven by the browser `online` event. |

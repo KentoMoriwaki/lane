@@ -7,14 +7,18 @@ import { resetVitest, subscribe } from "./test-utils";
 
 afterEach(resetVitest);
 
-// gcTime is a retention policy with two homes: the lane's (createLane({ gcTime }))
-// is the default, and a read's is what decides how long *its* value outlives the
-// reader holding it. One coalesced timer per lane — armed only when an entry
-// loses its last subscriber, for the nearest deadline among the idle entries —
-// evicts each one when its own time is up. Because it is lane-wide it also
-// reclaims orphans (read but never subscribed) opportunistically, so the read
-// path itself never arms a timer. Collection is never synchronous: leaving and
-// coming back within one task is not leaving.
+// Two clocks, and the difference between them is who the entry is being kept
+// for. `gcTime` runs from the last unsubscribe: somebody had this and left, and
+// it is kept in case they come back. `warmTime` runs from the settlement of an
+// entry nobody has held: a prefetch, or a render that suspended and unmounted,
+// where the value was loaded for a reader who may still be coming. Both have a
+// lane-level default and a per-read override.
+//
+// One coalesced timer per lane does the collecting, armed for the nearest
+// deadline among the entries that have one. In-flight reads have none — a load
+// still running is the evidence that somebody may still be waiting on it.
+// Collection is never synchronous: leaving and coming back within one task is
+// not leaving.
 describe("garbage collection", () => {
   // The only thing that arms the lane sweep is an entry losing its last
   // subscriber. Tests use a throwaway cached key for that, so they can observe
@@ -24,20 +28,23 @@ describe("garbage collection", () => {
     subscribe(lane, ["__churn__"])();
   }
 
-  it("collects an orphaned entry on a later lane-wide sweep", async () => {
+  it("collects an entry nobody claimed, on its warmTime", async () => {
     vi.useFakeTimers();
 
-    const lane = createLane({ gcTime: 1_000 });
+    // Long enough that the departure clock cannot be what collects this.
+    const lane = createLane({ gcTime: 60_000, warmTime: 1_000 });
     const loader = vi.fn(async () => "loaded");
 
-    // Orphan: read but never subscribed. The read alone arms no timer.
+    // Read, never subscribed: a render that suspended and went away, or a
+    // prefetch nobody took. The wait for its first reader starts when it lands.
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(1);
 
-    // A real unsubscribe elsewhere arms the sweep, which reclaims the orphan too.
-    await armSweepViaChurn(lane);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(999);
+    await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
+    expect(loader).toHaveBeenCalledTimes(1);
 
+    await vi.advanceTimersByTimeAsync(2);
     await expect(readOrCreate(lane, ["tasks"], loader)).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
     expect(loader).toHaveBeenCalledTimes(2);
   });
@@ -117,7 +124,7 @@ describe("garbage collection", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
-  it("aborts a pending load when its entry is collected", async () => {
+  it("aborts a pending load when the reader that had it leaves and its gcTime is up", async () => {
     vi.useFakeTimers();
 
     const lane = createLane({ gcTime: 1_000 });
@@ -127,16 +134,44 @@ describe("garbage collection", () => {
       return new Promise<string>(() => {});
     });
 
-    // Pending orphan: in-flight, never subscribed.
+    const unsubscribe = subscribe(lane, ["tasks"]);
     readOrCreate(lane, ["tasks"], loader);
     await vi.advanceTimersByTimeAsync(0);
     expect(signal?.aborted).toBe(false);
 
-    // A real unsubscribe drives the sweep, which reclaims the pending orphan and
-    // aborts its loader.
-    await armSweepViaChurn(lane);
+    // A departure, so the load is nobody's: collecting it stops it.
+    unsubscribe();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(signal?.aborted).toBe(true);
+  });
+
+  // The other half, and the reason the pre-arrival clock starts at the
+  // settlement: an entry nobody holds is not evidence that nobody is coming, and
+  // a load still running is evidence that somebody might be. A suspended render
+  // is exactly that, and collecting its entry would abort the read it is waiting
+  // on.
+  it("never collects an entry whose read is still in flight", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane({ gcTime: 0, warmTime: 0 });
+    let signal: AbortSignal | undefined;
+    const loader = vi.fn((context: LaneLoaderContext) => {
+      signal = context.signal;
+      return new Promise<string>(() => {});
+    });
+
+    const pending = readOrCreate(lane, ["tasks"], loader);
+
+    // Every sweep the lane can be made to run, with the shortest deadlines it
+    // can be given.
+    await armSweepViaChurn(lane);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(signal?.aborted).toBe(false);
+    // Still the entry's own read: the reader suspended on it would be handed
+    // this same promise when it re-reads.
+    expect(readOrCreate(lane, ["tasks"], loader)).toBe(pending);
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it("collects on the next task, not inside the unsubscribe, when gcTime is 0", async () => {

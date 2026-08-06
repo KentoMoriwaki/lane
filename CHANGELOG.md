@@ -8,6 +8,33 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **`warmTime`: how long a settled entry nobody has ever held waits for its first
+  reader.** On `createLane` and on a read, like `gcTime`.
+
+  ```tsx
+  lane.prefetch({ ...read, warmTime: 10_000 });   // warm it for the click that may come
+  ```
+
+  Two situations that are the same one: a value warmed by `prefetch` that nobody
+  read, and an entry created by a render that suspended and unmounted before it
+  could commit. Both are a load done for a reader who may still be arriving, and
+  this is how long "still arriving" stays plausible.
+
+  `gcTime` used to cover it by being read at the entry's *creation*, which
+  conflated two questions sharing nothing but a unit: "somebody had this and left,
+  keep it for their return" is not evidence about a reader who never came.
+
+  **The clock starts at the settlement rather than the creation**, so an in-flight
+  read has no deadline at all — an entry nobody holds is not evidence that nobody
+  is coming, and a load still running is evidence that somebody might be.
+  Collecting one used to abort the read a suspended render was waiting on, which
+  is why `gcTime`'s documentation had to warn about keeping it "comfortably
+  longer than your slowest request". It no longer does.
+
+  The two clocks cost **+210 B** on the store and **+80 B** on the typical
+  `LaneProvider` + `useLane` pair; budgets move 2.4 → 2.63 kB, 3.9 → 3.98 kB, and
+  the ceiling 5.54 → 5.6 kB.
+
 - **The reader's `invalidate` is awaitable: it returns the next read.**
   `lane.invalidate(key)` stays `void` — a key alone does not know its loader,
   so the instance method can only clear and notify. The hook holds the whole

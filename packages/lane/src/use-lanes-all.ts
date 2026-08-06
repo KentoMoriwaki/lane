@@ -146,27 +146,12 @@ export function useLanesAll<T, C = T>(
     revalidateAll(lane, descriptors, options, "refetchOnReconnect");
   });
 
-  // The subscription's one piece of policy, read when a key's last member
-  // leaves. Members sharing a key share its subscription, so the shortest of
-  // them decides — the same rule the store applies between separate readers, and
-  // for the same reason: a value nobody said to keep is not kept.
-  const gcTimeFor = useEffectEvent((keyId: string) => {
-    let shortest: number | undefined;
-
-    for (const descriptor of descriptors) {
-      if (descriptor.keyId !== keyId) {
-        continue;
-      }
-
-      const own = optionsFor(options, descriptor).gcTime;
-
-      if (own !== undefined && (shortest === undefined || own < shortest)) {
-        shortest = own;
-      }
-    }
-
-    return shortest;
-  });
+  // An event for the same reason every option here is one: the subscribing
+  // effect cannot read `options` directly without re-subscribing on every
+  // render that rebuilds the literal.
+  const gcTimeOf = useEffectEvent(
+    (descriptor: Descriptor<T, C>) => optionsFor(options, descriptor).gcTime,
+  );
 
   // The one imperative bit: keyId → unsubscribe. The effect reconciles the live
   // subscriptions to the current keys — dropping departed keys and subscribing
@@ -178,10 +163,12 @@ export function useLanesAll<T, C = T>(
   useEffect(() => {
     const active = subsRef.current;
 
-    const wanted = new Map<string, LaneKey>();
-    for (const { key, keyId } of descriptors) {
-      if (!wanted.has(keyId)) {
-        wanted.set(keyId, key);
+    // Keyed by keyId, holding the member that answers for it: the key to
+    // subscribe with, and the `gcTime` the subscription carries.
+    const wanted = new Map<string, Descriptor<T, C>>();
+    for (const descriptor of descriptors) {
+      if (!wanted.has(descriptor.keyId)) {
+        wanted.set(descriptor.keyId, descriptor);
       }
     }
 
@@ -193,15 +180,20 @@ export function useLanesAll<T, C = T>(
     }
 
     const added = new Set<string>();
-    for (const [keyId, key] of wanted) {
+    for (const [keyId, descriptor] of wanted) {
       if (active.has(keyId)) {
         continue;
       }
       added.add(keyId);
+      // How long this key's value is worth keeping once the batch stops
+      // holding it, from the member subscribing for it. Duplicate keys in one
+      // batch are rare enough that reconciling their options would cost more
+      // than it could be worth: the first one answers.
+      const gcTime = gcTimeOf(descriptor);
       active.set(
         keyId,
-        subscribeLane(lane, keyId, key, {
-          gcTime: () => gcTimeFor(keyId),
+        subscribeLane(lane, keyId, descriptor.key, {
+          gcTime: () => gcTime,
           onInvalidate: () => refresh(false),
           onRemove: () => refresh(true),
         }),

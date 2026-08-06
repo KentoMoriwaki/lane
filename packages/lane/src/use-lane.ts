@@ -166,6 +166,29 @@ export function useLane<T, C = T>(
   // replaced only when the source switches, so its identity follows `keyId` —
   // which is what lets the effects below depend on a key *object* without
   // re-firing on a caller's structurally re-created array.
+  /**
+   * The promise this reader has *adopted* — the last one it decided on, whether
+   * or not React has committed it yet. `promise` cannot answer that: a
+   * transition's update is not visible through state until it renders, and the
+   * reveal reconciliation below runs in a layout effect that React can re-create
+   * without any render in between (StrictMode's double invoke does exactly
+   * that). Comparing the store against the committed promise there reports a
+   * divergence that is already being converged, and correcting it synchronously
+   * pre-empts the transition — taking the boundary's revealed content down into
+   * a fallback.
+   *
+   * Written from effects only — a ref must not be written during render, and a
+   * render's own decision is committed before any layout effect of that commit
+   * runs, so the committed `promise` already answers for it. The reconciliation
+   * checks both.
+   */
+  const adoptedRef = useRef(promise);
+
+  const adopt = (next: Promise<LaneRead<T>> | undefined) => {
+    adoptedRef.current = next;
+    setPromise(next);
+  };
+
   const [prevSource, setPrevSource] = useState(() => ({
     enabled,
     hydration: hydrationSource,
@@ -234,9 +257,7 @@ export function useLane<T, C = T>(
     }
 
     const updatePromise = () => {
-      setPromise(
-        readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions),
-      );
+      adopt(readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions));
     };
 
     if (source === "background") {
@@ -256,14 +277,9 @@ export function useLane<T, C = T>(
       return;
     }
 
-    const nextPromise = readOrCreate(
-      targetLane,
-      targetKeyId,
-      targetKey,
-      loader,
-      readOptions,
+    adopt(
+      readOrCreate(targetLane, targetKeyId, targetKey, loader, readOptions),
     );
-    setPromise(nextPromise);
   });
 
   // An announcement carries no work: the caller has not changed the source yet,
@@ -372,8 +388,15 @@ export function useLane<T, C = T>(
       readOptions,
     );
 
-    if (nextPromise !== promise) {
-      setPromise(nextPromise);
+    // Neither what this reader is showing nor what it is already on its way to.
+    // Both have to be checked, and each covers what the other cannot: the
+    // committed promise is the answer for a render's own decision (the initial
+    // read, a source switch), which lands before any layout effect of that
+    // commit and would otherwise be re-set here for nothing; the adopted one is
+    // the answer for an update still converging through a transition, which no
+    // render has made visible yet.
+    if (nextPromise !== promise && nextPromise !== adoptedRef.current) {
+      adopt(nextPromise);
     }
   });
 

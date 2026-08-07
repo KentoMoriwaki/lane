@@ -1,6 +1,6 @@
 "use server";
 
-import { updateTag } from "next/cache";
+import { revalidateTag, updateTag } from "next/cache";
 import type { Task } from "@/server/api";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
 import { createTask } from "@/app/lane/api/endpoints";
@@ -46,4 +46,47 @@ export async function createTaskAction(
  */
 export async function refreshFirstPageAction(ctx: WorkspaceCtx): Promise<void> {
   updateTag(taskPageCacheTags.firstPage(ctx.teamId));
+}
+
+/**
+ * **The same insert, delivered differently.** Two variants that mutate exactly
+ * as `createTaskAction` does and then reach for the *other* revalidation verbs,
+ * so the three can be compared in one session against one rig.
+ *
+ * The question they exist to answer is not about caching. It is about ownership:
+ * Lane forbids a client write to a published key because a republication could
+ * land at any moment and silently clobber it. That argument assumes revalidation
+ * always *delivers*. If `revalidateTag(tag, "max")` really only marks — with the
+ * fresh payload deferred to the next natural read — then there is a window in
+ * which the server's truth has moved, the client holds the action's return
+ * value, and no publication is coming yet. Whether that window is real is what
+ * `apps/demo`'s frame recorder measures.
+ */
+export async function createTaskDeferredAction(
+  ctx: WorkspaceCtx,
+  title: string,
+): Promise<Task> {
+  const task = await createTask(ctx, {
+    priority: "urgent",
+    status: "in_progress",
+    title,
+  });
+  // Mark-only, per the docs: stale-while-revalidate, delivery deferred to the
+  // next visit of a page carrying the tag.
+  revalidateTag(taskPageCacheTags.firstPage(ctx.teamId), "max");
+  return task;
+}
+
+/** The webhook-grade spelling the docs point at for immediate expiry. */
+export async function createTaskExpireZeroAction(
+  ctx: WorkspaceCtx,
+  title: string,
+): Promise<Task> {
+  const task = await createTask(ctx, {
+    priority: "urgent",
+    status: "in_progress",
+    title,
+  });
+  revalidateTag(taskPageCacheTags.firstPage(ctx.teamId), { expire: 0 });
+  return task;
 }

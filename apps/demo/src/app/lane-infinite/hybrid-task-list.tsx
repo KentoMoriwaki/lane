@@ -7,7 +7,12 @@ import type { TaskPage, TaskScope } from "@/server/api";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { createTaskAction, refreshFirstPageAction } from "./api/actions";
+import {
+  createTaskAction,
+  createTaskDeferredAction,
+  createTaskExpireZeroAction,
+  refreshFirstPageAction,
+} from "./api/actions";
 import { fetchTaskPage, type TaskPageFilters } from "./api/endpoints";
 import { taskListKey, taskPageVersion } from "./api/lane-reads";
 import {
@@ -168,6 +173,38 @@ export function HybridTaskList({
           }}
         >
           Create + republish
+        </Button>
+        <Button
+          variant="outline"
+          data-testid="create-task-deferred"
+          disabled={!title.trim() || isMutating}
+          onClick={() => {
+            const next = title.trim();
+            if (!next) return;
+            setTitle("");
+            setProbePhase('create → revalidateTag("max")');
+            startMutation(async () => {
+              await createTaskDeferredAction(ctx, next);
+            });
+          }}
+        >
+          Create (deferred)
+        </Button>
+        <Button
+          variant="outline"
+          data-testid="create-task-expire-zero"
+          disabled={!title.trim() || isMutating}
+          onClick={() => {
+            const next = title.trim();
+            if (!next) return;
+            setTitle("");
+            setProbePhase("create → revalidateTag(expire:0)");
+            startMutation(async () => {
+              await createTaskExpireZeroAction(ctx, next);
+            });
+          }}
+        >
+          Create (expire:0)
         </Button>
         <Button
           variant="outline"

@@ -27,8 +27,8 @@ import { publishedFirstPageSnapshots } from "./published-first-page";
  *    publication when it arrives. No timeout, no double fetch, no error.
  * 2. **The pattern does not change.** Once `use()` has unwrapped the
  *    publication, the list below is the same component the prop form renders,
- *    keyed on the same `firstPage.version`. A republication that changed the
- *    page re-keys the list; one that did not, does not. Delivery and
+ *    handing the same value to the same `firstPage` option. A republication that
+ *    changed the page resets the list; one that did not, does not. Delivery and
  *    convergence are independent concerns, and this rig is what proves it.
  *
  * Nothing here is how a real page would be built. It is the shape of the

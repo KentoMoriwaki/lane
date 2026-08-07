@@ -8,6 +8,54 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **`firstPage`: an infinite list whose page 1 belongs to somebody else.** A new
+  option on `useInfiniteLane` / `infiniteLaneRead`, for the shape where a route
+  owns the first page and the browser owns the depth below it.
+
+  ```tsx
+  const { promise, loadMore } = useInfiniteLane({
+    key: ["tasks", filters],
+    initialCursor: "",
+    firstPage: { value: firstPage, version: firstPage.version },
+    fetchPage: (cursor, { signal }) => fetchTasks({ cursor, filters, signal }),
+    nextCursor: (page) => page.nextCursor,
+  });
+  ```
+
+  Walk index 0 **is** that value: `fetchPage` is never called for it, on a first
+  load or on a re-walk. A first paint costs no request and refreshing a list five
+  pages deep costs four.
+
+  **`version` is content identity, and it decides the rest.** Unchanged, nothing
+  happens — which is what keeps the user's depth through a republication that
+  changed nothing, an `<Activity>` reveal, or a refresh over a warm cache.
+  Changed, the list resets to depth 1 from the new page, with no request, and
+  **the commit that first shows the new page is the same commit that shows the
+  reset list**: the render forks onto a resolved depth-1 promise held in the
+  store, and the commit adopts it. Nothing writes the entry during render, and a
+  render that suspends and retries gets the identical promise back rather than
+  minting a second one.
+
+  It has to be *content* identity because reference identity cannot work here:
+  an RSC prop or a router loader's data is deserialized afresh on every delivery,
+  so `===` reports "different" every time. Keep provenance (a served-at stamp, a
+  request id) out of it, or every refresh becomes a reset.
+
+  Two limits are by construction and are documented on the option: `invalidate`
+  re-walks pages 2..N and takes page 1 from the latest `firstPage` the component
+  rendered with, so it is a *half* refresh — making page 1 current is the owner's
+  job; and the adopted value lives in a client-owned entry, so `lane.set` /
+  `lane.update` on the key can rewrite content this client does not own.
+
+  `initialCursor` stays required. With `firstPage` nothing is fetched with it —
+  it is what `params[0]` records — but it is the only place `C` can be inferred
+  from, since `fetchPage` and `nextCursor` are both context-sensitive and
+  inference from them would depend on the order the properties happen to be
+  written in.
+
+  Budgets move 2.63 → 2.7 kB on the store, 3.98 → 4.06 kB on the typical
+  `LaneProvider` + `useLane` pair, and the ceiling 5.6 → 6.05 kB.
+
 - **`warmTime`: how long a settled entry nobody has ever held waits for its first
   reader.** On `createLane` and on a read, like `gcTime`.
 

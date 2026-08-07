@@ -30,30 +30,27 @@ const SCOPES: { label: string; value: TaskScope }[] = [
  * **The hybrid list.** The App Router owns page 1; this component owns the
  * depth below it.
  *
- * There are exactly two moving parts, and no effect:
+ * There is one moving part and no effect: `firstPage` goes into the read, and
+ * Lane's `firstPage` option owns everything that follows from it. Page 1 is
+ * never fetched. A republication whose `version` is unchanged leaves the user's
+ * depth exactly where it was. A republication that changed page 1 resets the
+ * list to depth 1, costs zero requests, and lands in the same commit that first
+ * shows the new page — inside whatever transition the Server Action or the
+ * navigation is already running.
  *
- * 1. `firstPage` arrives as a prop — a resolved value the route already
- *    loaded. The loader's page-1 branch returns it. No fetch, no publication,
- *    no wait.
- * 2. `firstPage.version` is in the key. So a republication that changed page 1
- *    *is* a different key, and Lane reads the new entry during the render that
- *    carries the new prop — inside whatever transition the Server Action or the
- *    navigation is already running. The list resets to depth 1 and costs
- *    nothing. A republication that changed nothing keeps the key, and the
- *    user's depth with it.
+ * Two earlier revisions of this spike built that in userland, and what they cost
+ * is the argument for the option. The first published page 1 under an external
+ * key and reconciled with an effect: a two-dimensional `(key, publication)` ref
+ * guard to survive filter changes and `<Activity>` reveals, an N−1 request
+ * re-walk on *every* republication including the ones that changed nothing, and
+ * a visible window where a reader of the publication and the list disagreed. The
+ * second spliced the content hash into the key, which fixed all three and cost
+ * `.key` its reachability. Neither is here any more.
  *
- * The previous revision of this spike published page 1 under an external key
- * and reconciled with an effect. That version worked, and cost: a
- * two-dimensional `(key, publication)` ref guard to survive filter changes and
- * `<Activity>` reveals, an N−1 request re-walk on every republication —
- * including the ones that changed nothing — and a visible window where a
- * reader of the publication and the list disagreed. Keying on a
- * server-computed content hash removes all three, at the price of discarding
- * pages 2..N when page 1 genuinely changes.
- *
- * That last cost is a product decision, so it stays available rather than
- * being taken away: **Deep refresh** below is the explicit `invalidate` that
- * re-walks the whole chain in place, the old behavior, on demand.
+ * The trade the option makes deliberate: pages 2..N are discarded by a reset
+ * rather than re-derived. That stays available rather than being taken away —
+ * **Deep refresh** below is the explicit `invalidate` that re-walks the chain in
+ * place, page 1 for free.
  *
  * `/lane-infinite/late` is the same component fed from a *publication* instead
  * of a prop — the pattern is about the value, not about where it came from.
@@ -75,18 +72,27 @@ export function HybridTaskList({
 
   const { invalidate, isInvalidationPending, loadMore, promise } =
     useInfiniteLane(
-      taskInfiniteRead(filters, firstPage, {
-        nextPage: async (cursor, { meta, signal }) => {
+      taskInfiniteRead(
+        filters,
+        firstPage,
+        async (cursor, { meta, signal }) => {
           const page = await fetchTaskPage(meta, filters, { cursor }, signal);
           recordProbe("network", cursor, page);
           return page;
         },
-        onAdoptFirstPage: (page) => recordProbe("adopt", null, page),
-      }),
+      ),
     );
   const { data, refreshError } = React.use(promise);
 
+  // Page 1, as the list is actually holding it. With no loader hook to report
+  // from any more, the probe records what reached the screen — which is the
+  // honest thing to measure anyway: `network` events say what was fetched, and
+  // an `adopt` line with a new version says a reset happened for free.
   const adopted = data.pages[0];
+  React.useEffect(() => {
+    if (adopted) recordProbe("adopt", null, adopted);
+  }, [adopted]);
+
   const [isMutating, startMutation] = React.useTransition();
   const [title, setTitle] = React.useState("");
 

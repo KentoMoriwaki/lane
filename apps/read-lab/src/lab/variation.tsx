@@ -4,6 +4,7 @@ import { Component, Suspense, use, useState, type ReactNode } from "react";
 import { LaneReadError, useLane, useLaneInstance } from "use-lane";
 import { Button, Select, Toggle } from "./controls";
 import {
+  FALLBACKS,
   LAB_KEY_NAMES,
   READ_GC_TIMES,
   STALE_TIMES,
@@ -74,6 +75,7 @@ class Boundary extends Component<BoundaryProps, BoundaryState> {
 function readOf(world: LabWorld, variation: Variation): LabRead {
   return {
     ...world.reads[variation.keyName],
+    fallback: FALLBACKS[variation.fallback],
     gcTime: READ_GC_TIMES[variation.gcTime],
     warmTime: WARM_TIMES[variation.warmTime],
     staleTime: STALE_TIMES[variation.staleTime],
@@ -235,6 +237,12 @@ export function VariationCard({
           options={["none", "0", "5s"] as const}
           value={variation.staleTime}
           onChange={(staleTime) => onChange({ staleTime })}
+        />
+        <Select
+          label="fallback"
+          options={["none", "previous", "empty", "throw"] as const}
+          value={variation.fallback}
+          onChange={(fallback) => onChange({ fallback })}
         />
         <Select
           label="error"

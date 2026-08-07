@@ -84,6 +84,26 @@ the store is built; nothing a single read decides:
   `Infinity`, so the triggers are on and silent and development says so. Focus
   fires on a tab switch, throttled to 5s by the provider; `refetchOnReconnect` is
   left out because it cannot be provoked by hand.
+- **fallback: none | previous | empty | throw** — this read's own policy for
+  what a failed load serves, which decides whether a failure reaches the
+  boundary at all. `none` leaves the built-in one in place: a failure over data
+  serves the previous value, a *first* failure rejects. `previous` is that with
+  a floor — `({ lastFulfilled }) => lastFulfilled ?? "(empty)"` — so the card
+  never reaches a boundary, and the difference shows up on the first failure of
+  a fresh world. `empty` always serves the substitute, which is the mistake
+  worth seeing: a refresh failure over real data replaces what was on screen,
+  exactly as a `try`/`catch` in the loader would, and just as quietly. `throw`
+  refuses to serve a value that is not current, so a failure hits the boundary
+  whether or not there is a previous value — the one policy the built-in
+  behaviour cannot express.
+
+  With two cards on one key, the policy that runs is the one carried by the
+  read that *started the load*. Give the first card `previous` and the second
+  `throw` — two policies with visibly different outcomes on the same failure —
+  unmount the second, set failure to `always`, Reload, then mount it. It shows
+  `(empty)`, not the boundary its own policy asked for: it adopted a settled
+  cache, and the settlement had already been decided.
+
 - **error: inline | throw** — what the card does with a failed refresh
   over data it is still showing. `inline` renders both. `throw` hands it to the
   boundary. The frame carries a text input for this axis: whatever is typed into

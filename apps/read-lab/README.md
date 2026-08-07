@@ -84,7 +84,7 @@ the store is built; nothing a single read decides:
   `Infinity`, so the triggers are on and silent and development says so. Focus
   fires on a tab switch, throttled to 5s by the provider; `refetchOnReconnect` is
   left out because it cannot be provoked by hand.
-- **refreshError: inline | throw** — what the card does with a failed refresh
+- **error: inline | throw** — what the card does with a failed refresh
   over data it is still showing. `inline` renders both. `throw` hands it to the
   boundary. The frame carries a text input for this axis: whatever is typed into
   it is the local state a throw destroys.
@@ -97,7 +97,7 @@ the store is built; nothing a single read decides:
   failed without being told what it was reading. Store first, then the
   boundary's own clear.
 
-`refreshError` arrives unwrapped, because a reader still holding its own
+`error` arrives unwrapped, because a reader still holding its own
 `invalidate` has nothing to be carried. Rendered inline it turns the frame amber
 and keeps the value, with the error on the ⚠ as a tooltip; thrown, it reaches the
 boundary as the loader left it — an error with no key on it. The two pending flags
@@ -116,12 +116,12 @@ while running it (the frames, and the counters):
 5. Uncheck **mounted** on one of them and run it again.
 6. **Reload** to start over — the switches and the cards stay where you put them.
 
-And for what a thrown `refreshError` costs (Q3):
+And for what a thrown `error` costs (Q3):
 
 1. failure = never, and let a card reach its value.
 2. Type something into the frame's input.
 3. failure = always, then **Invalidate** on that card's key — watch the input.
-4. Set that card's **refreshError** to `throw` and do 1–3 again.
+4. Set that card's **error** to `throw` and do 1–3 again.
 5. With it thrown, try to get back: **Retry**, then the key's **Invalidate**,
    then **Remove**.
 
@@ -134,7 +134,7 @@ it?* What you see goes in the issue, not here.
 
 Added one at a time, each on its own: the promise's short id, a roommate that
 owns a key without consuming it, failure injected for just the next call,
-`refreshError` as a throw, and the Q1–Q5 recipes.
+`error` as a throw, and the Q1–Q5 recipes.
 
 `retry` is not among them: it was removed from the library in 049e252
 ("request-level policy is the fetcher's"), so the axis issue #80 lists no longer

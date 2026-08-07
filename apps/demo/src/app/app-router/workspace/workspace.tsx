@@ -86,7 +86,7 @@ function WorkspaceScreen({
     [activeTeamId, currentUser.id],
   );
   const [createOpen, setCreateOpen] = React.useState(false);
-  const [refreshError, setRefreshError] = React.useState<unknown>(undefined);
+  const [error, setError] = React.useState<unknown>(undefined);
   const [isRefreshing, startRefresh] = React.useTransition();
   const commitSearch = React.useCallback(
     (q: string) => patchFilters({ q }, "replace"),
@@ -114,9 +114,9 @@ function WorkspaceScreen({
     startRefresh(async () => {
       try {
         await refreshWorkspaceAction(ctx);
-        setRefreshError(undefined);
+        setError(undefined);
       } catch (error) {
-        setRefreshError(error);
+        setError(error);
       }
     });
   }, [ctx]);
@@ -178,7 +178,7 @@ function WorkspaceScreen({
                 currentUserId={currentUser.id}
                 selectedTaskId={selectedTaskId}
                 hasActiveFilters={hasActiveFilters}
-                refreshError={refreshError}
+                error={error}
                 isRefreshing={isRefreshing}
                 isViewPending={isViewPending}
                 onRefresh={refresh}

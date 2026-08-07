@@ -7,7 +7,7 @@ import * as React from "react";
  *
  * Lane only rejects a read that has no previous value; once the key has data a
  * failed re-read keeps serving the last good value and rides along as
- * `refreshError` instead. Cancelling follows the same split, which is what makes
+ * `error` instead. Cancelling follows the same split, which is what makes
  * this boundary worth having here: cancel a refresh and the value stays on
  * screen, cancel a first load and the abort arrives here, because there is
  * nothing else the reader could show.

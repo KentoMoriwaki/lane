@@ -48,18 +48,18 @@ export function SectionError({
  * data on screen during a transition-driven refetch, so this only flags a
  * failed refresh instead of replacing the UI.
  */
-export function RefreshErrorChip({
-  refreshError,
+export function ErrorChip({
+  error,
   onRetry,
   isRetrying,
   className,
 }: {
-  refreshError: unknown;
+  error: unknown;
   onRetry: () => void;
   isRetrying?: boolean;
   className?: string;
 }) {
-  if (refreshError === undefined || refreshError === null) {
+  if (error === undefined || error === null) {
     return null;
   }
 

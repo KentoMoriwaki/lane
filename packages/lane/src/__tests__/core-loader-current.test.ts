@@ -100,7 +100,7 @@ describe("loader context: current", () => {
         seen.push(current);
         throw new Error("offline");
       }),
-    ).resolves.toEqual({ revision: expect.any(Number), data: "page-1", refreshError: expect.any(Error) });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "page-1", error: expect.any(Error) });
 
     lane.invalidate(["feed"]);
     await readOrCreate(lane, ["feed"], async ({ current }) => {

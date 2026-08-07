@@ -10,7 +10,7 @@ import {
   WARM_TIMES,
   type LabRead,
   type LabWorld,
-  type RefreshErrorMode,
+  type ErrorMode,
   type Variation,
 } from "./lane";
 
@@ -97,13 +97,13 @@ function IntegratedPanel({
   const { promise, isInvalidationPending, isBackgroundPending } = useLane(
     readOf(world, variation),
   );
-  const { data, refreshError } = use(promise);
+  const { data, error } = use(promise);
 
   return (
     <DataFrame
       value={data}
-      refreshError={refreshError}
-      mode={variation.refreshError}
+      error={error}
+      mode={variation.error}
       invalidationPending={isInvalidationPending}
       backgroundPending={isBackgroundPending}
     />
@@ -131,7 +131,7 @@ function SeparatedPanel({
       <Suspense fallback={<SkeletonFrame />}>
         <PromiseChild
           promise={promise}
-          mode={variation.refreshError}
+          mode={variation.error}
           invalidationPending={isInvalidationPending}
           backgroundPending={isBackgroundPending}
         />
@@ -146,17 +146,17 @@ function PromiseChild({
   invalidationPending,
   backgroundPending,
 }: {
-  promise: Promise<{ data: string; refreshError?: unknown }>;
-  mode: RefreshErrorMode;
+  promise: Promise<{ data: string; error?: unknown }>;
+  mode: ErrorMode;
   invalidationPending: boolean;
   backgroundPending: boolean;
 }) {
-  const { data, refreshError } = use(promise);
+  const { data, error } = use(promise);
 
   return (
     <DataFrame
       value={data}
-      refreshError={refreshError}
+      error={error}
       mode={mode}
       invalidationPending={invalidationPending}
       backgroundPending={backgroundPending}
@@ -237,10 +237,10 @@ export function VariationCard({
           onChange={(staleTime) => onChange({ staleTime })}
         />
         <Select
-          label="refreshError"
+          label="error"
           options={["inline", "throw"] as const}
-          value={variation.refreshError}
-          onChange={(refreshError) => onChange({ refreshError })}
+          value={variation.error}
+          onChange={(error) => onChange({ error })}
         />
         <Toggle
           small
@@ -323,33 +323,33 @@ function PendingEdges({
 }
 
 /**
- * Data, and — when the last refresh failed over it — the `refreshError` beside
+ * Data, and — when the last refresh failed over it — the `error` beside
  * it rather than instead of it. That is stale-on-error: the value is still the
  * value, so the frame stays a data frame and the failure is a mark on it. The
  * other reading of the same field, throwing it and losing the subtree, is the
- * `refreshError` axis and comes later.
+ * `error` axis and comes later.
  */
 function DataFrame({
   value,
-  refreshError,
+  error,
   mode,
   invalidationPending,
   backgroundPending,
 }: {
   value: string;
-  refreshError: unknown;
-  mode: RefreshErrorMode;
+  error: unknown;
+  mode: ErrorMode;
   invalidationPending: boolean;
   backgroundPending: boolean;
 }) {
   // Thrown from the component that renders the data, which is where an app
   // would do it — and the whole difference is what goes with it. Everything
   // below this line, the input included, is replaced by the fallback.
-  if (refreshError !== undefined && mode === "throw") {
-    throw refreshError;
+  if (error !== undefined && mode === "throw") {
+    throw error;
   }
 
-  const stale = refreshError !== undefined;
+  const stale = error !== undefined;
 
   return (
     <Frame
@@ -367,7 +367,7 @@ function DataFrame({
         <span className="flex items-center gap-3">
           {stale ? (
             <span
-              title={String(refreshError)}
+              title={String(error)}
               className="text-2xl leading-none text-amber-500"
             >
               &#9888;
@@ -387,7 +387,7 @@ function DataFrame({
  * State that belongs to the subtree and to nothing else — type into it and it is
  * whatever the app would have had here: a half-filled form, a scroll position, an
  * open menu. Anything that unmounts this subtree takes it, which is what makes
- * the `refreshError: throw` axis cost something visible.
+ * the `error: throw` axis cost something visible.
  */
 function LocalState() {
   const [text, setText] = useState("");

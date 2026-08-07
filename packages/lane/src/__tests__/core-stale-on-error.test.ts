@@ -6,7 +6,7 @@ import { resetVitest, subscribeInvalidate } from "./test-utils";
 afterEach(resetVitest);
 
 // Stale-on-error now carries the failure in the resolved value itself
-// (`{ data, refreshError }`) rather than a separate readable channel.
+// (`{ data, error }`) rather than a separate readable channel.
 describe("stale-on-error", () => {
   it("serves the last fulfilled value when a reload rejects and exposes the error", async () => {
     const lane = createLane();
@@ -20,7 +20,7 @@ describe("stale-on-error", () => {
       throw error;
     });
 
-    await expect(reloaded).resolves.toEqual({ revision: expect.any(Number), data: "cached", refreshError: error });
+    await expect(reloaded).resolves.toEqual({ revision: expect.any(Number), data: "cached", error: error });
   });
 
   it("keeps initial load rejections as a rejected cache", async () => {
@@ -60,7 +60,7 @@ describe("stale-on-error", () => {
     });
     await expect(reloaded).resolves.toEqual({ revision: expect.any(Number),
       data: "cached",
-      refreshError: expect.any(Error),
+      error: expect.any(Error),
     });
 
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 10_000 });
@@ -81,10 +81,10 @@ describe("stale-on-error", () => {
       readOrCreate(lane, ["tasks"], async () => {
         throw new Error("offline");
       }),
-    ).resolves.toEqual({ revision: expect.any(Number), data: "cached", refreshError: expect.any(Error) });
+    ).resolves.toEqual({ revision: expect.any(Number), data: "cached", error: expect.any(Error) });
 
     lane.invalidate(["tasks"]);
-    // A successful reload resolves to data with no refreshError key.
+    // A successful reload resolves to data with no error key.
     await expect(
       readOrCreate(lane, ["tasks"], async () => "fresh"),
     ).resolves.toEqual({ revision: expect.any(Number), data: "fresh" });
@@ -101,6 +101,6 @@ describe("stale-on-error", () => {
 
     const published = lane.set(["tasks"], rejecting);
 
-    await expect(published).resolves.toEqual({ revision: expect.any(Number), data: "cached", refreshError: error });
+    await expect(published).resolves.toEqual({ revision: expect.any(Number), data: "cached", error: error });
   });
 });

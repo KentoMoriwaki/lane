@@ -20,7 +20,7 @@ import { useLane } from "./use-lane";
  * each was fetched with, and whether the server said there is more.
  *
  * `hasNext` lives *in the value* rather than on the hook result for the same
- * reason `refreshError` does: the hook hands back a promise it never resolves,
+ * reason `error` does: the hook hands back a promise it never resolves,
  * so it cannot know. Keeping it here also makes it impossible for `hasNext` and
  * `pages` to disagree mid-render under concurrent rendering — they arrive
  * together or not at all. The split is the rule for this hook: **actions come
@@ -75,7 +75,7 @@ export type InfiniteLaneResult<P, C> = {
    * Returns the entry's next promise, so a caller that is not driving off the
    * rendered value can await the outcome — an auto-load effect, typically. It
    * resolves rather than rejects when the page fails, like any read: check
-   * `refreshError` on the result, and stop the trigger while it is set.
+   * `error` on the result, and stop the trigger while it is set.
    * `undefined` means there was nothing to append to (no entry yet, or its last
    * read rejected).
    */
@@ -124,7 +124,7 @@ export type InfiniteLaneResult<P, C> = {
  *   nextCursor: (page) => page.nextCursor,
  * });
  *
- * const { data, refreshError } = use(promise);
+ * const { data, error } = use(promise);
  * // data.pages / data.hasNext — never a status object.
  * ```
  */

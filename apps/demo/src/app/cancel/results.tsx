@@ -22,7 +22,7 @@ export function SearchResults({ topic }: { topic: string }) {
     key: searchKey(topic),
     loader: searchLoader(topic),
   });
-  const { data, refreshError } = use(promise);
+  const { data, error } = use(promise);
 
   return (
     <section className="flex flex-col gap-3 rounded-xl border bg-card p-4">
@@ -35,12 +35,12 @@ export function SearchResults({ topic }: { topic: string }) {
         </p>
       </header>
 
-      {refreshError ? (
+      {error ? (
         <p className="rounded-lg border border-rose/40 bg-rose/5 px-3 py-2 text-[11px] text-rose">
-          refreshError:{" "}
-          {refreshError instanceof Error
-            ? refreshError.message
-            : String(refreshError)}
+          error:{" "}
+          {error instanceof Error
+            ? error.message
+            : String(error)}
         </p>
       ) : null}
 

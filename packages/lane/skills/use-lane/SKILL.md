@@ -39,7 +39,7 @@ const { promise } = useLane({
   key: ["user", id],
   loader: ({ signal }) => fetchUser(id, signal),
 });
-const { data } = use(promise); // { data, refreshError } — no isLoading / error / status
+const { data } = use(promise); // { data, revision, error? } — no isLoading / isError / status
 
 // Converge after a mutation: change the source, invalidate the key, re-read.
 const lane = useLaneInstance();
@@ -68,8 +68,8 @@ Each rule points to the reference that explains it. Read the reference when the
 task touches that rule.
 
 - **Read with `use(promise)`** — never store `data` in your own state or an
-  external store. `use()` yields `{ data, refreshError }`; there is no
-  `isLoading` / `error` / `status`. → `references/common-mistakes.md`, `references/design-notes.md`
+  external store. `use()` yields `{ data, revision, error? }`; `useLane` itself
+  has no `isLoading` / `isError` / `status`. → `references/common-mistakes.md`, `references/design-notes.md`
 - **Keep keys stable and serializable.** Lane dedupes by key, not by loader, so a
   key that changes every render refetches every render; the loader itself can be an
   inline closure (no `useCallback` needed). → `references/common-mistakes.md`
@@ -119,7 +119,7 @@ task touches that rule.
   announces its own reach, its caller does not enumerate it — and they are
   announced in the same tick, so every reader goes pending together and converges
   on one commit. Lane never touches the action: converge inside it, and catch its
-  failure there (a failed save is not `refreshError`).
+  failure there (a failed save is not `error`).
   → `references/api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action`
 - **Converge by invalidating the source**, not by patching a cache — for
   **client-owned** keys. Use `set` / `update` only to publish data you *already
@@ -130,9 +130,15 @@ task touches that rule.
 - **Wrap key changes and navigation in a transition** (or drive the key from
   `useDeferredValue`) so the current screen stays live. Initial loads with no
   prior value still suspend to a Suspense fallback. → `references/integrations.md`
-- **A failed _refresh_ keeps serving stale data** as `{ data, refreshError }`;
-  only an _initial_ load rejects to the Error Boundary. Don't treat
-  `refreshError` as fatal. → `references/design-notes.md`
+- **A failed load keeps serving the last good value** as `{ data, error }`; only
+  a load with nothing to serve rejects to the Error Boundary. Don't treat `error`
+  as fatal — it says the data is not current, not that the read is broken.
+- **`fallback` is a read's own policy for a failed load.** It runs on every
+  failure and returns what to serve: `({ lastFulfilled }) => lastFulfilled ?? EMPTY`
+  for something non-essential that should never take out a subtree, or
+  `({ error }) => { throw error }` where a stale value is itself wrong. What it
+  returns is served, never stored — which is why this is not a `try`/`catch` in
+  the loader. → `references/api-reference.md`, `references/design-notes.md`
 - **No `useMutation`, no optimistic cache.** Optimistic state stays local via
   `useOptimistic` / `useActionState` next to the action. → `references/architectures.md`
 - **Disable a read by passing `loader: undefined`** (gating). `promise` is then
@@ -149,7 +155,8 @@ task touches that rule.
 ## Migrating React Query / SWR? Five traps
 
 - **Map the model, don't port the shape.** `isLoading` → Suspense; `error` →
-  `refreshError` only (an initial failure hits the Error Boundary, never a field);
+  the resolved value's `error` (a failure with nothing to show hits the Error
+  Boundary instead, never a field); `placeholderData` for a read that may fail → `fallback`;
   `refetchInterval` → a userland poll; `onMutate` → `useOptimistic`;
   `getQueryData` → **nothing** — the store returns promises or `void`, never a
   value, so derive with `update` (the updater is handed the current value) or

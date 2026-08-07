@@ -89,8 +89,8 @@ function ProbeReader({ channel, read }: { channel: string; read: ProbeRead }) {
       >
         tr:{result.isInvalidationPending ? 1 : 0}
       </span>
-      {value.refreshError !== undefined && (
-        <span className="ml-2 text-red-600">refreshError:{String(value.refreshError)}</span>
+      {value.error !== undefined && (
+        <span className="ml-2 text-red-600">error:{String(value.error)}</span>
       )}
     </div>
   );

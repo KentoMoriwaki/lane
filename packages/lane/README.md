@@ -43,12 +43,14 @@ designed to own.
   model drives the rest of your app and keeps the current screen live.
 - **One mental model.** Mutate the source, invalidate the read, render from the
   next promise — the same model you already use next to Server Components.
-- **No parallel state machine.** No `isLoading` / `isError` / `status` fields.
-  `use(promise)` gives you `{ data, revision }` (and a `refreshError` only when
-  a refresh fails over existing data); Suspense and Error Boundaries do the
-  rest. `revision` names the content's identity — it changes exactly when
-  `data`'s reference does, so it can carry "which content is this" into a
-  derived read's key.
+- **No parallel state machine.** `useLane` has no `isLoading` / `isError` /
+  `status` fields: loading is a Suspense fallback, and a failure with nothing to
+  show throws to an Error Boundary. What the *resolved value* carries is
+  `{ data, revision }`, plus an `error` beside them when the load failed and
+  something else is being served — one settlement, so it cannot disagree with
+  the data the way a field read live from a store during render can. `revision`
+  names the content's identity — it changes exactly when `data`'s reference
+  does, so it can carry "which content is this" into a derived read's key.
 - **No mutation helper, by design.** Mutations stay in React primitives, so
   optimistic UI lives next to the action that triggered it instead of in a
   global cache that needs rollback semantics.
@@ -163,10 +165,11 @@ function RenameButton({ userId }: { userId: string }) {
   own `invalidate` is awaitable — it returns the next read's promise (the very
   one subscribed readers adopt), so a mutation can await the refresh and react
   to whether the content actually changed.
-- **Stale-on-error.** A failed *refresh* keeps serving the last fulfilled value;
-  the promise resolves to `{ data, refreshError }`, so `use(promise)` surfaces the
-  stale data and the error together. Only an *initial* load (no previous value)
-  rejects the promise and reaches the Error Boundary.
+- **Falling back.** A failed load keeps serving the last fulfilled value; the
+  promise resolves to `{ data, error }`, so `use(promise)` surfaces the data and
+  the failure together. A read can declare its own `fallback` policy instead —
+  what to serve when there is nothing, or that a stale value is never acceptable.
+  Only a load with nothing to serve rejects and reaches the Error Boundary.
 - **Authoritative publication.** `set` / `update` publish server-confirmed data
   to exact keys the client owns; `LaneHydration` publishes RSC- or router-loaded
   data and overwrites authoritatively on navigation.
@@ -197,7 +200,7 @@ function RenameButton({ userId }: { userId: string }) {
 | Export | Purpose |
 | --- | --- |
 | `LaneProvider` | Provides a Lane instance to the tree; wires focus / reconnect revalidation via a pluggable `eventSource` (browser default; React Native / CLI / custom). |
-| `useLane(read)` | Read a key. Returns `{ promise, isInvalidationPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, revision, refreshError }`. |
+| `useLane(read)` | Read a key. Returns `{ promise, isInvalidationPending, isBackgroundPending, invalidate }`; `use(promise)` yields `{ data, revision, error }`. |
 | `useLanePromise(read)` | Thin wrapper returning just `promise`. |
 | `laneRead({ key, loader, …options })` | Colocate a read's key, loader, and options in one value — react-query's `queryOptions()` for Lane. Reads take the whole thing (`useLane`, `useLanesAll`, `prefetch`); entry operations take its `key`. |
 | `laneKey<T>(key)` | A key that carries what its entry holds, so `set` / `update` through it are type-checked — no loader needed. |

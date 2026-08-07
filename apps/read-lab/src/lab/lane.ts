@@ -74,7 +74,7 @@ export const WARM_TIMES: Record<WarmTimeSetting, number | undefined> = {
 };
 
 /**
- * What the card does with a `refreshError` — the field a failed refresh over
+ * What the card does with a `error` — the field a failed refresh over
  * existing data comes back in.
  *
  * - `inline`: render the data *and* the error, which is what the docs ask for.
@@ -82,7 +82,7 @@ export const WARM_TIMES: Record<WarmTimeSetting, number | undefined> = {
  *   put a price on that, so the frame carries a text input: whatever is typed
  *   into it is the local state a throw destroys.
  */
-export type RefreshErrorMode = "inline" | "throw";
+export type ErrorMode = "inline" | "throw";
 
 /** Two keys, so that "somebody else is reading this" is a thing you can arrange. */
 export type LabKeyName = "A" | "B";
@@ -119,7 +119,7 @@ export type Variation = {
   gcTime: ReadGcTimeSetting;
   /** How long its value waits for it if it never arrives. */
   warmTime: WarmTimeSetting;
-  refreshError: RefreshErrorMode;
+  error: ErrorMode;
   staleTime: StaleTimeSetting;
   /**
    * The revalidation triggers, a different mechanism from the two above: those
@@ -144,7 +144,7 @@ export function createVariation(patch: Partial<Variation> = {}): Variation {
     mounted: true,
     gcTime: "lane",
     warmTime: "lane",
-    refreshError: "inline",
+    error: "inline",
     staleTime: "none",
     refetchOnMount: false,
     refetchOnFocus: false,

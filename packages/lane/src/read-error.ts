@@ -40,10 +40,11 @@ import type { LaneKey } from "./types";
  * performed. Those keep their own shape ({@link LaneExternalTimeoutError}, which
  * carries the same `key` for identification).
  *
- * **`refreshError` is not wrapped.** That field reaches a reader that is still
- * mounted and still holds its own `invalidate`; nothing was lost, so nothing
- * needs carrying. The wrapper is for the case where the error is all that
- * survived.
+ * **The `error` on a resolved read is not wrapped.** That field reaches a reader
+ * that is still mounted and still holds its own `invalidate`; nothing was lost,
+ * so nothing needs carrying. The wrapper is for the case where the error is all
+ * that survived — which is also why a read whose `fallback` returned a value
+ * never produces one, and a policy that *throws* does.
  *
  * **It does not survive the server.** React replaces an error thrown while
  * rendering on the server with a digest before the client sees it, so a fallback

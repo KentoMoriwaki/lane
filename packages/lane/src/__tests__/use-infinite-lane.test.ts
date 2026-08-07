@@ -298,7 +298,7 @@ describe("useInfiniteLane", () => {
     ]);
   });
 
-  it("keeps the pages and reports refreshError when a re-read fails", async () => {
+  it("keeps the pages and reports error when a re-read fails", async () => {
     const lane = createLane();
     const fetchPage = pageFetcher(10);
 
@@ -452,14 +452,14 @@ function FeedProbe({
     handle = result;
   });
 
-  const { data, refreshError } = React.use(result.promise);
+  const { data, error } = React.use(result.promise);
   const rendered = [
     data.pages.map((page) => page.index).join(","),
     data.hasNext ? "more" : "end",
   ];
 
-  if (refreshError) {
-    rendered.push((refreshError as Error).message);
+  if (error) {
+    rendered.push((error as Error).message);
   }
 
   return React.createElement(React.Fragment, null, rendered.join("|"));

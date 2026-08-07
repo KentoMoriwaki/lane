@@ -228,7 +228,7 @@ order:
    publishes the in-flight promise under that key: pending starts with the
    action, and there is no second round-trip. Only for a promise of the key's
    *value* — a mutation's promise does not go here, or its failure arrives at
-   every reader as `refreshError`.
+   every reader as `error`.
 2. **You can show the outcome before it lands** → `useOptimistic`. The reader
    already shows the new state, so pending is not the right signal at all.
 3. **Neither** → [`startInvalidationTransition`](./api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action),

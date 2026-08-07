@@ -315,32 +315,46 @@ means, and `remove` genuinely forgets: it drops the last fulfilled value along
 with the cache, so neither stale-on-error nor the next loader's `current` can
 serve removed data back after a sign-out.
 
-## Refresh errors serve stale data
+## A failed load falls back before it rejects
 
-A failed *refresh* must not destroy data the user is already looking at. When an
-entry has a last fulfilled value and its next read rejects — after invalidation,
-a focus refetch, polling, or a `set` of a rejecting promise — the cache falls
-back:
+A failure must not destroy data the user is already looking at. When an entry has
+a last fulfilled value and its next read rejects — after invalidation, a focus
+refetch, polling, or a `set` of a rejecting promise — the cache falls back:
 
-- the cached promise resolves with `{ data, refreshError }` — the last fulfilled
+- the cached promise resolves with `{ data, error }` — the last fulfilled
   value plus the error — so `use(promise)` keeps rendering instead of throwing
 - the failure rides *inside the resolved value*, not a side channel: a reader
-  gets `data` and `refreshError` from the same `use(promise)`, so they can never
+  gets `data` and `error` from the same `use(promise)`, so they can never
   tear apart under concurrent rendering, and nothing reads mutable store state
   during render
 - freshness keeps the original fulfillment time, so staleness policies still
   treat the data as old and retry naturally
-- the next successful read resolves to `{ data }` with no `refreshError`
+- the next successful read resolves to `{ data }` with no `error`
 
-Only initial loads — reads with no previous fulfilled value — reject and reach
-the Error Boundary. This preserves the boundary model for "there is nothing to
-show" while keeping "there is something to show" rendered through background
-failures. `refreshError` is deliberately not named `error` for this reason.
+Only a load with nothing to serve rejects and reaches the Error Boundary. This
+preserves the boundary model for "there is nothing to show" while keeping "there
+is something to show" rendered through background failures.
+
+Which of the two a failure is turns out to be the read's decision, not the
+store's, and `fallback` is where it says so. The built-in behaviour above is one
+policy — *serve the previous value, else reject* — and a read that declares its
+own replaces it outright: a floor under the empty case for something
+non-essential, or a refusal to serve a value that is not current for something
+where staleness is itself wrong. Which is why the policy is handed the same two
+facts this section decides from, and why it runs whether or not there is a
+previous value: a rule that only sometimes applies is one nobody can read off the
+definition.
+
+Nothing a policy returns is stored. `lastFulfilled` moves only on a genuine
+success, so the freshness and revision arguments above keep holding for a read
+that never succeeds at all — which is also the argument against writing this as a
+`try` / `catch` in the loader, where a substitute *is* a success and takes all
+three with it.
 
 Carrying the error in the resolved value (rather than exposing it as a separate
 field on the hook result) is what makes this consistent: the promise is a single
 React-state snapshot, and `use()` is the only read path, so `data` and
-`refreshError` always reflect the same point in time.
+`error` always reflect the same point in time.
 
 ## Authoritative publication is secondary
 

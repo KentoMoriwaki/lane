@@ -8,6 +8,68 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **`fallback`: a read's own policy for what a failed load serves.** A function
+  on the read spec, run on every failed load, returning what to render in the
+  loader's place.
+
+  ```tsx
+  laneRead({
+    key: ["quota"],
+    loader: fetchQuota,
+    fallback: ({ lastFulfilled }) => lastFulfilled ?? EMPTY_QUOTA,
+  });
+  ```
+
+  Without one, the built-in policy applies and is unchanged: serve the last
+  fulfilled value if there is one, otherwise reject. Declaring a policy replaces
+  that outright rather than extending it, which is why it is handed the same two
+  facts the default decides from — the error, and the last fulfilled value — and
+  why it runs whether or not there is a previous value. A rule that only
+  sometimes applies is one nobody can read off the definition.
+
+  That covers two cases the store could not express before. A non-essential
+  corner of a screen — a usage meter, a tag list, a badge — can fail without
+  taking a subtree to an Error Boundary, saying so inline through `error`
+  instead. And a read where a stale value is *itself* wrong, a balance or a lock
+  state, can refuse to serve one: `({ error }) => { throw error }` declines, and
+  lands exactly where the built-in policy's empty case lands.
+
+  **What it returns is served, never stored.** `lastFulfilled` moves only on a
+  genuine success and the entry keeps the freshness it had — so a read that fell
+  back is still as stale as it was and still refreshes on the next trigger. A
+  policy that hands back what it was given serves it under the entry's own
+  revision; a substitute the entry never held carries one of its own, so no
+  number ever names two different values. That is the whole reason this is a read option rather than
+  a `try`/`catch` in the loader: a loader that catches and returns a substitute
+  has *succeeded* as far as the store can tell, which restamps the fulfillment
+  time so the entry stops refreshing and overwrites the last good value with the
+  substitute.
+
+  Synchronous — a promise would be a second loader, and retrying a failed request
+  belongs to the fetcher. `external` reads take none: their only failure is
+  `LaneExternalTimeoutError`, which says nobody published the key, and serving
+  something in its place would hide a missing publisher. The policy that runs is
+  the one carried by the read that started the load, as with `loaderMeta`.
+
+### Changed
+
+- **Breaking: `LaneRead.refreshError` is now `error`.** The old name was accurate
+  while the field could only appear over a previous value — a *refresh* had
+  failed. With `fallback` a first load can serve something too, so the name
+  described a case it no longer covers.
+
+  What the field means is unchanged in the cases that already existed: the load
+  that would have produced `data` failed, and something else is being served. It
+  is a reason to annotate what is on screen, not to replace it, and a failure
+  with nothing to serve still rejects rather than setting it.
+
+  It stays on the resolved value rather than moving to `useLane`, and the rename
+  does not walk that back. `useLane` has no `isLoading` / `isError` / `status`
+  because loading is a Suspense fallback and a failure with nothing to show
+  throws; an error *beside data that is being served* is a different fact, and
+  carrying it in the same settlement is what keeps it from disagreeing with the
+  data next to it.
+
 - **`warmTime`: how long a settled entry nobody has ever held waits for its first
   reader.** On `createLane` and on a read, like `gcTime`.
 

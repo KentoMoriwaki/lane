@@ -13,7 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { EmptyState, RefreshErrorChip } from "@/app/lane/workspace/feedback";
+import { EmptyState, ErrorChip } from "@/app/lane/workspace/feedback";
 import {
   DueBadge,
   LabelChip,
@@ -35,7 +35,7 @@ export function TaskList({
   currentUserId,
   selectedTaskId,
   hasActiveFilters,
-  refreshError,
+  error,
   isRefreshing,
   isViewPending,
   onRefresh,
@@ -48,7 +48,7 @@ export function TaskList({
   currentUserId: string;
   selectedTaskId: string | null;
   hasActiveFilters: boolean;
-  refreshError: unknown;
+  error: unknown;
   isRefreshing: boolean;
   isViewPending: boolean;
   onRefresh: () => void;
@@ -57,8 +57,8 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const refreshNotice = (
-    <RefreshErrorChip
-      refreshError={refreshError}
+    <ErrorChip
+      error={error}
       onRetry={onRefresh}
       isRetrying={isRefreshing}
       className="mx-4 mt-3"

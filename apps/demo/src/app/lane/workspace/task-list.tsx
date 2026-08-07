@@ -8,7 +8,7 @@ import type { TaskFilters } from "@/app/lane/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PRIORITY_GROUP_ORDER, PRIORITY_META } from "@/lib/task-meta";
 import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
-import { EmptyState, RefreshErrorChip } from "./feedback";
+import { EmptyState, ErrorChip } from "./feedback";
 import { TaskRow } from "./task-row";
 
 export function TaskList({
@@ -27,7 +27,7 @@ export function TaskList({
   onResetFilters: () => void;
 }) {
   const { userId } = useWorkspace();
-  const { refresh, isRefreshing, refreshError } = useWorkspaceRefresh();
+  const { refresh, isRefreshing, error } = useWorkspaceRefresh();
   const { promise, isInvalidationPending } = useTasks(filters);
   const { data: tasks } = React.use(promise);
 
@@ -37,8 +37,8 @@ export function TaskList({
   // never reached the owner, and what is on screen is the publication before it.
   // Retrying means asking again, not re-fetching from here.
   const refreshNotice = (
-    <RefreshErrorChip
-      refreshError={refreshError}
+    <ErrorChip
+      error={error}
       onRetry={refresh}
       isRetrying={isRefreshing}
       className="mx-4 mt-3"

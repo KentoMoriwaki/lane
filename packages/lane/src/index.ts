@@ -40,6 +40,7 @@ export type {
   LaneEntryInfo,
   LaneExternalLoader,
   LaneExternalReadSpec,
+  LaneFallback,
   LaneExternalResult,
   LaneGatedExternalReadSpec,
   LaneGatedExternalResult,

@@ -85,20 +85,31 @@ export default function Page({ searchParams }: PageProps) {
  * Below the page-level boundary because `searchParams` is URL data, so the
  * shell above streams first.
  *
- * The value handed down is *exactly* what the browser's `fetchPage` returns for
- * pages 2..N — same endpoint, same function, same `TaskPage`. That is not a
- * nicety: the pages end up in one `pages: P[]`, so a server-shaped page 1 and a
- * client-shaped page 2 would be a rendering bug. The prop's type is what checks
- * it, which is one thing the value form gets for free that the published form
- * had to buy with `laneSnapshot`.
+ * **Page 1 is handed over unawaited.** This component does not block on it; the
+ * promise crosses to the client and the boundary below it is what waits. That is
+ * not a micro-optimisation — it is what gives the client half a *stable
+ * identity* for the incoming page. A resolved value is deserialized afresh on
+ * every delivery and has no identity worth anything; the promise is one object
+ * per delivery, which is what the interim wrapper is keyed on (see
+ * `use-hybrid-infinite-lane.ts`).
+ *
+ * What it resolves to is *exactly* what the browser's `fetchPage` returns for
+ * pages 2..N — same endpoint, same function, same `TaskPage`. The pages end up
+ * in one `pages: P[]`, so a server-shaped page 1 and a client-shaped page 2
+ * would be a rendering bug; the prop's type is what rules it out.
  */
 async function FirstPage({ searchParams }: PageProps) {
-  const raw = (await searchParams).scope;
+  const params = await searchParams;
+  const raw = params.scope;
   const scope = parseTaskPageScope(Array.isArray(raw) ? raw[0] : raw);
   const filters: TaskPageFilters = { scope };
+  // `?adoptDelay=800` stretches the adopting window so it can be clicked into.
+  const adoptDelayMs = Number(
+    Array.isArray(params.adoptDelay) ? params.adoptDelay[0] : params.adoptDelay,
+  );
   const user = await getCachedCurrentUser("");
   const ctx = { teamId: user.defaultTeamId, userId: user.id };
-  const firstPage = await getCachedFirstTaskPage(ctx, filters);
+  const firstPagePromise = getCachedFirstTaskPage(ctx, filters);
 
   return (
     <InfiniteLaneProvider ctx={ctx}>
@@ -110,8 +121,9 @@ async function FirstPage({ searchParams }: PageProps) {
         }
       >
         <HybridTaskList
+          adoptDelayMs={Number.isFinite(adoptDelayMs) ? adoptDelayMs : 0}
           ctx={ctx}
-          firstPage={firstPage}
+          firstPagePromise={firstPagePromise}
           scope={scope}
           source="prop"
         />

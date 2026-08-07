@@ -3,22 +3,24 @@
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as React from "react";
-import { useInfiniteLane } from "use-lane";
 import type { TaskPage, TaskScope } from "@/server/api";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createTaskAction, refreshFirstPageAction } from "./api/actions";
 import { fetchTaskPage, type TaskPageFilters } from "./api/endpoints";
-import { taskInfiniteRead } from "./api/lane-reads";
+import { taskListKey, taskPageVersion } from "./api/lane-reads";
 import {
   getProbeEvents,
   getProbeServerSnapshot,
+  recordInterim,
   recordProbe,
   resetProbe,
   setProbePhase,
   subscribeProbe,
 } from "./probe";
+import { SecondReader } from "./second-reader";
+import { useHybridInfiniteLane } from "./use-hybrid-infinite-lane";
 
 const SCOPES: { label: string; value: TaskScope }[] = [
   { label: "All", value: "all" },
@@ -30,60 +32,75 @@ const SCOPES: { label: string; value: TaskScope }[] = [
  * **The hybrid list.** The App Router owns page 1; this component owns the
  * depth below it.
  *
- * There are exactly two moving parts, and no effect:
+ * Page 1 arrives as an *unawaited promise* — the route hands over
+ * `fetchTaskPage(...)` and lets it stream — and everything that follows from it
+ * lives in `useHybridInfiniteLane`, a userland hook built on nothing but
+ * `useInfiniteLane`, `lane.set` and React. Read that module for the mechanism;
+ * what matters here is what the component gets:
  *
- * 1. `firstPage` arrives as a prop — a resolved value the route already
- *    loaded. The loader's page-1 branch returns it. No fetch, no publication,
- *    no wait.
- * 2. `firstPage.version` is in the key. So a republication that changed page 1
- *    *is* a different key, and Lane reads the new entry during the render that
- *    carries the new prop — inside whatever transition the Server Action or the
- *    navigation is already running. The list resets to depth 1 and costs
- *    nothing. A republication that changed nothing keeps the key, and the
- *    user's depth with it.
+ * - a first paint with no client request for page 1;
+ * - a republication that changed nothing costs nothing and keeps the depth;
+ * - a republication that changed page 1 shows it immediately, at depth 1, with
+ *   no request and no frame of the old list in between;
+ * - `invalidate` still re-walks pages 2..N with page 1 for free.
  *
- * The previous revision of this spike published page 1 under an external key
- * and reconciled with an effect. That version worked, and cost: a
- * two-dimensional `(key, publication)` ref guard to survive filter changes and
- * `<Activity>` reveals, an N−1 request re-walk on every republication —
- * including the ones that changed nothing — and a visible window where a
- * reader of the publication and the list disagreed. Keying on a
- * server-computed content hash removes all three, at the price of discarding
- * pages 2..N when page 1 genuinely changes.
+ * Three earlier revisions of this spike are worth remembering for what they
+ * cost. The first published page 1 under an external key and reconciled with an
+ * effect: a two-dimensional `(key, publication)` ref guard, an N−1 request
+ * re-walk on *every* republication, and a visible two-truth window. The second
+ * spliced the content hash into the key, which fixed all of that and cost `.key`
+ * its reachability. The third put the whole thing in `packages/lane` and was
+ * rejected for the weight it added to every entry in the store. This one needs
+ * no core change at all.
  *
- * That last cost is a product decision, so it stays available rather than
- * being taken away: **Deep refresh** below is the explicit `invalidate` that
- * re-walks the whole chain in place, the old behavior, on demand.
+ * The trade that remains is deliberate: a changed first page discards pages
+ * 2..N rather than re-deriving them. **Deep refresh** below is the explicit
+ * `invalidate` that re-walks the chain in place, page 1 for free.
  *
  * `/lane-infinite/late` is the same component fed from a *publication* instead
- * of a prop — the pattern is about the value, not about where it came from.
+ * of a route prop — the pattern is about the value, not where it came from.
  */
 export function HybridTaskList({
+  adoptDelayMs = 0,
   ctx,
-  firstPage,
+  firstPagePromise,
   scope,
   source,
 }: {
+  /** `?adoptDelay=` — see `useHybridInfiniteLane`. Lab only. */
+  adoptDelayMs?: number;
   ctx: WorkspaceCtx;
-  firstPage: TaskPage;
+  /** Unawaited on purpose: the route streams it rather than blocking on it. */
+  firstPagePromise: Promise<TaskPage>;
   scope: TaskScope;
-  /** Where `firstPage` came from — labels the rig, changes nothing. */
+  /** Where page 1 came from — labels the rig, changes nothing. */
   source: "prop" | "publication";
 }) {
   const router = useRouter();
   const filters = React.useMemo<TaskPageFilters>(() => ({ scope }), [scope]);
 
-  const { invalidate, isInvalidationPending, loadMore, promise } =
-    useInfiniteLane(
-      taskInfiniteRead(filters, firstPage, {
-        nextPage: async (cursor, { meta, signal }) => {
-          const page = await fetchTaskPage(meta, filters, { cursor }, signal);
-          recordProbe("network", cursor, page);
-          return page;
-        },
-        onAdoptFirstPage: (page) => recordProbe("adopt", null, page),
-      }),
-    );
+  const {
+    firstPage,
+    invalidate,
+    isAdopting,
+    isInvalidationPending,
+    loadMore,
+    promise,
+  } = useHybridInfiniteLane<TaskPage, string | null>({
+    adoptDelayMs,
+    key: taskListKey(filters),
+    initialCursor: null,
+    firstPagePromise,
+    version: taskPageVersion,
+    fetchPage: async (cursor, { meta, signal }) => {
+      const page = await fetchTaskPage(meta, filters, { cursor }, signal);
+      recordProbe("network", cursor, page);
+      return page;
+    },
+    nextCursor: (page) => page.nextCursor,
+    onAdoptFirstPage: (page) => recordProbe("adopt", null, page),
+    onInterim: recordInterim,
+  });
   const { data, refreshError } = React.use(promise);
 
   const adopted = data.pages[0];
@@ -121,9 +138,11 @@ export function HybridTaskList({
         <span data-testid="status" className="ml-auto text-xs text-muted-foreground">
           {isMutating
             ? "republishing…"
-            : isInvalidationPending
-              ? "re-walking…"
-              : "idle"}
+            : isAdopting
+              ? "adopting…"
+              : isInvalidationPending
+                ? "re-walking…"
+                : "idle"}
         </span>
       </section>
 
@@ -197,11 +216,12 @@ export function HybridTaskList({
         </p>
       ) : null}
 
-      <IncomingPage
-        firstPage={firstPage}
-        listPage={adopted}
-        source={source}
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <IncomingPage firstPage={firstPage} listPage={adopted} source={source} />
+        <React.Suspense fallback={null}>
+          <SecondReader filters={filters} />
+        </React.Suspense>
+      </div>
       <PageProvenance pages={data.pages} />
 
       <ol data-testid="task-list" className="divide-y rounded-xl border">

@@ -86,10 +86,51 @@ export function recordProbe(
   }
 }
 
+/**
+ * Interim promises, by instance.
+ *
+ * The hook's interim wrapper is created during a render that *always* suspends
+ * (one microtask on the derived promise), so there is always a retry — and the
+ * whole reason it lives in a `WeakMap` keyed on the route's promise rather than
+ * in a `useMemo` is that the retry must get the identical object back. This is
+ * how that is checked: each distinct instance is given a number, and a
+ * republication that produced more than one number means the cache failed.
+ */
+const interimIds = new WeakMap<Promise<unknown>, number>();
+let interimCount = 0;
+let interimLog: number[] = [];
+
+export function recordInterim(promise: Promise<unknown>) {
+  let id = interimIds.get(promise);
+
+  if (id === undefined) {
+    id = (interimCount += 1);
+    interimIds.set(promise, id);
+  }
+
+  interimLog = [...interimLog, id];
+
+  if (typeof window !== "undefined") {
+    (
+      window as unknown as { __laneInfiniteInterim?: unknown }
+    ).__laneInfiniteInterim = {
+      distinct: interimCount,
+      log: interimLog,
+    };
+  }
+}
+
 export function resetProbe() {
   events = [];
   nextId = 0;
+  interimLog = [];
   emit();
+
+  if (typeof window !== "undefined") {
+    (
+      window as unknown as { __laneInfiniteInterim?: unknown }
+    ).__laneInfiniteInterim = { distinct: interimCount, log: interimLog };
+  }
 }
 
 export function subscribeProbe(listener: () => void) {

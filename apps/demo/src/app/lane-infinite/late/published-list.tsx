@@ -1,29 +1,32 @@
 "use client";
 
-import * as React from "react";
 import { useLane } from "use-lane";
-import type { TaskScope } from "@/server/api";
+import type { TaskPage, TaskScope } from "@/server/api";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
 import type { TaskPageFilters } from "../api/endpoints";
 import { HybridTaskList } from "../hybrid-task-list";
+import { derivePromise } from "../use-hybrid-infinite-lane";
 import { publishedFirstPage } from "./published-first-page";
 
 /**
- * The published variant, in four lines of difference from the prop form.
+ * The published variant, in three lines of difference from the prop form.
  *
  * `useLane` of an `external` read hands back a promise that resolves when the
  * publication lands — before it does, this component suspends and no request is
- * made. `use()` turns that into the same `TaskPage` value the prop form gets,
- * and everything downstream is byte-for-byte the main rig.
+ * made. It resolves to a `LaneRead<TaskPage>`, and the list below takes a
+ * `Promise<TaskPage>`, so the one thing this component does is map between them.
  *
- * The republication path collapses into the same mechanism too, which is the
- * result worth having: a publication settles this read immediately (it is
- * replaced, not refetched), so `data` is a new value in that same commit, and
- * if its `version` differs the list below re-keys — no effect, no promise
- * identity to watch, no ref guard. The previous revision of this spike chained
- * the infinite loader onto `externalPromise.then(r => r.data)` and reconciled
- * with an effect; unwrapping here instead means the published form and the prop
- * form are one pattern with one convergence rule.
+ * **It maps through `derivePromise`, not inline.** `promise.then((r) => r.data)`
+ * in render would hand the list a brand-new prop identity on every render, and
+ * that identity is exactly what the interim wrapper downstream is keyed on. The
+ * `WeakMap` gives one derived promise per publication, which is the right
+ * granularity: a publication is a delivery, and a delivery is what the client
+ * half counts.
+ *
+ * Nothing else differs. The list keeps the same key, the same version
+ * comparison, and the same `lane.set` reset — the publication is only a
+ * different delivery route for the same value, and this rig is what proves
+ * delivery and convergence are independent concerns.
  */
 export function PublishedTaskList({
   ctx,
@@ -35,12 +38,15 @@ export function PublishedTaskList({
   scope: TaskScope;
 }) {
   const { promise } = useLane(publishedFirstPage(filters));
-  const { data } = React.use(promise);
+  const firstPagePromise = derivePromise(
+    promise,
+    (read): TaskPage => read.data,
+  );
 
   return (
     <HybridTaskList
       ctx={ctx}
-      firstPage={data}
+      firstPagePromise={firstPagePromise}
       scope={scope}
       source="publication"
     />

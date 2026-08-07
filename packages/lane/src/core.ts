@@ -1005,8 +1005,8 @@ function setEntryCache<T>(
    * can say. A policy that throws lands where the default's empty case lands.
    *
    * **What is served is not stored.** `lastFulfilled` moves only on a genuine
-   * success, no revision is minted, and freshness keeps the original fulfillment
-   * time — so a fallen-back entry is still as stale as it was and still
+   * success, and freshness keeps the original fulfillment time — so a
+   * fallen-back entry is still as stale as it was and still
    * refreshes on the next trigger. This is the whole reason the policy lives
    * here instead of in a `try`/`catch` inside the loader: a loader that returns
    * a substitute has *succeeded* as far as the store can tell, which restamps
@@ -1020,21 +1020,13 @@ function setEntryCache<T>(
   const settleWithoutValue = (error: unknown): LaneRead<T> => {
     const previous = entry.lastFulfilled;
 
-    if (cache.cancelled) {
-      if (!previous) {
-        settle({ at: Date.now(), kind: "rejected" });
-        throw entry.external
-          ? error
-          : new LaneReadError(entry.key, entry.keyId, error);
-      }
-
-      settle({ at: previous.at, kind: "fulfilled" });
-      return settledRead(entry, previous.value as T);
-    }
-
-    // An external key is the owner's to fill, so it has no policy to run and
-    // nothing to fall back to but a publication that never came.
-    const policy = entry.external ? undefined : options?.fallback;
+    // Two reads have no policy to run. An external key is the owner's to fill,
+    // so it has nothing to fall back to but a publication that never came. And a
+    // cancel is not a failure — the caller asked for the stop, so there is
+    // nothing to interpret, and the entry reverts to what it had exactly as it
+    // did before policies existed.
+    const policy =
+      entry.external || cache.cancelled ? undefined : options?.fallback;
     let served: { value: unknown } | undefined = previous
       ? { value: previous.value }
       : undefined;
@@ -1104,7 +1096,12 @@ function setEntryCache<T>(
       servedEntryValue ? entry.revision : ++state.revisionCounter,
     );
 
-    read.error = error;
+    // Not on a cancel: the caller asked for the stop, so every consumer that
+    // renders `error` would otherwise have to filter out an abort it requested
+    // itself.
+    if (!cache.cancelled) {
+      read.error = error;
+    }
 
     return read;
   };

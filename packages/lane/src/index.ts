@@ -27,7 +27,6 @@ export { laneRead } from "./read-spec";
 export { laneSnapshot } from "./snapshot";
 export { infiniteLaneRead, useInfiniteLane } from "./use-infinite-lane";
 export type {
-  InfiniteLaneFirstPage,
   InfiniteLaneOptions,
   InfiniteLaneReadSpec,
   InfiniteLaneResult,

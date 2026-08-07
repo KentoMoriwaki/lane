@@ -18,13 +18,10 @@ import type {
  * isn't one".
  */
 export function toReadOptions(
-  options: LaneUseOptions & { firstPageVersion?: string },
+  options: LaneUseOptions,
   loaderMeta: LaneLoaderMeta,
 ): LaneReadOptions {
   return {
-    // Not a public read option: `useInfiniteLane` puts it on the spec it builds
-    // for `useLane`, and nothing a caller writes reaches this field.
-    firstPageVersion: options.firstPageVersion,
     loaderMeta: options.loaderMeta ?? loaderMeta,
     warmTime: options.warmTime,
   };

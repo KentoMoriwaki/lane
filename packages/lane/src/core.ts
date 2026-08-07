@@ -49,16 +49,6 @@ export type LaneReadOptions = {
    * never participates in cache reuse.
    */
   loaderMeta?: LaneLoaderMeta;
-  /**
-   * The content identity of the first page this read is starting from — see
-   * {@link LaneEntry.firstPageVersion} and `useInfiniteLane`'s `firstPage`.
-   *
-   * Stamped on the entry **only when this read actually starts one**, never when
-   * a cached read is reused: the field describes the value the entry holds, and
-   * a reuse did not change it. That is precisely what lets a later render see
-   * "the entry was built from an older first page" and fork.
-   */
-  firstPageVersion?: string;
 };
 
 type LaneSubscription = (
@@ -103,44 +93,8 @@ export type LaneSubscriber = {
   gcTime?: () => number | undefined;
 };
 
-/**
- * A first page a render has forked onto but no commit has adopted yet.
- *
- * Held here — in the store, outside React — because the render that creates one
- * may never commit. A `useState` initializer or a `useMemo` is thrown away when
- * the render suspends, so a retry would build a *second* promise for the same
- * first page and suspend on that one too; a component can loop that way
- * indefinitely. Addressed by `(keyId, version)` and written create-if-absent,
- * the row is the same instance for every attempt at the same render, which is
- * the only reason the fork is render-legal at all.
- *
- * It is deliberately *not* the entry. Overwriting the entry during render would
- * pull the list out from under every other reader mid-render, in a render that
- * may be discarded — see {@link adoptFirstPage}, which does the same write in
- * the commit phase where it is allowed to be observed.
- */
-type LaneFirstPageDerivation = {
-  keyId: string;
-  version: string;
-  /** Resolved and synchronously readable, so `use()` never suspends on it. */
-  promise: Promise<LaneRead<unknown>>;
-  value: unknown;
-  revision: number;
-};
-
-/**
- * How many superseded forks one key may accumulate before the oldest are
- * dropped. Rows normally live for a single commit — {@link adoptFirstPage}
- * clears the whole key — so a queue only builds up from renders that were
- * discarded before committing. The cap bounds that; it is generous enough that
- * no sequence of attempts at one render can reach it.
- */
-const MAX_DERIVATIONS_PER_KEY = 8;
-
 type LaneState = {
   entries: Map<string, LaneEntry>;
-  /** Keyed by {@link derivationId}; insertion-ordered, which the prune relies on. */
-  derivations: Map<string, LaneFirstPageDerivation>;
   gcTime: number;
   warmTime: number;
   sweepTimer: ReturnType<typeof setTimeout> | undefined;
@@ -223,22 +177,6 @@ type LaneEntry = {
    * nobody owns it.
    */
   external: boolean;
-  /**
-   * For an infinite read with a `firstPage`: the content identity of the first
-   * page the value in this entry was built from.
-   *
-   * The entry is the only place this can live. The reader that needs to know
-   * whether its incoming first page is the one the list already starts with is
-   * comparing a *prop* against *what the store holds*, and the store is the half
-   * that survives an unmount, a hidden `<Activity>`, and a second reader of the
-   * same key. Component state would answer for one reader's history instead.
-   *
-   * Written in exactly two places: where a read is started
-   * ({@link readOrCreate}, since that read is the one adopting this first page)
-   * and where a fork is adopted ({@link adoptFirstPage}). Never on a cache
-   * reuse — a reuse changed nothing about what the entry holds.
-   */
-  firstPageVersion: string | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -247,7 +185,6 @@ const laneStates = new WeakMap<Lane, LaneState>();
 
 export function createLane(options: LaneOptions = {}): Lane {
   const state: LaneState = {
-    derivations: new Map(),
     entries: new Map(),
     gcTime: options.gcTime ?? DEFAULT_GC_TIME,
     revisionCounter: 0,
@@ -488,234 +425,9 @@ export function readOrCreate<T, C = T>(
   // outlives invalidation (which clears the cache, not `lastFulfilled`) and is
   // `undefined` once the entry itself is gone.
   const current = entry.lastFulfilled?.value as C | undefined;
-
-  // The read starting here is the one that adopts this first page, so the entry
-  // records it now rather than when the walk resolves: a reader rendering in
-  // between must see "already starting from this first page", or it would fork
-  // onto a page the load in flight is about to produce anyway. Nothing above
-  // this line writes it, which is what keeps a cache *reuse* from claiming a
-  // first page it never adopted.
-  if (options?.firstPageVersion !== undefined) {
-    entry.firstPageVersion = options.firstPageVersion;
-  }
-
   const promise = runLoader(loader, key, controller.signal, options, current);
 
   return setEntryCache(state, entry, promise, controller, options);
-}
-
-/** The identity of a first page as this entry currently holds it, if any. */
-export function firstPageVersionOf(
-  lane: Lane,
-  keyId: string,
-): string | undefined {
-  return getLaneState(lane).entries.get(keyId)?.firstPageVersion;
-}
-
-/**
- * How many un-adopted forks this lane is holding. A test seam, deliberately not
- * exported from the package: "the row was dropped" is the half of a fork's
- * lifecycle no rendered output can show.
- */
-export function firstPageDerivationCount(lane: Lane): number {
-  return getLaneState(lane).derivations.size;
-}
-
-function derivationId(keyId: string, version: string): string {
-  return `${keyId} ${version}`;
-}
-
-/**
- * The promise a render must show for the first page it was handed, or
- * `undefined` when the entry is already the authority for it.
- *
- * **Create-if-absent, and that is the whole of its render legality.** A miss
- * adds a row nobody was reading and never touches the entry, so a discarded
- * render leaves the store as it found it. What it must never become is "replace
- * the row" — two trees rendering different versions of one key would then mint
- * promises at each other and neither would settle on one to commit.
- *
- * The row outlives its adoption on purpose. Adoption happens in a layout effect
- * and reaches the reader as a notification, and the `useTransition` that carries
- * it renders *twice*: once synchronously to raise the pending flag, still
- * holding the pre-fork promise in state, and once on the transition lane with
- * the adopted one. The first of those would put the old list back on screen for
- * a frame — after the fork's commit had already painted the new one — if the row
- * were gone by then. So the row is what the reader keeps returning until its own
- * state has caught up, and {@link dropFirstPageFork} is how it says so.
- *
- * `build` runs at most once per row and must be pure; it is called only on the
- * miss.
- */
-export function firstPageFork<T>(
-  lane: Lane,
-  keyId: string,
-  version: string,
-  build: () => T,
-): Promise<LaneRead<T>> | undefined {
-  const state = getLaneState(lane);
-  const id = derivationId(keyId, version);
-  const existing = state.derivations.get(id);
-
-  if (existing) {
-    return existing.promise as Promise<LaneRead<T>>;
-  }
-
-  // Adopted, and the reader that adopted it has already caught up — there is
-  // nothing left to substitute, and re-creating a row here would resurrect one
-  // that was deliberately retired.
-  if (state.entries.get(keyId)?.firstPageVersion === version) {
-    return undefined;
-  }
-
-  const value = build();
-  // Minted here rather than at adoption so the resolved value and the entry's
-  // `revision` after adoption are the same number on the same object — the
-  // reader compares `data` identity, and a revision assigned later would have to
-  // rebuild the value it names. A row that never commits burns a number, which
-  // revisions explicitly permit (equality is their entire contract).
-  const revision = ++state.revisionCounter;
-  const promise = fulfilledThenable<LaneRead<T>>({ data: value, revision });
-
-  state.derivations.set(id, {
-    keyId,
-    promise: promise as Promise<LaneRead<unknown>>,
-    revision,
-    value,
-    version,
-  });
-  pruneDerivations(state, keyId);
-
-  return promise;
-}
-
-/**
- * Retire a fork the reader no longer needs — called once its own promise *is*
- * the fork's, which can only happen after the adoption reached it.
- */
-export function dropFirstPageFork(
-  lane: Lane,
-  keyId: string,
-  version: string,
-): void {
-  getLaneState(lane).derivations.delete(derivationId(keyId, version));
-}
-
-/**
- * Adopt a fork as the entry's value — the commit-phase half of the fork, and the
- * only place the entry is written.
- *
- * It is `set`, spelled against a value the render already produced: the
- * in-flight read is aborted (a walk that was deepening the *previous* first page
- * is finishing work nobody wants), the value is installed as authoritative, and
- * subscribers are notified so every other reader of the key converges onto the
- * same promise. The reader that forked is among them — which is the point, since
- * its `useLane` is still holding the pre-fork promise in state and this is what
- * moves it across.
- *
- * The entry's cache becomes the fork's *own* promise, not a copy of its value.
- * That identity is what makes the commit after adoption invisible: the hook
- * stops substituting and returns the entry's promise, and it is the same object
- * `use()` already read. Structural sharing is deliberately skipped for the same
- * reason — it would hand back a deep-equal clone and re-render everything
- * downstream for no change in content.
- *
- * A no-op when the entry is gone, the row was swept, or the version is already
- * the entry's: all three mean some other commit got there first.
- *
- * The adopted row is *kept*; only the key's other forks are swept. See
- * {@link firstPageFork} for why the reader still needs it after this point.
- */
-export function adoptFirstPage(lane: Lane, keyId: string, version: string): void {
-  const state = getLaneState(lane);
-  const entry = state.entries.get(keyId);
-  const row = state.derivations.get(derivationId(keyId, version));
-
-  if (!entry || !row || entry.firstPageVersion === version) {
-    dropDerivations(state, keyId, version);
-    return;
-  }
-
-  // An infinite list is client-owned by construction — `loadMore` appends
-  // through `update`. A published key reaching here is the configuration Lane
-  // refuses, and it fails at the write like every other one.
-  assertClientOwned(entry, "firstPage");
-
-  const at = Date.now();
-
-  entry.cache?.controller?.abort();
-  entry.revision = row.revision;
-  entry.lastFulfilled = { at, value: row.value };
-  entry.firstPageVersion = version;
-  entry.cache = {
-    cancelled: false,
-    controller: undefined,
-    promise: row.promise,
-    settlement: { at, kind: "fulfilled" },
-    startedAt: at,
-  };
-
-  dropDerivations(state, keyId, version);
-  notifyInvalidate(entry, "transition");
-}
-
-/**
- * Every fork of one key, dropped together.
- *
- * Whole-key except `keep`: a version that was rendered and never committed is
- * superseded by the one that was, and keeping it would only let a re-render of a
- * stale tree pick it up again.
- */
-function dropDerivations(
-  state: LaneState,
-  keyId: string,
-  keep?: string,
-): void {
-  if (state.derivations.size === 0) {
-    return;
-  }
-
-  for (const [id, row] of state.derivations) {
-    if (row.keyId === keyId && row.version !== keep) {
-      state.derivations.delete(id);
-    }
-  }
-}
-
-function pruneDerivations(state: LaneState, keyId: string): void {
-  const ids: string[] = [];
-
-  for (const [id, row] of state.derivations) {
-    if (row.keyId === keyId) {
-      ids.push(id);
-    }
-  }
-
-  // Insertion order, so the front of the list is the oldest.
-  for (const id of ids.slice(0, ids.length - MAX_DERIVATIONS_PER_KEY)) {
-    state.derivations.delete(id);
-  }
-}
-
-/**
- * A promise React can read without suspending.
- *
- * `use()` checks a thenable's `status` before it does anything else, so a
- * promise that says it is already fulfilled is read straight through. It matters
- * exactly once — the commit that swaps a list for its reset — and it matters a
- * lot there: suspending on an already-known value would drop the boundary to a
- * fallback in the one frame this whole mechanism exists to keep intact.
- */
-function fulfilledThenable<T>(value: T): Promise<T> {
-  const promise = Promise.resolve(value) as Promise<T> & {
-    status: "fulfilled";
-    value: T;
-  };
-
-  promise.status = "fulfilled";
-  promise.value = value;
-
-  return promise;
 }
 
 /**
@@ -914,8 +626,6 @@ function removeLaneEntry(state: LaneState, entry: LaneEntry): void {
   // value is the stale-on-error fallback *and* the `current` handed to the next
   // loader, either of which would serve the removed data back.
   entry.lastFulfilled = undefined;
-  entry.firstPageVersion = undefined;
-  dropDerivations(state, entry.keyId);
   notifyRemove(entry);
   cleanupEntry(state, entry);
 }
@@ -1161,7 +871,6 @@ function createEntry(state: LaneState, key: LaneKey, keyId: string): LaneEntry {
   return {
     cache: undefined,
     external: false,
-    firstPageVersion: undefined,
     // No deadline yet, and none for as long as the read is in flight: an entry
     // nobody holds is not evidence that nobody is coming, and a load still
     // running is evidence that somebody might be — a suspended render is exactly
@@ -1575,7 +1284,6 @@ function sweep(state: LaneState): void {
 
 function evictEntry(state: LaneState, entry: LaneEntry): void {
   removeEntryCache(entry);
-  dropDerivations(state, entry.keyId);
   state.entries.delete(entry.keyId);
 }
 

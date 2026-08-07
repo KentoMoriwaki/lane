@@ -939,7 +939,6 @@ nothing an ordinary read does not already do.
 function useInfiniteLane<P, C>(read: {
   key: LaneKey;
   initialCursor: C;
-  firstPage?: { value: P; version: string };
   fetchPage: (cursor: C, context: { signal?: AbortSignal }) => Promise<P>;
   nextCursor: (page: P, cursor: C) => C | null;
 } & LaneUseOptions): {
@@ -952,79 +951,6 @@ function useInfiniteLane<P, C>(read: {
   ) => Promise<LaneRead<InfiniteLaneValue<P, C>>>;
 };
 ```
-
-#### `firstPage` — page 1 belongs to somebody else
-
-One screen, two owners. A route (or a router loader) owns the first page — it is
-what the URL is about, it belongs in the first paint, and it changes when the
-owner republishes — while the *depth* below it belongs to the browser, because
-how far someone has scrolled is not something a server render knows. That is the
-[one configuration Lane otherwise rejects](./architectures.md#the-ownership-rule):
-you cannot seed the infinite key, because `loadMore` appends through `update` and
-`update` on a published key throws.
-
-`firstPage` is the seam. Hand in the value and a **content identity** for it:
-
-```tsx
-// page.tsx — a Server Component
-<TaskList firstPage={await getFirstPage(filters)} />
-
-// task-list.tsx — "use client"
-const { promise, loadMore, invalidate } = useInfiniteLane({
-  key: ["tasks", filters],
-  initialCursor: "",
-  firstPage: { value: firstPage, version: firstPage.version },
-  fetchPage: (cursor, { signal }) => fetchTasks({ cursor, filters, signal }),
-  nextCursor: (page) => page.nextCursor,
-});
-```
-
-Walk index 0 **is** that value. `fetchPage` is never called for it — not on a
-first load and not on a re-walk — so a first paint costs no request and
-refreshing a list five pages deep costs four.
-
-**`version` decides everything else.** Unchanged, nothing happens at all: the
-page is the one the list already starts with, so the user's depth survives a
-republication that changed nothing, an `<Activity>` reveal, a `router.refresh()`
-over a warm cache. Changed, the list **resets to depth 1** from the new page,
-with no request, and the commit that first shows the new page is the same commit
-that shows the reset list — no frame mixes them, and the swap rides whatever
-transition delivered the page.
-
-| `version` | What happens | Requests |
-| --- | --- | --- |
-| unchanged | nothing — the depth is kept | 0 |
-| changed | the list resets to depth 1 from the new page | 0 |
-| — (`invalidate`) | pages 2..N re-walked, page 1 taken from the latest render's `firstPage` | N−1 |
-
-Four things to know before you use it:
-
-- **It must be content identity, not reference identity.** A value delivered as
-  an RSC prop or a router loader's data is deserialized afresh every time, so
-  `===` says "different" on every refresh and the list would reset constantly.
-  Ship a hash of the page's rows, or a version the source already has.
-- **Keep provenance out of it.** A `version` covering a served-at timestamp or a
-  request id makes every refresh a new version, which inverts the option into
-  "discard the user's depth whenever anything reloads".
-- **`invalidate` cannot refresh page 1.** A re-walk takes page 1 from the latest
-  `firstPage` the component rendered with — free, and as current as the owner's
-  last delivery. Making page 1 itself current means asking the owner for a new
-  one (a route revalidation, a router reload); Lane has no channel to it. Deep
-  refresh here is a *half* refresh by construction.
-- **The adopted value is not protected from local writes.** Once it is in the
-  entry it is an ordinary page: `lane.set` / `lane.update` on this key can
-  rewrite content this client does not own, and nothing throws. Treat the
-  accumulated list as read-plus-append, which is all `loadMore` does.
-
-`initialCursor` stays required, and with `firstPage` nothing is fetched with it:
-it is what `params[0]` records — the cursor the owner loaded page 1 at — and it
-is the only place `C` can be inferred from, because `fetchPage` and `nextCursor`
-are both context-sensitive.
-
-Pages 2..N are discarded by a reset rather than re-derived, which is deliberate:
-a changed first page means every cursor below it may have moved, so re-walking
-them is both slower and a guess. Ask for the walk explicitly with `invalidate`
-when that is what you want.
 
 #### `infiniteLaneRead(spec)`
 

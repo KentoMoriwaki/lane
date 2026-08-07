@@ -50,13 +50,6 @@ import type {
 type LaneAnyReadSpec<T, C> = LaneUseOptions & {
   key: LaneKey;
   loader: LaneLoader<T, C> | undefined;
-  /**
-   * Internal, and only ever set by `useInfiniteLane`: the identity of the first
-   * page the read being started adopts. It is threaded through the read options
-   * so the store can stamp it on the entry at the one moment it is true — when
-   * this read creates the value, not when a cached one is reused.
-   */
-  firstPageVersion?: string;
 };
 
 /**
@@ -588,24 +581,6 @@ export function useLane<T, C = T>(
     promise: effectivePromise,
     startInvalidationTransition,
   };
-}
-
-/**
- * `useLane` without the overloads — the entry point for the hooks Lane itself
- * builds on top of it.
- *
- * It exists because those hooks pass fields no caller may write:
- * `useInfiniteLane` supplies `firstPageVersion`, which is not part of any public
- * read spec, and an object literal carrying it fails every public overload. The
- * cast is confined here rather than at the call site, where it would also throw
- * away the loader's type-checking.
- *
- * Not exported from the package.
- */
-export function useLaneRead<T, C = T>(
-  read: LaneAnyReadSpec<T, C> & { loader: LaneLoader<T, C> },
-): LaneResult<T> {
-  return useLane(read as unknown as LaneReadSpec<T, C>);
 }
 
 export function useLanePromise<T>(

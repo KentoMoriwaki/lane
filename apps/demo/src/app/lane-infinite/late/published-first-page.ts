@@ -14,11 +14,11 @@ import type { TaskPageFilters } from "../api/endpoints";
  * the value has to travel through the lane, and `external` is how a read says
  * "I am not the one who fills this".
  *
- * What does *not* change is the pattern on the other side. Once `use()` has
- * unwrapped the publication it is a `TaskPage` like any other, and it goes into
- * `useInfiniteLane`'s `firstPage` exactly as the prop does. That is the point of
- * the variant: `firstPage` is about the value, not about how it arrived, and
- * delivery and convergence are independent concerns.
+ * What does *not* change is the pattern on the other side. The list still keys
+ * itself on `firstPage.version` and still returns the value from its page-1
+ * branch — the publication is only a different delivery route for the same
+ * value. That is the point of the variant: the fork-and-extend shape is about
+ * the value, not about how it arrived.
  */
 export const publishedFirstPage = (filters: TaskPageFilters) =>
   laneRead<TaskPage>({

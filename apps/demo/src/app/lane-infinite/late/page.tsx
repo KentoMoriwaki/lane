@@ -7,28 +7,32 @@ import {
   parseTaskPageScope,
   type TaskPageFilters,
 } from "../api/endpoints";
-import { taskPageSnapshots } from "../api/lane-reads";
-import { HybridTaskList } from "../hybrid-task-list";
 import { InfiniteLaneProvider } from "../lane-provider";
+import { PublishedTaskList } from "./published-list";
+import { publishedFirstPageSnapshots } from "./published-first-page";
 
 /**
- * **The "does the external wait compose?" case.**
+ * **The published-first-page variant**, and the one thing a prop cannot do.
  *
- * The same hybrid list, with the tree deliberately inverted: the reader is a
- * *sibling above* the publication rather than a child of it, and the
- * publication is slowed down by a second and a half. So the infinite lane's
- * loader runs while `["tasks-page1", filters]` holds nothing at all — its page-1
- * branch chains onto the external *wait*, and the whole read suspends on it.
+ * `/lane-infinite` hands page 1 down as a prop, which is the right answer
+ * whenever the loader and the list are in the same tree. This rig is the case
+ * where they are not: the reader is a *sibling above* the publisher, so there is
+ * no prop to pass, and the publication is deliberately a second and a half late,
+ * so the reader is on screen before the value exists.
  *
- * The question that answers: is adopting a published promise a special case
- * that only works once the value is already there? It should not be — an
- * external read is a loader like any other and the publication settles it by
- * replacement — but "page 1 comes from a promise the client did not create" is
- * exactly the kind of thing that works on a warm cache and deadlocks on a cold
- * one, so the spike measures it rather than assuming it.
+ * Two things are being demonstrated, and they are separable:
  *
- * (This is not how the main route is built. `/lane-infinite` puts the reader
- * under the boundary, which is the shape any real page would use.)
+ * 1. **The external wait composes.** The reader suspends on a key nobody has
+ *    published yet — boundary fallback, no request — and is settled by the
+ *    publication when it arrives. No timeout, no double fetch, no error.
+ * 2. **The pattern does not change.** Once `use()` has unwrapped the
+ *    publication, the list below is the same component the prop form renders,
+ *    keyed on the same `firstPage.version`. A republication that changed the
+ *    page re-keys the list; one that did not, does not. Delivery and
+ *    convergence are independent concerns, and this rig is what proves it.
+ *
+ * Nothing here is how a real page would be built. It is the shape of the
+ * problem, stripped to the part that is hard.
  */
 
 type PageProps = {
@@ -43,14 +47,15 @@ export default function LatePublicationPage({ searchParams }: PageProps) {
           href="/lane-infinite"
           className="text-sm text-muted-foreground underline underline-offset-4"
         >
-          ← hybrid infinite list
+          ← the prop form
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight">
-          Late publication
+          Published first page, late
         </h1>
         <p className="text-sm text-muted-foreground">
           The reader mounts first and waits; the publication streams in 1.5s
-          later from a sibling boundary.
+          later from a sibling boundary. Everything below the unwrap is the same
+          component the prop form renders.
         </p>
       </header>
       <Suspense fallback={<p className="text-sm">Resolving session…</p>}>
@@ -77,7 +82,7 @@ async function LateShell({ searchParams }: PageProps) {
           </p>
         }
       >
-        <HybridTaskList ctx={ctx} scope={scope} />
+        <PublishedTaskList ctx={ctx} filters={filters} scope={scope} />
       </Suspense>
       {/* The publisher, a second and a half behind it. */}
       <Suspense fallback={null}>
@@ -98,7 +103,7 @@ async function LatePublication({
   const firstPage = await fetchTaskPage(ctx, filters, { cursor: null });
 
   return (
-    <LaneHydration snapshots={taskPageSnapshots(filters, firstPage)}>
+    <LaneHydration snapshots={publishedFirstPageSnapshots(filters, firstPage)}>
       {null}
     </LaneHydration>
   );

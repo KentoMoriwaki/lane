@@ -1,13 +1,7 @@
-import {
-  external,
-  infiniteLaneRead,
-  laneRead,
-  laneSnapshot,
-} from "use-lane";
+import { infiniteLaneRead } from "use-lane";
 import type {
   InfiniteLaneReadSpec,
   InfiniteLaneValue,
-  LaneHydrationSnapshots,
   LaneKeyOf,
   LaneLoaderMeta,
 } from "use-lane";
@@ -15,104 +9,79 @@ import type { TaskPage } from "@/server/api";
 import type { TaskPageFilters } from "./endpoints";
 
 /**
- * **The hybrid-ownership spike, in one module.**
+ * **The fork-and-extend read, in its value form.**
  *
- * One screen, two owners, two keys — and the whole point is that the seam
- * between them is a value, not a hook:
+ * The screen has two owners. The route owns page 1: it loads it, it decides
+ * when it changes, and it hands it over — as an ordinary prop, resolved, no
+ * ceremony. The browser owns the depth below it: `useInfiniteLane` walks the
+ * cursor chain from page 2 on a key nobody seeds.
  *
- * - `["tasks-page1", filters]` is **server-owned**. The route loads page 1 with
- *   the same endpoint the browser paginates with and publishes it through
- *   `<LaneHydration>`; the browser reads it with `loader: external` and never
- *   fetches it.
- * - `["tasks-infinite", filters]` is **client-owned**. `useInfiniteLane` walks
- *   the cursor chain on it, `loadMore` appends through `update`, and a
- *   republication invalidates it.
+ * Two things about the shape below carry the whole design.
  *
- * They are two keys because they *have* to be. `loadMore` appends through
- * `lane.update`, and `update` on a seeded key throws `LaneOwnershipError` — so
- * "seed the infinite key and then paginate it" is the one configuration Lane
- * refuses (see `docs/architectures.md`). What this pattern does instead is
- * keep the ownership split intact and cross it in the only place a client-owned
- * read is allowed to read anything: inside its own loader. Page 1's fetch is
- * not a fetch at all — it is `await` on the published promise.
+ * **Page 1 is a value the loader returns, not a fetch it performs.**
+ * `Promise.resolve(firstPage)` is the entire page-1 branch. There is no request,
+ * no publication to wait on, and nothing to converge — the route already did
+ * all of it, and the loader is just handing back what it was given.
  *
- * No `"use client"`: the Server Component builds `taskPageSnapshots` from
- * `taskPageReads.firstPage`, and the browser reads the very same read. A
- * `laneSnapshot` of a read is checked against the read's `T`, which is what
- * stops the two halves drifting into "the server publishes a `Task[]`, the
- * client's `fetchPage` returns a `TaskPage`" — a mismatch nothing else would
- * catch, because it does not fail a fetch, it just seeds the wrong shape.
+ * **The fork's origin is in the key.** `firstPage.version` is the server's hash
+ * of page 1's content, so the key *is* "the list that starts with this exact
+ * page". A republication that changed page 1 changes the version, which changes
+ * the key, which is a different list — Lane reads the new entry during render,
+ * inside whatever transition the action or navigation is already running, and
+ * the loader resolves it from the prop in a microtask. A republication that
+ * changed nothing keeps the version, keeps the key, and keeps the user's depth.
+ *
+ * That last sentence is the part worth dwelling on, because the alternative
+ * (watch the incoming page for change and `invalidate`) is what this replaced:
+ * an effect, a two-dimensional guard against filter changes and `<Activity>`
+ * reveals, and an N−1 request re-walk on every republication including the ones
+ * that changed nothing. Reset-via-key has none of those moving parts. What it
+ * gives up is continuity — a changed page 1 discards pages 2..N rather than
+ * re-deriving them — and that is a product decision the key makes visible
+ * instead of a policy buried in an effect.
+ *
+ * No `"use client"`: this is a plain object factory, importable from either
+ * graph.
  */
-export const taskPageReads = {
-  /**
-   * Page 1, as the route published it. `T` is written out because an external
-   * read has no loader to infer it from — the one cost of the form.
-   */
-  firstPage: (filters: TaskPageFilters) =>
-    laneRead<TaskPage>({
-      key: ["tasks-page1", filters],
-      loader: external,
-    }),
-};
 
-/** What the infinite loader is given for each of its two page sources. */
-export type TaskPageSource = {
-  /**
-   * Page 1. The client hands in `externalPromise.then((read) => read.data)` —
-   * the published value, adopted rather than fetched.
-   *
-   * It is a *thunk* rather than the promise itself so the branch reads the same
-   * as the other one, and so nothing is chained until the walk actually reaches
-   * page 1. The identity that matters (the publication's) is captured by the
-   * closure the caller builds, and the caller re-builds it whenever that
-   * identity changes — which is the whole convergence mechanism.
-   */
-  firstPage: () => Promise<TaskPage>;
-  /** Pages 2..N: an ordinary client fetch, with the read's abort signal. */
-  nextPage: (
-    cursor: string,
-    context: { signal?: AbortSignal; meta: LaneLoaderMeta },
-  ) => Promise<TaskPage>;
-};
+/** Pages 2..N — the only pages this client fetches. */
+export type TaskPageFetcher = (
+  cursor: string,
+  context: { signal?: AbortSignal; meta: LaneLoaderMeta },
+) => Promise<TaskPage>;
 
-/**
- * The client-owned infinite read, assembled from the two page sources.
- *
- * The cursor type is `string | null` and `initialCursor` is `null`, so "page 1"
- * is expressible as a value the loader can branch on. That is the entire
- * mechanism: `cursor === null` means *the page somebody else owns*, and every
- * other cursor means *a page this client owns*.
- *
- * Note what is **not** here: any freshness option. A `staleTime` /
- * `refetchOnFocus` on this key would refetch page 1 from a publication that
- * may have been superseded, or from one this reader has no way to ask for. The
- * only thing allowed to move page 1 is a new publication, and the route is what
- * produces one.
- */
 export function taskInfiniteRead(
   filters: TaskPageFilters,
-  source: TaskPageSource,
+  firstPage: TaskPage,
+  io: {
+    nextPage: TaskPageFetcher;
+    /**
+     * Lab instrumentation, not part of the pattern: fires each time the loader
+     * actually produces page 1, which is the only way to tell an entry that was
+     * re-read from one that was reused.
+     */
+    onAdoptFirstPage?: (page: TaskPage) => void;
+  },
 ): InfiniteLaneReadSpec<TaskPage, string | null> & {
   key: LaneKeyOf<InfiniteLaneValue<TaskPage, string | null>>;
 } {
   return infiniteLaneRead({
-    fetchPage: (cursor, context) =>
-      cursor === null ? source.firstPage() : source.nextPage(cursor, context),
+    fetchPage: (cursor, context) => {
+      // The sentinel is the one thing userland still cannot avoid: `cursor` is
+      // the only channel the loader has for "which page is this", so page 1 has
+      // to be expressible as a cursor value even though it is not fetched by
+      // one. An API whose first page is `""` or `0` would have to widen `C`
+      // purely to make room for it.
+      if (cursor === null) {
+        io.onAdoptFirstPage?.(firstPage);
+        return Promise.resolve(firstPage);
+      }
+
+      return io.nextPage(cursor, context);
+    },
     initialCursor: null as string | null,
-    key: ["tasks-infinite", filters],
+    // `filters` says which list; `version` says which generation of it.
+    key: ["tasks-infinite", filters, firstPage.version],
     nextCursor: (page) => page.nextCursor,
   });
-}
-
-/**
- * The per-request seed. One entry: the route owns page 1 and nothing else, and
- * the depth below it belongs to the browser.
- */
-export function taskPageSnapshots(
-  filters: TaskPageFilters,
-  firstPage: TaskPage,
-): LaneHydrationSnapshots {
-  return {
-    entries: [laneSnapshot(taskPageReads.firstPage(filters), firstPage)],
-  };
 }

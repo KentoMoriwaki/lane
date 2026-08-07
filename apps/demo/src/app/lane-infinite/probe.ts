@@ -3,29 +3,33 @@
 /**
  * The measurement rig for the spike.
  *
- * Every page the infinite loader asks for is recorded here with *how* it was
- * obtained — adopted from the publication or fetched over the wire — and with
- * the `servedAt` / `serveSeq` stamp of the response it ended up holding. Two of
- * the spike's assumptions are only answerable from that log:
+ * Every page the infinite loader produces is recorded here with *how* it was
+ * obtained — resolved from the prop the route handed over, or fetched over the
+ * wire — and with the identity of the response it came from. Three of the
+ * spike's claims are only answerable from this log:
  *
  * - "page 1 costs zero client fetches" is `network` events with `cursor: null`
- *   being zero, forever.
- * - "a re-walk uses the latest closure" is the `adopt` event of the re-walk
- *   carrying the *new* `serveSeq`, not the one the entry was created with.
+ *   staying at zero, forever;
+ * - "a changed page 1 resets the list and costs nothing" is a lone `adopt`
+ *   event under a new `version`, with no `network` events beside it;
+ * - "an unchanged page 1 keeps the depth" is *no events at all* after a
+ *   republication.
  *
- * A module-level store with `useSyncExternalStore` rather than component state:
- * the loader that records is not inside a render, and the log has to survive
- * the transitions that hold the list on screen.
+ * A module-level store read through `useSyncExternalStore`: the loader that
+ * records is not inside a render, and the log has to survive the transitions
+ * that hold the list on screen.
  */
 
 export type ProbeEvent = {
   id: number;
-  /** `adopt` — page 1, taken from the publication. `network` — an HTTP fetch. */
+  /** `adopt` — page 1, taken from the prop. `network` — an HTTP fetch. */
   kind: "adopt" | "network";
-  /** Why the loader ran: the first read, a re-walk, or a `loadMore` append. */
+  /** The user action in flight when the loader ran. */
   phase: string;
   cursor: string | null;
-  /** The `serveSeq` of the response this page came from. */
+  /** The content identity of the page this event produced. */
+  version: string | null;
+  /** Which server response it came from — provenance, not content. */
   serveSeq: number | null;
   servedAt: string | null;
   at: number;
@@ -41,10 +45,9 @@ function emit() {
 }
 
 /**
- * Names what the loader is currently running for. Set by the component right
- * before it triggers a re-walk or an append, read by the loader that follows.
- * A ref would be per-component; this is per-lane-read and deliberately global,
- * because the point is to label a log line, not to drive UI.
+ * Labels the log lines that follow with the action that caused them. Sticky
+ * until the next action sets it — the loader has no way to ask, and every path
+ * that runs it here is reached from a click.
  */
 export function setProbePhase(next: string) {
   phase = next;
@@ -53,7 +56,7 @@ export function setProbePhase(next: string) {
 export function recordProbe(
   kind: ProbeEvent["kind"],
   cursor: string | null,
-  page: { serveSeq: number; servedAt: string } | null,
+  page: { serveSeq: number; servedAt: string; version: string },
 ) {
   events = [
     ...events,
@@ -63,8 +66,9 @@ export function recordProbe(
       id: (nextId += 1),
       kind,
       phase,
-      servedAt: page?.servedAt ?? null,
-      serveSeq: page?.serveSeq ?? null,
+      servedAt: page.servedAt,
+      serveSeq: page.serveSeq,
+      version: page.version,
     },
   ];
   emit();

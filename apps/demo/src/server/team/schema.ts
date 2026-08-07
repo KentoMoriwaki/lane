@@ -218,6 +218,25 @@ export type TaskPage = {
   /** 1-based, derived on the server from the cursor it was handed. */
   pageIndex: number;
   requestedCursor: string | null;
+  /**
+   * **The content identity of this page** — a hash of everything about it that
+   * a reader could render: the rows (id + `updatedAt`), the cursor out of it,
+   * and the total. Stable when the page comes back unchanged, different the
+   * moment any of it moves.
+   *
+   * It exists because the client keys its infinite entry on it: a republication
+   * that changed page 1 is a *new list*, and a new key is how you say that
+   * without an effect. The owner is the only party that can compute this
+   * honestly, which is the whole reason it is a wire field rather than
+   * something the browser derives — a client comparing two deserialized RSC
+   * payloads has no reference equality to work with, and Lane's own `revision`
+   * for a published key names the publication, not the content.
+   *
+   * Deliberately *not* covering `servedAt` / `serveSeq`: those are provenance,
+   * not content. Two serves of identical rows must hash the same or the whole
+   * mechanism inverts into "re-key on every refresh".
+   */
+  version: string;
   servedAt: string;
   serveSeq: number;
   total: number;

@@ -3,14 +3,14 @@
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as React from "react";
-import { useInfiniteLane, useLane } from "use-lane";
+import { useInfiniteLane } from "use-lane";
 import type { TaskPage, TaskScope } from "@/server/api";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createTaskAction, refreshFirstPageAction } from "./api/actions";
 import { fetchTaskPage, type TaskPageFilters } from "./api/endpoints";
-import { taskInfiniteRead, taskPageReads, type TaskPageSource } from "./api/lane-reads";
+import { taskInfiniteRead } from "./api/lane-reads";
 import {
   getProbeEvents,
   getProbeServerSnapshot,
@@ -30,91 +30,73 @@ const SCOPES: { label: string; value: TaskScope }[] = [
  * **The hybrid list.** The App Router owns page 1; this component owns the
  * depth below it.
  *
- * Read it as three moves:
+ * There are exactly two moving parts, and no effect:
  *
- * 1. `useLane(taskPageReads.firstPage(filters))` — a read-only view of what the
- *    route published. No loader, no invalidate, no freshness options: the type
- *    does not offer them, because none of them mean anything for a key this
- *    client does not own.
- * 2. `taskInfiniteRead(filters, source)` — a *different*, client-owned key whose
- *    `fetchPage` branches on the initial cursor. `cursor === null` chains onto
- *    the published promise; every other cursor is an HTTP request. So the
- *    accumulated list is one value under one key, even though its first page
- *    came from somewhere the client may not write.
- * 3. The effect below — when the publication's promise identity changes, the
- *    client-owned key is invalidated and re-walks. Page 1 of that walk adopts
- *    the *new* publication, because `source` was rebuilt in the render that saw
- *    it, and Lane's re-read runs the latest committed loader.
+ * 1. `firstPage` arrives as a prop — a resolved value the route already
+ *    loaded. The loader's page-1 branch returns it. No fetch, no publication,
+ *    no wait.
+ * 2. `firstPage.version` is in the key. So a republication that changed page 1
+ *    *is* a different key, and Lane reads the new entry during the render that
+ *    carries the new prop — inside whatever transition the Server Action or the
+ *    navigation is already running. The list resets to depth 1 and costs
+ *    nothing. A republication that changed nothing keeps the key, and the
+ *    user's depth with it.
  *
- * What makes (2) legal is that the two keys have different owners and neither
- * is written by the wrong side. Seeding `["tasks-infinite", …]` and calling
- * `loadMore` on it would be the configuration Lane refuses — `loadMore` appends
- * through `update`, and `update` on a published key throws.
+ * The previous revision of this spike published page 1 under an external key
+ * and reconciled with an effect. That version worked, and cost: a
+ * two-dimensional `(key, publication)` ref guard to survive filter changes and
+ * `<Activity>` reveals, an N−1 request re-walk on every republication —
+ * including the ones that changed nothing — and a visible window where a
+ * reader of the publication and the list disagreed. Keying on a
+ * server-computed content hash removes all three, at the price of discarding
+ * pages 2..N when page 1 genuinely changes.
+ *
+ * That last cost is a product decision, so it stays available rather than
+ * being taken away: **Deep refresh** below is the explicit `invalidate` that
+ * re-walks the whole chain in place, the old behavior, on demand.
+ *
+ * `/lane-infinite/late` is the same component fed from a *publication* instead
+ * of a prop — the pattern is about the value, not about where it came from.
  */
 export function HybridTaskList({
   ctx,
+  firstPage,
   scope,
+  source,
 }: {
   ctx: WorkspaceCtx;
+  firstPage: TaskPage;
   scope: TaskScope;
+  /** Where `firstPage` came from — labels the rig, changes nothing. */
+  source: "prop" | "publication";
 }) {
   const router = useRouter();
   const filters = React.useMemo<TaskPageFilters>(() => ({ scope }), [scope]);
 
-  // (1) The published page. `LaneExternalResult` — no `invalidate` on it at all.
-  const { promise: firstPagePromise } = useLane(
-    taskPageReads.firstPage(filters),
-  );
-
-  // The seam. Rebuilt whenever the publication changes identity, which is what
-  // makes the re-walk below adopt the new one rather than the one this entry
-  // was created with.
-  const source = React.useMemo<TaskPageSource>(
-    () => ({
-      firstPage: () =>
-        firstPagePromise.then((read) => {
-          recordProbe("adopt", null, read.data);
-          return read.data;
-        }),
-      nextPage: async (cursor, { meta, signal }) => {
-        const page = await fetchTaskPage(meta, filters, { cursor }, signal);
-        recordProbe("network", cursor, page);
-        return page;
-      },
-    }),
-    [filters, firstPagePromise],
-  );
-
-  // (2) The client-owned list.
   const { invalidate, isInvalidationPending, loadMore, promise } =
-    useInfiniteLane(taskInfiniteRead(filters, source));
+    useInfiniteLane(
+      taskInfiniteRead(filters, firstPage, {
+        nextPage: async (cursor, { meta, signal }) => {
+          const page = await fetchTaskPage(meta, filters, { cursor }, signal);
+          recordProbe("network", cursor, page);
+          return page;
+        },
+        onAdoptFirstPage: (page) => recordProbe("adopt", null, page),
+      }),
+    );
   const { data, refreshError } = React.use(promise);
 
-  // (3) Converge on republication.
-  //
-  // Two guards, and both are load-bearing:
-  //   - the first commit is skipped, because the entry was *created* from this
-  //     publication — re-walking it would refetch what it just loaded;
-  //   - a change of `scope` is skipped for the same reason one step out. The
-  //     filter changes both keys at once, so the new publication and the new
-  //     infinite entry arrive together and the entry already used it. Watching
-  //     only the promise would fire a wasted re-walk on every filter click.
-  const seen = React.useRef<{ promise: unknown; scope: TaskScope } | null>(null);
-  React.useEffect(() => {
-    const previous = seen.current;
-    seen.current = { promise: firstPagePromise, scope };
-
-    if (!previous || previous.scope !== scope) return;
-    if (previous.promise === firstPagePromise) return;
-
-    setProbePhase("re-walk (republication)");
-    invalidate();
-  }, [firstPagePromise, invalidate, scope]);
-
+  const adopted = data.pages[0];
   const [isMutating, startMutation] = React.useTransition();
   const [title, setTitle] = React.useState("");
 
   const items = data.pages.flatMap((page) => page.items);
+  // Everything the list shows comes from `data.pages` — never from the
+  // `firstPage` prop. They are the same content whenever the version matches,
+  // and the prop is the *newer* object whenever it does not; rendering both
+  // would put two truths back on the screen, which is exactly what dropping
+  // the external key removed. The one exception is the instrument row below,
+  // which exists to show the difference.
 
   return (
     <div className="space-y-6">
@@ -136,15 +118,19 @@ export function HybridTaskList({
             {option.label}
           </Link>
         ))}
-        <span className="ml-auto text-xs text-muted-foreground">
-          {isInvalidationPending ? "re-walking…" : "idle"}
+        <span data-testid="status" className="ml-auto text-xs text-muted-foreground">
+          {isMutating
+            ? "republishing…"
+            : isInvalidationPending
+              ? "re-walking…"
+              : "idle"}
         </span>
       </section>
 
       <section className="flex flex-wrap items-center gap-2">
         <Input
           value={title}
-          placeholder="New urgent task (republishes page 1)"
+          placeholder="New urgent task (changes page 1)"
           onChange={(event) => setTitle(event.target.value)}
           className="max-w-xs"
           data-testid="new-task-title"
@@ -156,6 +142,7 @@ export function HybridTaskList({
             const next = title.trim();
             if (!next) return;
             setTitle("");
+            setProbePhase("create → republish");
             startMutation(async () => {
               await createTaskAction(ctx, next);
             });
@@ -167,20 +154,34 @@ export function HybridTaskList({
           variant="outline"
           data-testid="expire-republish"
           disabled={isMutating}
-          onClick={() =>
+          onClick={() => {
+            setProbePhase("expire → republish (same content)");
             startMutation(async () => {
               await refreshFirstPageAction(ctx);
-            })
-          }
+            });
+          }}
         >
           Expire + republish
         </Button>
         <Button
           variant="outline"
           data-testid="router-refresh"
-          onClick={() => router.refresh()}
+          onClick={() => {
+            setProbePhase("router.refresh()");
+            router.refresh();
+          }}
         >
-          router.refresh() (cached page 1)
+          router.refresh()
+        </Button>
+        <Button
+          variant="secondary"
+          data-testid="deep-refresh"
+          onClick={() => {
+            setProbePhase("deep invalidate");
+            invalidate();
+          }}
+        >
+          Deep refresh (re-walk)
         </Button>
         <Button variant="ghost" data-testid="reset-probe" onClick={resetProbe}>
           Reset probe
@@ -196,12 +197,12 @@ export function HybridTaskList({
         </p>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <React.Suspense fallback={null}>
-          <PublishedBadge filters={filters} />
-        </React.Suspense>
-        <PageProvenance pages={data.pages} />
-      </div>
+      <IncomingPage
+        firstPage={firstPage}
+        listPage={adopted}
+        source={source}
+      />
+      <PageProvenance pages={data.pages} />
 
       <ol data-testid="task-list" className="divide-y rounded-xl border">
         {items.map((task) => (
@@ -225,12 +226,9 @@ export function HybridTaskList({
         >
           {data.hasNext ? "Load more" : "End of list"}
         </Button>
-        <span
-          data-testid="depth"
-          className="text-xs text-muted-foreground"
-        >
+        <span data-testid="depth" className="text-xs text-muted-foreground">
           {data.pages.length} page(s) · {items.length} row(s)
-          {data.pages[0] ? ` · total ${data.pages[0].total}` : ""}
+          {adopted ? ` · total ${adopted.total}` : ""}
         </span>
       </div>
 
@@ -240,36 +238,60 @@ export function HybridTaskList({
 }
 
 /**
- * The publication itself, read directly — the seam made visible.
+ * **The instrument, not the product UI.**
  *
- * It exists to show the one thing this pattern cannot hide: the two keys do not
- * converge in the same commit. A republication lands here immediately (an
- * external reader is settled by the publication), while the list next to it
- * only moves once the invalidation-driven re-walk has finished. For the window
- * between them the badge shows the new page-1 stamp and the list still shows
- * the old one — which is fine when only one of them is on screen, and a visible
- * disagreement when both are.
+ * It shows the incoming page 1 next to the one the list is actually holding,
+ * because the one thing the value form does *not* remove is that the incoming
+ * value is still a second copy. It is a copy that can only differ in ways the
+ * version says do not matter — except that `servedAt` / `serveSeq` live inside
+ * the same object and are *not* content, so after a republication that changed
+ * nothing the incoming page is a strictly newer object describing the same
+ * rows, and the entry rightly keeps the older one.
+ *
+ * Three states:
+ *
+ * - `AGREE` — same version, same serve. Nothing has happened since.
+ * - `content agrees, provenance lags` — the desired outcome of an unchanged
+ *   republication: the depth was kept, so the entry still holds the page it was
+ *   built from. It is also the reason a real screen must render from
+ *   `data.pages`, never from the incoming value: they are equal in everything a
+ *   user can see and unequal in everything an instrument can.
+ * - `RE-KEYING` — a changed page 1 that this render has not adopted yet. Should
+ *   never be observable, since the key changes in the same render as the value.
  */
-function PublishedBadge({ filters }: { filters: TaskPageFilters }) {
-  const { promise } = useLane(taskPageReads.firstPage(filters));
-  const { data } = React.use(promise);
+function IncomingPage({
+  firstPage,
+  listPage,
+  source,
+}: {
+  firstPage: TaskPage;
+  listPage: TaskPage | undefined;
+  source: "prop" | "publication";
+}) {
+  const verdict =
+    firstPage.version !== listPage?.version
+      ? "RE-KEYING"
+      : firstPage.serveSeq === listPage.serveSeq
+        ? "AGREE"
+        : "content agrees, provenance lags";
 
   return (
-    <span
-      data-testid="published-badge"
-      data-serve-seq-published={data.serveSeq}
-      className="rounded border border-dashed px-2 py-1 text-xs text-muted-foreground"
+    <p
+      data-testid="incoming-page"
+      data-incoming-version={firstPage.version}
+      data-incoming-seq={firstPage.serveSeq}
+      data-list-version={listPage?.version ?? "—"}
+      data-verdict={verdict}
+      className="rounded border border-dashed px-2 py-1 font-mono text-xs text-muted-foreground"
     >
-      published page 1 · seq {data.serveSeq} · total {data.total}
-    </span>
+      incoming page 1 ({source}) · v{firstPage.version} · seq{" "}
+      {firstPage.serveSeq} — list holds v{listPage?.version ?? "—"} · seq{" "}
+      {listPage?.serveSeq ?? "—"} · {verdict}
+    </p>
   );
 }
 
-/**
- * Which server response each loaded page came from. Page 1's `serveSeq` is the
- * publication's; it must never change without a republication, and must always
- * change *with* one that expired the cache.
- */
+/** Which server response each loaded page came from. */
 function PageProvenance({ pages }: { pages: TaskPage[] }) {
   return (
     <ul
@@ -281,10 +303,11 @@ function PageProvenance({ pages }: { pages: TaskPage[] }) {
           key={`${page.serveSeq}-${index}`}
           data-testid={`page-${index + 1}-seq`}
           data-serve-seq={page.serveSeq}
+          data-version={page.version}
           className="rounded border px-2 py-1"
         >
           page {index + 1} · seq {page.serveSeq} · {page.items.length} rows
-          {index === 0 ? " · published" : " · fetched"}
+          {index === 0 ? " · from the route" : " · fetched"}
         </li>
       ))}
     </ul>
@@ -308,16 +331,17 @@ function ProbeLog() {
         <span data-testid="network-total">
           {events.filter((event) => event.kind === "network").length}
         </span>{" "}
-        network,{" "}
-        <span data-testid="network-page-one">{networkPageOne}</span> of them for
-        page 1
+        network, <span data-testid="network-page-one">{networkPageOne}</span> of
+        them for page 1
       </h2>
       <ol className="space-y-1 font-mono text-xs">
         {events.map((event) => (
           <li key={event.id}>
             #{event.id} [{event.phase}] {event.kind}{" "}
-            {event.cursor === null ? "cursor=null (page 1)" : `cursor=${event.cursor}`}{" "}
-            → seq {event.serveSeq}
+            {event.cursor === null
+              ? "cursor=null (page 1)"
+              : `cursor=${event.cursor}`}{" "}
+            → v{event.version} seq {event.serveSeq}
           </li>
         ))}
       </ol>

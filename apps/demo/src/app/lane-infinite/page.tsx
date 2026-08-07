@@ -1,12 +1,10 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { LaneHydration } from "use-lane";
 import {
   getCachedCurrentUser,
   getCachedFirstTaskPage,
 } from "./api/cached-endpoints";
 import { parseTaskPageScope, type TaskPageFilters } from "./api/endpoints";
-import { taskPageSnapshots } from "./api/lane-reads";
 import { HybridTaskList } from "./hybrid-task-list";
 import { InfiniteLaneProvider } from "./lane-provider";
 
@@ -20,11 +18,21 @@ import { InfiniteLaneProvider } from "./lane-provider";
  * while its *depth* belongs to the browser, because "how far the user has
  * scrolled" is not something a server render knows or should re-derive.
  *
- * Lane refuses to let one key be both. So the route publishes page 1 under its
- * own external key and the browser runs `useInfiniteLane` on a separate,
- * client-owned key whose `fetchPage` adopts that publication for page 1 and
- * fetches for the rest. See `api/lane-reads.ts` for the seam and
- * `hybrid-task-list.tsx` for the convergence effect.
+ * The seam is deliberately unremarkable: **page 1 is a prop.** No external key,
+ * no `laneSnapshot`, no `LaneHydration`. The route loads the page and hands it
+ * to the client component, which returns it from its infinite loader's page-1
+ * branch and puts the page's server-computed `version` in the key. That is the
+ * whole integration. See `api/lane-reads.ts`.
+ *
+ * Passing it as a prop is not a shortcut around Lane — it is the ownership rule
+ * applied literally. Page 1 is *not read reactively by any client component*
+ * (the list reads the accumulated value, not page 1), and the top row of
+ * `docs/architectures.md#the-ownership-rule` says such a key does not belong in
+ * a data layer at all: a prop is cheaper than a key. What Lane owns here is the
+ * one thing that actually needs coordinating — the accumulated list.
+ *
+ * `/lane-infinite/late` keeps the publication form for the case where a prop
+ * cannot reach the reader.
  */
 
 type PageProps = {
@@ -48,57 +56,66 @@ export default function Page({ searchParams }: PageProps) {
           Hybrid infinite list
         </h1>
         <p className="text-pretty text-muted-foreground">
-          The App Router owns page 1 and publishes it; a client-owned
+          The App Router owns page 1 and passes it down; a client-owned
           <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">
             useInfiniteLane
           </code>
-          owns the depth and adopts that publication instead of fetching it.
+          owns the depth and keys itself on that page&rsquo;s content hash, so a
+          changed first page is a different list and an unchanged one keeps the
+          depth.
         </p>
+        <Link
+          href="/lane-infinite/late"
+          className="inline-block text-sm underline underline-offset-4"
+        >
+          → the published-first-page variant
+        </Link>
       </header>
 
-      <Suspense fallback={<p className="text-sm text-muted-foreground">Loading publication…</p>}>
-        <FirstPagePublication searchParams={searchParams} />
+      <Suspense
+        fallback={<p className="text-sm text-muted-foreground">Loading page 1…</p>}
+      >
+        <FirstPage searchParams={searchParams} />
       </Suspense>
     </main>
   );
 }
 
 /**
- * The publication. Below the page-level boundary because `searchParams` is URL
- * data, so the shell above streams first.
+ * Below the page-level boundary because `searchParams` is URL data, so the
+ * shell above streams first.
  *
- * The value published here is *exactly* what the browser's `fetchPage` returns
- * for pages 2..N — same endpoint, same function, same `TaskPage`. That is not a
+ * The value handed down is *exactly* what the browser's `fetchPage` returns for
+ * pages 2..N — same endpoint, same function, same `TaskPage`. That is not a
  * nicety: the pages end up in one `pages: P[]`, so a server-shaped page 1 and a
- * client-shaped page 2 would be a type error at best and a rendering bug at
- * worst. `laneSnapshot` checks the pair against the read the browser uses.
+ * client-shaped page 2 would be a rendering bug. The prop's type is what checks
+ * it, which is one thing the value form gets for free that the published form
+ * had to buy with `laneSnapshot`.
  */
-async function FirstPagePublication({ searchParams }: PageProps) {
-  const scope = parseTaskPageScope(
-    normalize((await searchParams).scope),
-  );
+async function FirstPage({ searchParams }: PageProps) {
+  const raw = (await searchParams).scope;
+  const scope = parseTaskPageScope(Array.isArray(raw) ? raw[0] : raw);
   const filters: TaskPageFilters = { scope };
   const user = await getCachedCurrentUser("");
   const ctx = { teamId: user.defaultTeamId, userId: user.id };
   const firstPage = await getCachedFirstTaskPage(ctx, filters);
-  const snapshots = taskPageSnapshots(filters, firstPage);
 
   return (
     <InfiniteLaneProvider ctx={ctx}>
-      <LaneHydration snapshots={snapshots}>
-        <Suspense
-          fallback={
-            <p className="text-sm text-muted-foreground">Reading the lane…</p>
-          }
-        >
-          <HybridTaskList ctx={ctx} scope={scope} />
-        </Suspense>
-      </LaneHydration>
+      <Suspense
+        fallback={
+          <p data-testid="list-fallback" className="text-sm text-muted-foreground">
+            Reading the lane…
+          </p>
+        }
+      >
+        <HybridTaskList
+          ctx={ctx}
+          firstPage={firstPage}
+          scope={scope}
+          source="prop"
+        />
+      </Suspense>
     </InfiniteLaneProvider>
   );
-}
-
-function normalize(value: string | string[] | undefined): string | null {
-  if (Array.isArray(value)) return value[0] ?? null;
-  return value ?? null;
 }

@@ -10,8 +10,8 @@ import type { WorkspaceCtx } from "@/lib/lane-meta";
  * infinite read's page fetcher takes a cursor and nothing else, so the session
  * has to reach it from the lane rather than from the key.
  *
- * The provider is above `<LaneHydration>` in `page.tsx`, because the publication
- * needs a lane to publish into.
+ * One lane serves both rigs: the prop form needs it only for the infinite key,
+ * and `/lane-infinite/late` also publishes into it.
  */
 export function InfiniteLaneProvider({
   ctx,

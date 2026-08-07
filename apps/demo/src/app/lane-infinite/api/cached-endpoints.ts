@@ -4,9 +4,9 @@ import { fetchCurrentUser } from "@/app/lane/api/endpoints";
 import { fetchTaskPage, type TaskPageFilters } from "./endpoints";
 
 /**
- * Next owns freshness on the server half; Lane publishes the result. One tag,
- * because this route reads one thing: page 1 of the task list. A mutation
- * expires it, the route re-renders, and the publication is the patch.
+ * Next owns freshness on the server half. One tag, because this route reads one
+ * thing: page 1 of the task list. A mutation expires it, the route re-renders,
+ * and the new page reaches the browser as a prop.
  */
 export const taskPageCacheTags = {
   currentUser: () => "lane-infinite:current-user",
@@ -24,11 +24,12 @@ export async function getCachedCurrentUser(userId: string) {
 /**
  * Page 1, cached by coherence domain.
  *
- * The cache is what makes the spike's `servedAt` stamp meaningful: a
- * republication that did *not* expire this tag re-publishes the same page
- * object (same `servedAt`), and one that did expire it publishes a page with a
- * new stamp. Which of those the client's re-walk ends up holding is exactly the
- * closure-freshness question.
+ * The cache is what lets the rig separate the three republication cases (see
+ * `actions.ts`). A `router.refresh()` over a warm entry hands back the very same
+ * page — same `version`, same `serveSeq` — and the client should not so much as
+ * blink. Expiring the tag produces a new serve of the same rows: new `serveSeq`,
+ * same `version`, and the client should *still* not blink, which is the whole
+ * claim the content hash exists to make good on.
  */
 export async function getCachedFirstTaskPage(
   ctx: WorkspaceCtx,

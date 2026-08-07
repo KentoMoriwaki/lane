@@ -138,6 +138,41 @@ function nextTaskPageSequence(): number {
   return taskPageSequenceStore.__taskPageSequence;
 }
 
+/**
+ * The content identity of a page — see `TaskPage.version`.
+ *
+ * FNV-1a over a canonical rendering of *only* the fields a reader can see.
+ * Not a cryptographic hash and it does not need to be: the client compares it
+ * for equality and nothing else, and both sides of every comparison come from
+ * this same function.
+ *
+ * What goes in is the whole contract. Rows contribute their id and `updatedAt`,
+ * because that pair is what the demo's mutations move; the cursor and the total
+ * go in because the page carries them and the UI shows them. `servedAt` and
+ * `serveSeq` stay out: they change on every serve, and a version that changed on
+ * every serve would make the client's version-keyed entry churn on every
+ * refresh — the exact behavior the version exists to avoid.
+ */
+function taskPageVersion(page: {
+  items: { id: string; updatedAt: string }[];
+  nextCursor: string | null;
+  total: number;
+}): string {
+  const canonical = [
+    ...page.items.map((item) => `${item.id}@${item.updatedAt}`),
+    `next:${page.nextCursor ?? ""}`,
+    `total:${page.total}`,
+  ].join("|");
+
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < canonical.length; index += 1) {
+    hash ^= canonical.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return hash.toString(16).padStart(8, "0");
+}
+
 export const teamRoutes = team
   .get("/me", async (context) => {
     const user = await getCurrentUser(context.get("userId"));
@@ -178,11 +213,16 @@ export const teamRoutes = team
    * flat list is what six of the demo's variants read, and a page shape is a
    * different contract.
    *
-   * `servedAt` / `serveSeq` are stamped here, on the way out, so a client
-   * holding a page can name the exact response it came from. The spike's whole
-   * question — did an invalidation-driven re-walk adopt the *new* publication
-   * or a stale closure over the old one — is answered by reading that stamp off
-   * page 1.
+   * Every response carries two different kinds of identity, and the difference
+   * is the point:
+   *
+   * - `version` is the page's **content**. The client keys its infinite list on
+   *   it, so a page that came back unchanged keeps the list exactly as deep as
+   *   the user left it, and a page that changed resets it.
+   * - `servedAt` / `serveSeq` are the page's **provenance** — which response
+   *   this is. They are the instrument the spike measures with: they say where
+   *   a rendered page actually came from, which no amount of content
+   *   comparison can.
    */
   .get(
     "/task-pages",
@@ -203,6 +243,7 @@ export const teamRoutes = team
           requestedCursor,
           serveSeq: nextTaskPageSequence(),
           servedAt: new Date().toISOString(),
+          version: taskPageVersion(page),
         },
         200,
       );

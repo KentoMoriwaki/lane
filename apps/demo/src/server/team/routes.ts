@@ -15,6 +15,7 @@ import {
   listLabels,
   listMembers,
   listProjects,
+  listTaskPage,
   listTasks,
   listTeamsForUser,
   removeTaskLabel,
@@ -28,6 +29,7 @@ import {
   createTaskInputSchema,
   listLabelsQuerySchema,
   listMembersQuerySchema,
+  listTaskPageQuerySchema,
   listTasksQuerySchema,
   updateTaskInputSchema,
 } from "./schema";
@@ -69,6 +71,7 @@ team.use("*", async (context, next) => {
 const teamScopedPaths = [
   "/tasks",
   "/tasks/*",
+  "/task-pages",
   "/projects",
   "/projects/*",
   "/labels",
@@ -120,6 +123,21 @@ const DERIVED_DATA_DELAY_MS = readMilliseconds(
   30,
 );
 
+/**
+ * A process-wide serve counter for `/task-pages`. Parked on `globalThis` so the
+ * dev server's module reloading does not reset it mid-experiment — the number
+ * is only ever compared, never interpreted.
+ */
+const taskPageSequenceStore = globalThis as typeof globalThis & {
+  __taskPageSequence?: number;
+};
+
+function nextTaskPageSequence(): number {
+  taskPageSequenceStore.__taskPageSequence =
+    (taskPageSequenceStore.__taskPageSequence ?? 0) + 1;
+  return taskPageSequenceStore.__taskPageSequence;
+}
+
 export const teamRoutes = team
   .get("/me", async (context) => {
     const user = await getCurrentUser(context.get("userId"));
@@ -150,6 +168,42 @@ export const teamRoutes = team
           due: query.due,
           ids: query.ids,
         }),
+        200,
+      );
+    },
+  )
+  /**
+   * The cursor-paginated task list, for the hybrid-ownership spike
+   * (`app/lane-infinite`). A sibling of `/tasks` rather than a mode of it: the
+   * flat list is what six of the demo's variants read, and a page shape is a
+   * different contract.
+   *
+   * `servedAt` / `serveSeq` are stamped here, on the way out, so a client
+   * holding a page can name the exact response it came from. The spike's whole
+   * question — did an invalidation-driven re-walk adopt the *new* publication
+   * or a stale closure over the old one — is answered by reading that stamp off
+   * page 1.
+   */
+  .get(
+    "/task-pages",
+    zValidator("query", listTaskPageQuerySchema, validationHook),
+    async (context) => {
+      const query = context.req.valid("query");
+      const requestedCursor = query.cursor ?? null;
+      const page = await listTaskPage(
+        context.get("teamId"),
+        context.get("userId"),
+        { scope: query.scope, status: query.status },
+        { cursor: requestedCursor, limit: query.limit },
+      );
+
+      return context.json(
+        {
+          ...page,
+          requestedCursor,
+          serveSeq: nextTaskPageSequence(),
+          servedAt: new Date().toISOString(),
+        },
         200,
       );
     },

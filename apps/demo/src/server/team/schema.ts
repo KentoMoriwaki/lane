@@ -121,6 +121,24 @@ export const listTasksQuerySchema = z.object({
   ids: z.string().optional(),
 });
 
+/**
+ * The cursor-paginated task list (`GET /api/task-pages`).
+ *
+ * Added for the hybrid-ownership spike in `app/lane-infinite`: the App Router
+ * publishes page 1 and the browser walks pages 2..N from the same endpoint, so
+ * both halves have to be able to ask for a page by cursor. The cursor is
+ * keyset — the id of the last row of the previous page — because that is the
+ * only kind that survives a row being inserted above it, which is exactly what
+ * the spike's "create a task, republish, re-walk" flow does.
+ */
+export const listTaskPageQuerySchema = z.object({
+  /** The id of the last row of the previous page. Absent means "first page". */
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(4),
+  scope: taskScopeSchema.optional(),
+  status: z.string().optional(),
+});
+
 export const createTaskInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(4000).optional(),
@@ -183,6 +201,28 @@ export type TeamLabel = z.infer<typeof labelSchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type Insights = z.infer<typeof insightsSchema>;
 export type TaskScope = z.infer<typeof taskScopeSchema>;
+
+/**
+ * One page of the cursor-paginated task list — the `P` of the hybrid infinite
+ * lane in `app/lane-infinite`.
+ *
+ * `servedAt` / `serveSeq` are the provenance the spike is measured with: every
+ * response is stamped when it is served, so the client can say *which* server
+ * response it is looking at. That is what makes "the re-walk adopted the fresh
+ * publication, not a stale closure" a fact rather than an inference.
+ */
+export type TaskPage = {
+  items: Task[];
+  /** The id of the last row on this page, or `null` at the end of the list. */
+  nextCursor: string | null;
+  /** 1-based, derived on the server from the cursor it was handed. */
+  pageIndex: number;
+  requestedCursor: string | null;
+  servedAt: string;
+  serveSeq: number;
+  total: number;
+};
+
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;
 export type CreateLabelInput = z.infer<typeof createLabelInputSchema>;

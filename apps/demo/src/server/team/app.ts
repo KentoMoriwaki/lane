@@ -126,7 +126,7 @@ function readRequestDelay(method: string, path: string) {
 
   // Any task-list query — the filtered board and the dependency panels' by-id
   // lookup both land here. A single task (`/api/tasks/:id`) does not.
-  if (path === "/api/tasks") {
+  if (path === "/api/tasks" || path === "/api/task-pages") {
     return listDelayMs;
   }
 

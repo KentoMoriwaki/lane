@@ -172,8 +172,12 @@ export type LaneExternalLoader = LaneLoader<never, unknown> & {
  * The shape is the enforcement. There is no `staleTime` / `whenStale` /
  * `refetchOn*` / `loaderMeta`, because every one of them is an instruction to a
  * loader this read does not have — so writing one is an excess property at the
- * `laneRead` call, which is where the mistake was made. What the entry holds
- * cannot be inferred from `external` either, so `T` is annotated:
+ * `laneRead` call, which is where the mistake was made. No `fallback` either,
+ * for a sharper reason than absence: the only failure this read can have is
+ * {@link LaneExternalTimeoutError}, which says nobody published the key. That is
+ * a wiring bug, and serving something in its place would hide a missing
+ * publisher behind a plausible screen. What the entry holds cannot be inferred
+ * from `external` either, so `T` is annotated:
  * `laneRead<Task>({ key, loader: external })`.
  */
 export type LaneExternalReadSpec<T> = {
@@ -274,7 +278,72 @@ export type LanePlainKey = LaneKey & { readonly [laneDataTag]?: undefined };
 export type LaneReadSpec<T, C = T> = LaneUseOptions & {
   key: LaneKey;
   loader: LaneClientLoader<T, C>;
+  fallback?: LaneFallback<T>;
 };
+
+/**
+ * What a read serves when its load fails — the policy that decides whether a
+ * failure has an answer, and what it is.
+ *
+ * It runs on **every** failed load of the read that started it, not only the
+ * first. Calling it only when there is nothing to serve would make the same
+ * failure behave differently depending on whether this entry happened to have
+ * succeeded before — history the caller cannot see. Running it always is what
+ * lets the policy be read off the definition:
+ *
+ * ```ts
+ * fallback: ({ lastFulfilled }) => lastFulfilled ?? EMPTY   // keep data, else empty
+ * fallback: ({ error, lastFulfilled }) =>                   // branch on the failure
+ *   isMissing(error) ? EMPTY : (lastFulfilled ?? raise(error))
+ * fallback: ({ error }) => { throw error }                  // never serve a stale value
+ * ```
+ *
+ * The default, for a read that declares none, is the first line of that list
+ * without the floor: serve `lastFulfilled` if there is one, otherwise reject.
+ *
+ * **What it returns is served, never stored.** `lastFulfilled` moves only on a
+ * genuine success and the entry keeps the freshness it had — so a read that fell
+ * back is still as stale as it was and still refreshes on the next trigger. A
+ * policy that hands back what it was given serves it under the entry's own
+ * revision, since that is what the number already names; anything else is
+ * content the entry never held, and carries a revision of its own. That is the whole reason this is a read
+ * option rather than a `try`/`catch` in the loader: a loader that returns a
+ * substitute has *succeeded* as far as the store can tell, which restamps the
+ * fulfillment time and overwrites the last good value with the substitute.
+ *
+ * **Throwing is how a read declines.** There is no sentinel return, because
+ * `undefined` may be a legitimate `T`. Rethrowing the error it was handed is the
+ * ordinary way to say "not this one" — the same move a boundary's fallback makes
+ * with an error it does not recognise.
+ *
+ * **Synchronous.** Returning a promise would be a second loader, and retrying a
+ * failed request is the fetcher's job, not the store's.
+ *
+ * Which read's policy runs is the one whose loader produced the failure — the
+ * read that started the load, as with `loaderMeta`. Two reads of one key that
+ * declare different policies are the same drift a shared key factory invites,
+ * and `laneRead` is the answer to it: one definition per key, options included.
+ */
+export type LaneFallback<T> = (context: {
+  /** The rejection the load produced. */
+  error: unknown;
+  /** The key that failed, for a policy shared across several reads. */
+  key: LaneKey;
+  /**
+   * The entry's last fulfilled value, or `undefined` when no load of this key
+   * has ever succeeded.
+   *
+   * Named for what it is rather than reusing the loader's `current`: that one is
+   * typed `C`, deliberately free to be narrower or wider than the result, so a
+   * policy handed it could not return it unchanged. This one is `T`, which is
+   * what the read has to resolve to.
+   *
+   * A loader that resolves `undefined` makes this ambiguous — "never succeeded"
+   * and "succeeded with `undefined`" arrive the same way. Return a domain empty
+   * value instead if the difference matters.
+   */
+  lastFulfilled: T | undefined;
+}) => T;
 
 /**
  * A {@link LaneReadSpec} whose loader may be absent — the colocated form of a
@@ -290,6 +359,7 @@ export type LaneReadSpec<T, C = T> = LaneUseOptions & {
 export type LaneGatedReadSpec<T, C = T> = LaneUseOptions & {
   key: LaneKey;
   loader: LaneClientLoader<T, C> | undefined;
+  fallback?: LaneFallback<T>;
 };
 
 export type LaneScope =
@@ -439,7 +509,7 @@ export type Lane = {
    *
    * Where the key lands is decided by what it already had. With a last fulfilled
    * value it reverts to it — readers keep showing the data they had, with no
-   * `refreshError`, since the caller asked for the stop. With nothing to revert
+   * `error`, since the caller asked for the stop. With nothing to revert
    * to the read settles rejected, the only end a transition holding no data can
    * reach, and recovers like any other failed first load: the rejection is reused
    * until the key is invalidated, removed, or collected.
@@ -451,11 +521,16 @@ export type Lane = {
 };
 
 /**
- * What a read resolves to. `data` is the value; `refreshError` is present when
- * the most recent refresh failed while a previously fulfilled value is still
- * being served (stale-on-error). The error travels in the same resolved value
- * as the data it accompanies, so a reader sees both consistently through
- * `use(promise)` — no separate, render-time store read.
+ * What a read resolves to. `data` is the value; `error` is present when the load
+ * that would have produced it failed and something else is being served in its
+ * place — the last fulfilled value, or what the read's
+ * {@link LaneReadSpec.fallback} returned.
+ *
+ * The error travels in the same resolved value as the data it accompanies, so a
+ * reader sees both consistently through `use(promise)` — no separate,
+ * render-time store read. That is the whole of why it is here and not on
+ * `useLane`: a field read live from the store during render could disagree with
+ * the data beside it, and this cannot.
  */
 export type LaneRead<T> = {
   data: T;
@@ -480,10 +555,10 @@ export type LaneRead<T> = {
    * nothing over `===` on `data` — structural sharing makes the reference
    * comparison exactly as precise.
    *
-   * It rides in the resolved value, like `refreshError`, so `data` and
-   * `revision` are one settlement and can never tear: a stale-on-error result
-   * keeps serving the old data under the old revision. Session-local — never
-   * serialize it into a snapshot or compare it across lanes.
+   * It rides in the resolved value, like `error`, so `data` and `revision` are
+   * one settlement and can never tear: a result that fell back keeps serving the
+   * old data under the old revision. Session-local — never serialize it into a
+   * snapshot or compare it across lanes.
    *
    * **On an external read the identity is one notch weaker: the publication's,
    * not the content's.** An external entry keeps no previous value to compare
@@ -495,7 +570,22 @@ export type LaneRead<T> = {
    * its owner has it — ship it in the payload and key on that instead.
    */
   revision: number;
-  refreshError?: unknown;
+  /**
+   * The failure of the load that would have produced `data`, when something else
+   * is being served in its place. Absent when the latest load succeeded, and
+   * absent after a cancel — the caller asked for the stop, so it is not a
+   * failure to report.
+   *
+   * Its presence says `data` did not come from a successful load; it does *not*
+   * say the read is broken. The value beside it may be perfectly good, only
+   * older than it should be. Treat it as a reason to annotate, not a reason to
+   * discard what is on screen.
+   *
+   * A first load with nothing to serve — no previous value, and no
+   * {@link LaneReadSpec.fallback} that returned one — rejects the promise
+   * instead, so this field never carries the failure that had no answer.
+   */
+  error?: unknown;
 };
 
 /**
@@ -519,8 +609,8 @@ export type LaneRead<T> = {
  *
  * **Nothing is stored, and the action is not Lane's.** Its value is ignored and
  * its rejection is never caught, so a failed save cannot arrive at a reader as
- * `refreshError` — that field means a failed *refresh* over data still worth
- * showing, which is a different fact about a different thing. Converge inside the
+ * `error` — that field means a *load* of this key failed while something else is
+ * being served, which is a different fact about a different thing. Converge inside the
  * action, with whatever `invalidate` / `set` / `update` calls the change actually
  * needs, and handle the failure where you would have anyway.
  *
@@ -552,8 +642,8 @@ export type LaneStartInvalidationTransition = (action: () => unknown) => void;
  * ```
  *
  * The resolved value keeps every existing contract, because it *is* the read's:
- * a failed refresh over existing data resolves `{ data: stale, refreshError }`
- * rather than rejecting (stale-on-error), an initial failure rejects, and
+ * a failed load with something to fall back to resolves `{ data, error }` rather
+ * than rejecting, a failure with nothing to serve rejects, and
  * structural sharing makes the `!==` above a precise change check (`revision`
  * says the same thing as a number). Resolving means the data settled — not that
  * React committed it; readers converge through their transitions as they always

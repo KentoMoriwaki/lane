@@ -681,7 +681,7 @@ describe("React integration", () => {
     await waitForText(app.container, "fresh-b|background:0|transition:0|refresh:none");
   });
 
-  it("keeps showing previous data when a refetch rejects and exposes refreshError", async () => {
+  it("keeps showing previous data when a refetch rejects and exposes error", async () => {
     const lane = createLane();
     const failing = deferred<string>();
     const recovering = deferred<string>();
@@ -1412,11 +1412,11 @@ function Probe({
   const read = React.use(result.promise);
   const value = read.data;
   const refresh =
-    read.refreshError === undefined
+    read.error === undefined
       ? "none"
-      : read.refreshError instanceof Error
-        ? read.refreshError.message
-        : String(read.refreshError);
+      : read.error instanceof Error
+        ? read.error.message
+        : String(read.error);
 
   return React.createElement(
     "button",

@@ -17,7 +17,7 @@ import {
   readOrCreate,
   subscribeLane,
 } from "./core";
-import type { LaneInvalidationSource } from "./core";
+import type { LaneInvalidationSource, LaneReadOptions } from "./core";
 import { LaneHydrationSourceContext } from "./hydration";
 import { serializeKey } from "./keys";
 import { isExternalLoader } from "./ownership";
@@ -27,6 +27,7 @@ import type {
   Lane,
   LaneExternalReadSpec,
   LaneExternalResult,
+  LaneFallback,
   LaneGatedExternalReadSpec,
   LaneGatedExternalResult,
   LaneGatedReadSpec,
@@ -50,6 +51,7 @@ import type {
 type LaneAnyReadSpec<T, C> = LaneUseOptions & {
   key: LaneKey;
   loader: LaneLoader<T, C> | undefined;
+  fallback?: LaneFallback<T>;
 };
 
 /**
@@ -116,7 +118,11 @@ export function useLane<T, C = T>(
   // unconditional `readOrCreate`.
   const external = isExternalLoader(loader);
   const keyId = serializeKey(key);
-  const readOptions = toReadOptions(read, loaderMeta);
+  const readOptions = toReadOptions(
+    read,
+    loaderMeta,
+    read.fallback as LaneReadOptions["fallback"],
+  );
   const [isInvalidationPending, startTransition] = useTransition();
   const [isBackgroundPending, startBackgroundTransition] = useTransition();
   // The publication this render is happening under (nearest LaneHydration

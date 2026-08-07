@@ -86,7 +86,7 @@ describe("LaneReadError", () => {
     await expect(readOrCreate(lane, ["k"], loader)).resolves.toEqual({
       revision: expect.any(Number),
       data: "cached",
-      refreshError: cause,
+      error: cause,
     });
 
     unsubscribe();
@@ -171,7 +171,7 @@ describe('invalidate with onlyIf: "rejected"', () => {
     lane.invalidate(["k"]);
     await expect(readOrCreate(lane, ["k"], loader)).resolves.toMatchObject({
       data: "cached",
-      refreshError: expect.any(Error),
+      error: expect.any(Error),
     });
     expect(loader).toHaveBeenCalledTimes(2);
 

@@ -42,6 +42,20 @@ export type LaneReadOptions = {
    */
   warmTime?: number;
   /**
+   * What this load serves if it fails — the read's {@link LaneFallback}, erased
+   * to `unknown` because the store never knows a `T`.
+   *
+   * It belongs to the load rather than to the reader for the same reason
+   * `loaderMeta` does: it interprets *this* loader's failure, and a read whose
+   * loader never ran has no standing to say what that failure means. So the
+   * policy that runs is the one carried by the read that started the load.
+   */
+  fallback?: (context: {
+    error: unknown;
+    key: LaneKey;
+    lastFulfilled: unknown;
+  }) => unknown;
+  /**
    * The lane's `loaderMeta`, handed to the loader as `context.meta`. It rides in
    * the read options rather than in the read because it belongs to the lane, not
    * to the definition — which is what keeps a read's arguments to exactly what
@@ -204,7 +218,10 @@ export function createLane(options: LaneOptions = {}): Lane {
       // one refreshes, and how long a value outlives one — and this is not a
       // reader. `warmTime` is exactly this call's business: warming a value is
       // a bet that somebody will come for it, and this is where the bet is
-      // placed.
+      // placed. `fallback` comes along for the same reason: it describes the
+      // load, and this call is the one starting it — so a warmed key that failed
+      // holds what the eventual reader would have gotten by loading it itself,
+      // which is the only way warming can be transparent.
       if (isExternalLoader(read.loader)) {
         // Rejected by `LaneReadSpec`'s loader type as well; this catches the
         // spec that reached here as `any` or through a cast. Warming an
@@ -221,6 +238,7 @@ export function createLane(options: LaneOptions = {}): Lane {
         // value supplied alongside it.
         loaderMeta: read.loaderMeta ?? args[0]?.loaderMeta,
         warmTime: read.warmTime,
+        fallback: read.fallback as LaneReadOptions["fallback"],
       });
     },
     startInvalidationTransition(scope) {
@@ -976,22 +994,68 @@ function setEntryCache<T>(
   /**
    * Where a read that produced no usable value lands — a rejection, or a
    * cancelled read whose loader resolved anyway. Both want the same thing, which
-   * is why the fulfilled path routes through here rather than repeating it:
+   * is why the fulfilled path routes through here rather than repeating it.
    *
-   * - **Stale-on-error** when there is a last fulfilled value: keep serving it so
-   *   mounted readers do not lose good data, and carry the failure alongside it
-   *   in the same resolved value (`refreshError`) instead of a separate channel.
-   *   Freshness keeps the original fulfillment time, so staleness policies still
-   *   treat the data as old. A cancel is not a refresh failure, though — the
-   *   caller asked for the stop, so it comes back with nothing beside it, or
-   *   every consumer that renders `refreshError` would have to filter for an
-   *   abort it requested itself.
-   * - **Rejected** when there is not. Nothing else a reader could show.
+   * What gets served is the read's `fallback` policy, or the built-in one when
+   * it declares none: the last fulfilled value if there is one, and otherwise
+   * nothing, which is a rejection. Declaring a policy replaces that default
+   * outright rather than extending it — it is handed the same two facts the
+   * default decides from (the error, and the last fulfilled value), so
+   * "previous, else empty" and "never serve a previous value" are both things it
+   * can say. A policy that throws lands where the default's empty case lands.
+   *
+   * **What is served is not stored.** `lastFulfilled` moves only on a genuine
+   * success, and freshness keeps the original fulfillment time — so a
+   * fallen-back entry is still as stale as it was and still
+   * refreshes on the next trigger. This is the whole reason the policy lives
+   * here instead of in a `try`/`catch` inside the loader: a loader that returns
+   * a substitute has *succeeded* as far as the store can tell, which restamps
+   * the fulfillment time and overwrites the last good value.
+   *
+   * A cancel is not a failure, though — the caller asked for the stop, so it
+   * reverts silently to the last fulfilled value and never consults the policy.
+   * Running one here would ask an app to interpret an abort it requested itself,
+   * and every consumer rendering `error` would have to filter that back out.
    */
   const settleWithoutValue = (error: unknown): LaneRead<T> => {
-    const fallback = entry.lastFulfilled;
+    const previous = entry.lastFulfilled;
 
-    if (!fallback) {
+    // Two reads have no policy to run. An external key is the owner's to fill,
+    // so it has nothing to fall back to but a publication that never came. And a
+    // cancel is not a failure — the caller asked for the stop, so there is
+    // nothing to interpret, and the entry reverts to what it had exactly as it
+    // did before policies existed.
+    const policy =
+      entry.external || cache.cancelled ? undefined : options?.fallback;
+    let served: { value: unknown } | undefined = previous
+      ? { value: previous.value }
+      : undefined;
+
+    // What the rejection below reports. A policy that throws has replaced the
+    // failure with its own account of it — that is the error worth surfacing,
+    // and rethrowing the one it was handed is the ordinary way to keep it.
+    let unanswered = error;
+
+    if (policy) {
+      try {
+        served = {
+          value: policy({
+            error,
+            key: entry.key,
+            lastFulfilled: previous?.value,
+          }),
+        };
+      } catch (declined: unknown) {
+        // Declining lands where the default's empty case lands, whether the
+        // policy meant "not this failure" or simply threw. The entry has nothing
+        // to show either way, and a caught throw must not escape past the
+        // `settle` below or the cache is left with no settlement at all.
+        served = undefined;
+        unanswered = declined;
+      }
+    }
+
+    if (!served) {
       settle({ at: Date.now(), kind: "rejected" });
 
       // Wrapped on the way out, because this is the throw that unmounts the
@@ -1000,19 +1064,43 @@ function setEntryCache<T>(
       // published key is left alone; recovering it is not the client's to offer
       // (see `LaneReadError`).
       throw entry.external
-        ? error
-        : new LaneReadError(entry.key, entry.keyId, error);
+        ? unanswered
+        : new LaneReadError(entry.key, entry.keyId, unanswered);
     }
 
-    settle({ at: fallback.at, kind: "fulfilled" });
+    // The entry's own freshness, not this settlement's: falling back is not a
+    // fulfillment. With a previous value that is its fulfillment time; with only
+    // a policy's value there has never been one, so the epoch stands in — which
+    // keeps the triggers firing on a key that is failing.
+    //
+    // The epoch and not `-Infinity`, so that `staleTime: Infinity` still means
+    // what it says. A read that has never loaded is as old as a value can be,
+    // but "never stale" is the app's decision and applies here too.
+    settle({ at: previous?.at ?? 0, kind: "fulfilled" });
 
-    // `entry.revision` (via `settledRead`) is the fallback's: the two are
-    // written together, and the fallback existing means this entry is
-    // client-owned, so the field applies.
-    const read = settledRead(entry, fallback.value as T);
+    // The entry's revision names what `lastFulfilled` holds, so it applies only
+    // while that is what is being served — the built-in policy always, and a
+    // declared one whenever it hands back what it was given. A policy serving
+    // anything else is serving content the entry never held, and one number must
+    // never name two different values, so that value carries a revision of its
+    // own (the displaced settlement below does the same for the same reason).
+    //
+    // Which means a substitute re-derives whatever keys on it, once per failed
+    // load. That is the honest direction: the content a reader sees really did
+    // change, and the alternative is claiming it did not.
+    const servedEntryValue =
+      previous !== undefined && Object.is(served.value, previous.value);
+    const read = settledRead(
+      entry,
+      served.value as T,
+      servedEntryValue ? entry.revision : ++state.revisionCounter,
+    );
 
+    // Not on a cancel: the caller asked for the stop, so every consumer that
+    // renders `error` would otherwise have to filter out an abort it requested
+    // itself.
     if (!cache.cancelled) {
-      read.refreshError = error;
+      read.error = error;
     }
 
     return read;
@@ -1329,11 +1417,12 @@ function shouldInvalidateEntry(
     return true;
   }
 
-  // Exactly the entries whose readers are in an error boundary. Stale-on-error
-  // records its settlement as the fallback's — `fulfilled` — so a key still
-  // serving data is not one of these however its last load went, and an
-  // in-flight read was already excluded above. So "retry what is broken" cannot
-  // reach anything a reader is showing.
+  // Exactly the entries whose readers are in an error boundary. A read that fell
+  // back records its settlement as `fulfilled` — whether it served the previous
+  // value or what a `fallback` policy returned — so a key still serving
+  // *something* is not one of these however its last load went, and an in-flight
+  // read was already excluded above. So "retry what is broken" cannot reach
+  // anything a reader is showing.
   if (options.onlyIf === "rejected") {
     return cache.settlement.kind === "rejected";
   }

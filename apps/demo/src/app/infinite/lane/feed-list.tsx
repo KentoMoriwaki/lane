@@ -31,7 +31,7 @@ const FEED_STALE_TIME = 5_000;
  *   page puts above this component, not a `status === "pending"` branch;
  * - a first-load failure **throws** to the boundary above;
  * - a *re-read* that fails never throws: lane keeps serving the last fulfilled
- *   value and hands the failure back as `refreshError` in the same resolved
+ *   value and hands the failure back as `error` in the same resolved
  *   value, rendered inline below;
  * - "refreshing" is `isInvalidationPending`, which covers both a `loadMore` and a
  *   full re-read, and during which the committed list stays on screen.
@@ -79,7 +79,7 @@ export function FeedList({
       staleTime: FEED_STALE_TIME,
     });
 
-  const { data, refreshError } = use(promise);
+  const { data, error } = use(promise);
 
   const items = useMemo(() => itemsOf(data), [data]);
   const annotations = useMemo(
@@ -96,7 +96,7 @@ export function FeedList({
   // The sentinel is a loop, and only a change in what it observes stops it. A
   // successful append stops it by adding rows and eventually clearing `hasNext`;
   // a *failed* one changes neither — the value is untouched, so `hasNext` is
-  // still true and the pending flag drops back down — and without `refreshError`
+  // still true and the pending flag drops back down — and without `error`
   // in the gate the observer would re-fire forever against a server that is
   // already failing. All three facts come out of the same resolved value, so
   // they cannot disagree.
@@ -110,7 +110,7 @@ export function FeedList({
       !root ||
       !hasNext ||
       isConverging ||
-      refreshError
+      error
     ) {
       return;
     }
@@ -128,7 +128,7 @@ export function FeedList({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [autoLoad, hasNext, isConverging, loadMore, loadMoreBurst, refreshError]);
+  }, [autoLoad, hasNext, isConverging, loadMore, loadMoreBurst, error]);
 
   const renameAction = (item: FeedItem) => void mutations.rename(item);
   const deleteAction = (item: FeedItem) => void mutations.remove(item);
@@ -163,12 +163,12 @@ export function FeedList({
         </span>
       </ListIntegrity>
 
-      {refreshError ? (
+      {error ? (
         <p className="rounded-lg border border-rose/40 bg-rose/5 px-3 py-2 text-xs text-rose">
-          refreshError:{" "}
-          {refreshError instanceof Error
-            ? refreshError.message
-            : String(refreshError)}{" "}
+          error:{" "}
+          {error instanceof Error
+            ? error.message
+            : String(error)}{" "}
           — the last value that loaded is still on screen, and this read is not
           in an error state.
         </p>

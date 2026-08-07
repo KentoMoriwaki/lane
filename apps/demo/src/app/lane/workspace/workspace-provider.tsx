@@ -19,7 +19,7 @@ type WorkspaceContextValue = {
   refresh: () => void;
   isRefreshing: boolean;
   /** Set when the last refresh could not be honored; cleared when one is. */
-  refreshError: unknown;
+  error: unknown;
 };
 
 const WorkspaceContext = React.createContext<WorkspaceContextValue | null>(null);
@@ -44,7 +44,7 @@ export function WorkspaceProvider({
   const [userId] = React.useState(initialUser.id);
   const [isSignedIn, setIsSignedIn] = React.useState(true);
   const [isRefreshing, startRefresh] = React.useTransition();
-  const [refreshError, setRefreshError] = React.useState<unknown>(undefined);
+  const [error, setError] = React.useState<unknown>(undefined);
   const activeTeamId = searchParams.get("team")?.trim() || initialTeamId;
 
   const signOut = React.useCallback(() => {
@@ -81,9 +81,9 @@ export function WorkspaceProvider({
     startRefresh(async () => {
       try {
         await refreshWorkspaceAction(ctx);
-        setRefreshError(undefined);
+        setError(undefined);
       } catch (error) {
-        setRefreshError(error);
+        setError(error);
       }
     });
   }, [ctx]);
@@ -95,7 +95,7 @@ export function WorkspaceProvider({
       isRefreshing,
       isSignedIn,
       refresh,
-      refreshError,
+      error,
       sessionUser: initialUser,
       signIn,
       signOut,
@@ -108,7 +108,7 @@ export function WorkspaceProvider({
       isRefreshing,
       isSignedIn,
       refresh,
-      refreshError,
+      error,
       signIn,
       signOut,
       userId,
@@ -143,9 +143,9 @@ export function useWorkspaceCtx(): WorkspaceCtx {
 export function useWorkspaceRefresh(): {
   refresh: () => void;
   isRefreshing: boolean;
-  refreshError: unknown;
+  error: unknown;
 } {
-  const { refresh, isRefreshing, refreshError } = useWorkspace();
+  const { refresh, isRefreshing, error } = useWorkspace();
 
-  return { isRefreshing, refresh, refreshError };
+  return { isRefreshing, refresh, error };
 }

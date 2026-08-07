@@ -29,7 +29,7 @@ import { LaneCacheCard, LaneCacheControls } from "./lane-controls";
  * `<InitialLoadBoundary>` catches a first load that rejects. Neither is reached
  * again once the key has a value — after that a re-read holds the committed list
  * on screen through a transition, and a failed re-read comes back as
- * `refreshError` inside the list.
+ * `error` inside the list.
  */
 export default function LaneInfiniteLabPage() {
   return (

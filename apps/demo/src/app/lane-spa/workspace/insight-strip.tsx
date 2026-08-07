@@ -7,7 +7,7 @@ import { accent, type AccentToken } from "@/lib/accent";
 import { cn } from "@/lib/utils";
 import Link, { useLinkStatus } from "next/link";
 import * as React from "react";
-import { RefreshErrorChip } from "./feedback";
+import { ErrorChip } from "./feedback";
 
 type InsightCard = {
   key: string;
@@ -28,7 +28,7 @@ export function InsightStrip({
 }) {
   const { promise, invalidate, isInvalidationPending } =
     useInsights();
-  const { data, refreshError } = React.use(promise);
+  const { data, error } = React.use(promise);
 
   const cards: InsightCard[] = [
     { key: "in_progress", label: "In progress", value: data.inProgress, tone: "amber", view: { status: ["in_progress"] } },
@@ -41,8 +41,8 @@ export function InsightStrip({
 
   return (
     <div className="border-b border-border">
-      <RefreshErrorChip
-        refreshError={refreshError}
+      <ErrorChip
+        error={error}
         onRetry={invalidate}
         isRetrying={isInvalidationPending}
         className="mx-4 mt-3"

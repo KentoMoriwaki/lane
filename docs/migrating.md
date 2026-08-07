@@ -23,8 +23,9 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `useQuery().data` | `use(promise).data`, read under a `Suspense` boundary |
 | `useInfiniteQuery` | `useInfiniteLane` — one key holds the accumulated list ([step 6](#step-6--infinite-lists)) |
 | `isLoading` (no data yet) | a **`Suspense` fallback** — there is no flag |
-| `isError` / `error` (initial) | an **Error Boundary** — an initial load rejects |
-| `error` *over existing data* | `refreshError` from `use(promise)` — render it inline |
+| `isError` / `error` (initial) | an **Error Boundary** — a load with nothing to show rejects |
+| `error` *over existing data* | `error` from `use(promise)` — render it inline |
+| `placeholderData` for a read that may fail | `fallback` — the read's own policy for what a failed load serves |
 | `isFetching` / `isRefetching` | `isInvalidationPending` (explicit) / `isBackgroundPending` (auto) |
 | `keepPreviousData` / `placeholderData` | **transitions** — wrap the key change, or `useDeferredValue` |
 | `invalidateQueries(key)` | `invalidate(key)` exact, `invalidate(prefix)`, or a predicate |
@@ -155,9 +156,10 @@ To keep call-site churn small in a large codebase, it is reasonable to wrap
 
 - **No `isLoading`.** Initial loading is Suspense; a hook field for it has no
   correct value, because the component has already suspended.
-- **`error` is only `refreshError`.** An *initial* failure rejects to the Error
-  Boundary and never reaches a field. Expose `refreshError` — a failed refresh
-  *over* existing data — not a general `error`.
+- **`error` is not react-query's `error`.** A failure with *nothing to show*
+  rejects to the Error Boundary and never reaches a field. The `error` on the
+  resolved value means the opposite: the load failed and something else is being
+  served, so it is a reason to annotate what is on screen, not to replace it.
 - **`isPending` / `isFetching` mean "refreshing over data,"** not "no data yet."
   Map them to `isBackgroundPending` / `isInvalidationPending`.
 - **Pass the key straight to `useLane`.** Lane canonicalizes keys internally — no
@@ -171,13 +173,13 @@ Once reads suspend, a data widget composes into a few layers:
 - **Initial load** → a `Suspense` boundary (per widget or per section).
 - **Refreshing over data** → an `isBackgroundPending` / `isInvalidationPending`
   affordance (an overlay or a subtle bar), *not* a fallback.
-- **A failed refresh** → render the stale `data` **and** the `refreshError` as a
+- **A failed load over existing data** → render the `data` **and** the `error` as a
   small inline hint. Don't throw it; don't blank the panel.
 - **Empty** → your empty state, once loaded.
 
 ```tsx
 <Suspense fallback={<PanelSkeleton />}>
-  <Panel /> {/* reads with use(); shows refreshError inline + a background spinner */}
+  <Panel /> {/* reads with use(); shows error inline + a background spinner */}
 </Suspense>
 ```
 
@@ -305,7 +307,7 @@ Three things to carry across:
   `infiniteQueryBehavior` walks that loop internally; Lane's loader walks it in
   front of you. What differs is what the user sees: the transition keeps the list
   on screen throughout, and a failure part-way through leaves the previous list
-  rendered with `refreshError` beside it rather than flipping the read into an
+  rendered with `error` beside it rather than flipping the read into an
   error state.
 - **`hasNextPage` moves into the data.** The hook returns a promise it does not
   resolve, so it cannot report a flag derived from the pages. Read `data.hasNext`

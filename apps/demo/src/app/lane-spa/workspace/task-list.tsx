@@ -8,7 +8,7 @@ import type { TaskFilters } from "@/app/lane-spa/api/endpoints";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PRIORITY_GROUP_ORDER, PRIORITY_META } from "@/lib/task-meta";
 import { useWorkspace } from "./workspace-provider";
-import { EmptyState, RefreshErrorChip } from "./feedback";
+import { EmptyState, ErrorChip } from "./feedback";
 import { TaskRow } from "./task-row";
 
 export function TaskList({
@@ -29,12 +29,12 @@ export function TaskList({
   const { userId } = useWorkspace();
   const { promise, isInvalidationPending, invalidate } =
     useTasks(filters);
-  const { data: tasks, refreshError } = React.use(promise);
+  const { data: tasks, error } = React.use(promise);
 
   const dimmed = isInvalidationPending;
   const refreshNotice = (
-    <RefreshErrorChip
-      refreshError={refreshError}
+    <ErrorChip
+      error={error}
       onRetry={invalidate}
       isRetrying={isInvalidationPending}
       className="mx-4 mt-3"

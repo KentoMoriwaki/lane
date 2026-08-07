@@ -16,14 +16,21 @@ import type {
  * specific of the two, and it can only ever narrow: the lane's value is
  * guaranteed to exist, so an absent override is "use the lane's", never "there
  * isn't one".
+ *
+ * `fallback` is a third argument for a different reason: it is the one read
+ * option typed by the read's `T`, and `LaneUseOptions` has no `T` — which is
+ * also why a batch's shared options cannot carry one and a member's own read
+ * always does.
  */
 export function toReadOptions(
   options: LaneUseOptions,
   loaderMeta: LaneLoaderMeta,
+  fallback?: LaneReadOptions["fallback"],
 ): LaneReadOptions {
   return {
     loaderMeta: options.loaderMeta ?? loaderMeta,
     warmTime: options.warmTime,
+    fallback,
   };
 }
 

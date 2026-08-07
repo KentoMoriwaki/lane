@@ -182,14 +182,14 @@ way](./design-notes.md#a-loaders-input-includes-what-it-already-produced).
 
 Returns a [`LaneResult<T>`](#laneresultt). Unwrap `result.promise` with `use()`
 inside a `Suspense` boundary — it resolves to a [`LaneRead<T>`](#lanereadt)
-(`{ data, refreshError }`):
+(`{ data, error }`):
 
 ```tsx
 const { promise } = useLane({
   key: ["task", id],
   loader: ({ signal }) => fetchTask(id, signal),
 });
-const { data: task, refreshError } = use(promise);
+const { data: task, error } = use(promise);
 ```
 
 The hook keeps the current promise in React state. When the key changes during
@@ -531,7 +531,7 @@ type LaneResult<T> = {
 | `promise` | The current promise for the key. Unwrap with `use(promise)` to get a [`LaneRead<T>`](#lanereadt). |
 | `isInvalidationPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / reconnect / a `background: true` invalidation) is converging. |
-| `invalidate` | Invalidate this exact key, re-read, and return **the next read's promise** — awaitable, unlike `lane.invalidate` (a key alone does not know its loader; the hook holds the whole read). The returned promise is the one subscribed readers adopt, by the store's dedupe — never a second fetch. It resolves with the read's usual contracts: a failed refresh over existing data resolves `{ data: stale, refreshError }` rather than rejecting, an initial failure rejects, and resolving means the data settled — not that React committed. An invalidation skipped by `onlyIf` returns the current cached promise, so awaiting is always awaiting "the key's value after this call". Accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll); defaults to an explicit transition. See [Derived reads](#derived-reads--reacting-to-a-source-that-actually-changed) for the cascade it enables. |
+| `invalidate` | Invalidate this exact key, re-read, and return **the next read's promise** — awaitable, unlike `lane.invalidate` (a key alone does not know its loader; the hook holds the whole read). The returned promise is the one subscribed readers adopt, by the store's dedupe — never a second fetch. It resolves with the read's usual contracts: a failed load with something to serve resolves `{ data, error }` rather than rejecting, a failure with nothing to serve rejects, and resolving means the data settled — not that React committed. An invalidation skipped by `onlyIf` returns the current cached promise, so awaiting is always awaiting "the key's value after this call". Accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll); defaults to an explicit transition. See [Derived reads](#derived-reads--reacting-to-a-source-that-actually-changed) for the cascade it enables. |
 | `startInvalidationTransition` | Run an action inside this reader's invalidation transition, so `isInvalidationPending` is on from when it *starts*. See [below](#startinvalidationtransition--pending-from-the-start-of-an-action). |
 
 ### `startInvalidationTransition` — pending from the start of an action
@@ -592,7 +592,7 @@ is announced is what should look busy, which is usually the smaller set — a
 
 - **The action is not Lane's.** Its resolved value is ignored and its rejection
   is never caught, so a failed save cannot reach a reader as
-  [`refreshError`](#lanereadt) — that field means a failed *refresh* over data
+  [`error`](#lanereadt) — that field means a *load* of this key failed over data
   still worth showing, which is a different fact about a different thing. Handle
   the failure inside the action, where you would have anyway.
 - **Nothing is stored when the window opens.** An announcement schedules no read:
@@ -682,7 +682,7 @@ What a read resolves to — `use(promise)` returns this:
 type LaneRead<T> = {
   data: T;
   revision: number;
-  refreshError?: unknown;
+  error?: unknown;
 };
 ```
 
@@ -690,7 +690,7 @@ type LaneRead<T> = {
 | --- | --- |
 | `data` | The value for the key. |
 | `revision` | The identity of `data`'s **content** — a serializable stand-in for the reference equality [structural sharing](#structural-sharing) guarantees. A refetch that came back deep-equal keeps the previous reference *and* the previous revision; only a genuine content change (through any write path: a loader, `set`, `update`) mints a new one, from a lane-wide counter. Equality is the entire contract — nothing about order, density, or reuse across entries may be read into the numbers, and they are session-local: never serialize one into a snapshot. What it is for is naming content where a reference cannot go — chiefly as **key material for a derived read**, so the derived key changes exactly when the source's content does: `useLane(prepareRead(source.data.documentId, source.revision))`. For comparing two reads you already hold, `revision` adds nothing over `===` on `data`. A stale-on-error result keeps serving the old data under the old revision — the pair is one settlement and cannot tear. **On an [external](#external--a-read-the-owner-publishes) read the identity is one notch weaker: the publication's, not the content's.** An external entry keeps no previous value to compare against (its weak retention forbids the strong reference), so "unchanged" is not a fact the client can establish — every publication mints, a republish of identical content included. Same revision ⇒ same content still holds; the converse does not, so a derived key built from an external revision re-derives per publication. When the content has a real version, its owner has it — ship it in the payload and key on that instead. |
-| `refreshError` | Present when the most recent **refresh** of an entry that already has data failed (see [Stale-on-error](#stale-on-error)): the stale `data` keeps being served and the error rides alongside it. Absent when the latest read succeeded. Initial-load failures reject `promise` instead. Carrying the error *in the resolved value* (rather than a field read live from the store during render) keeps `data` and `refreshError` consistent under concurrent rendering and avoids a render-purity violation. |
+| `error` | The failure of the load that would have produced `data`, present when something else is being served in its place — the last fulfilled value, or what the read's [`fallback`](#fallback--what-a-read-serves-when-its-load-fails) returned (see [Falling back](#stale-on-error)). Absent when the latest load succeeded, and absent after a `cancel`: the caller asked for the stop, so it is not a failure to report. Its presence says `data` did not come from a successful load; it does **not** say the read is broken, and the value beside it may be perfectly good, only older than it should be — treat it as a reason to annotate, not a reason to discard what is on screen. A load with nothing to serve rejects `promise` instead, so this field never carries the failure that had no answer. Carrying the error *in the resolved value* (rather than a field read live from the store during render) keeps `data` and `error` consistent under concurrent rendering and avoids a render-purity violation — which is also why it is here and not on `useLane`. |
 
 ### `LaneGatedResult<T>`
 
@@ -741,6 +741,97 @@ The key may carry not-yet-ready segments (`null` / `undefined`) while disabled �
 nothing is stored, so no placeholder key is needed. Segments must still be
 serializable, since the key is serialized for identity tracking even while
 disabled.
+
+### `fallback` — what a read serves when its load fails
+
+A read that declares `fallback` decides for itself whether a failed load has an
+answer, and what it is. Without one, the built-in policy applies: serve the last
+fulfilled value if there is one, and otherwise reject.
+
+```ts
+laneRead({
+  key: ["quota"],
+  loader: fetchQuota,
+  fallback: ({ lastFulfilled }) => lastFulfilled ?? EMPTY_QUOTA,
+});
+```
+
+That read never reaches an Error Boundary. A first load that fails resolves to
+`{ data: EMPTY_QUOTA, error }`, so a non-essential corner of a screen — a usage
+meter, a tag list, a badge — can fail without taking a subtree with it, and say
+so inline if it wants to.
+
+```ts
+type LaneFallback<T> = (context: {
+  error: unknown;
+  key: LaneKey;
+  lastFulfilled: T | undefined;
+}) => T;
+```
+
+**It runs on every failed load, not only the first.** Calling it only when there
+is nothing to serve would make the same failure behave differently depending on
+whether the entry happened to have succeeded before — history the caller cannot
+see. Running it always is what lets the whole policy be read off the definition:
+
+| policy | what it says |
+| --- | --- |
+| `({ lastFulfilled }) => lastFulfilled ?? EMPTY` | keep showing data if there is any, otherwise show empty |
+| `({ error, lastFulfilled }) => isMissing(error) ? EMPTY : (lastFulfilled ?? raise(error))` | a missing resource is empty; anything else keeps data, or fails |
+| `({ error }) => { throw error }` | never serve a value that is not current |
+
+The last one is not reachable any other way. For data where showing a stale value
+is itself wrong — a balance, a lock state, a permission — the built-in policy is
+the wrong answer, and this is how a read says so.
+
+**What it returns is served, never stored.** `lastFulfilled` moves only on a
+genuine success and the entry keeps the freshness it had — so a read that fell
+back is still as stale as it was and still refreshes on the next trigger. A
+policy that hands back what it was given serves it under the entry's own
+[`revision`](#lanereadt), since that is what the number already names; a
+substitute the entry never held carries one of its own, so nothing that keys on a
+revision is told the content stayed the same when it did not. A read that has never succeeded counts
+as old as a value can be, which keeps the triggers firing on a key that is
+failing; `staleTime: Infinity` still means what it says, and pins it.
+
+That is the whole reason this is a read option rather than a `try` / `catch`
+inside the loader. A loader that catches and returns a substitute has
+*succeeded* as far as the store can tell: the substitute becomes the last
+fulfilled value, the fulfillment time is restamped so the entry looks freshly
+loaded and stops refreshing, and a new revision is minted as though the content
+changed. None of that is recoverable from outside the store, which is why the
+policy lives here.
+
+**Throwing is how a policy declines.** There is no sentinel return, because
+`undefined` may be a legitimate `T`. Rethrowing the error it was handed says "not
+this one" and lands exactly where the built-in policy's empty case lands — a
+rejected promise carrying [`LaneReadError`](#lanereaderror) with the key. A
+policy that throws something else has replaced the failure with its own account
+of it, and that is what the boundary receives.
+
+**Synchronous.** Returning a promise would be a second loader, and retrying a
+failed request belongs to the fetcher.
+
+**It is not in [`LaneUseOptions`](#laneuseoptions).** It is the one read option
+typed by the read's `T`, and that type set has no `T` — which is also why a
+batch's shared options cannot carry one, and why a member of
+[`useLanesAll`](#uselanesallreads-options) falls back exactly as its own read
+defines it or not at all.
+
+**Which read's policy runs** is the one whose loader produced the failure: the
+read that started the load, as with `loaderMeta`. Two reads of one key declaring
+different policies are the drift a shared key factory invites, and
+[`laneRead`](#lanereadspec--key--loader-colocation) is the answer to it — one
+definition per key, options included.
+
+A `cancel` is not a failure, so it never consults the policy: the caller asked
+for the stop, and the read reverts to the last fulfilled value with no `error`
+beside it.
+
+[`external`](#external--a-read-the-owner-publishes) reads take no `fallback`.
+Their only failure is [`LaneExternalTimeoutError`](#laneexternaltimeouterror),
+which says nobody published the key — a wiring bug, and serving something in its
+place would hide a missing publisher behind a plausible screen.
 
 ### `external` — a read the owner publishes
 
@@ -1007,7 +1098,7 @@ const { promise, loadMore, isInvalidationPending } = useInfiniteLane(
   },
 );
 
-const { data, refreshError } = use(promise);
+const { data, error } = use(promise);
 const items = data.pages.flatMap((page) => page.items);
 ```
 
@@ -1023,13 +1114,13 @@ inherent to cursor pagination rather than to Lane, and it is the same cost the
 equivalent React Query list pays; see
 [migrating](./migrating.md#step-6--infinite-lists). What Lane's model buys is
 what the user sees while it happens: the list is held on screen by the
-transition, and a failure part-way through keeps it there with `refreshError`
+transition, and a failure part-way through keeps it there with `error`
 instead of moving the read into an error state.
 
 **`hasNext` is in the resolved value, not on the hook.** The hook returns a
 promise it never resolves, so it cannot know — and keeping the flag next to the
 pages it describes is what stops the two disagreeing mid-render, the same reason
-`refreshError` rides inside the value. The rule for this hook: **actions come
+`error` rides inside the value. The rule for this hook: **actions come
 from the hook, data comes from `use(promise)`.**
 
 Notes:
@@ -1053,7 +1144,7 @@ Notes:
   `useCallback` over those plus the lane and the serialized key, so it is stable
   exactly when the caller's functions are. An `onClick` does not care; driving it
   from an effect (a scroll sentinel) is the caller's `useEffectEvent`.
-- **An auto-load trigger must also gate on `refreshError`.** A scroll sentinel is
+- **An auto-load trigger must also gate on `error`.** A scroll sentinel is
   a loop, and only a change in what it observes stops it. A *successful* append
   stops it by adding rows (the sentinel moves) and eventually clearing
   `data.hasNext`. A *failed* one changes neither: the value is unchanged, so
@@ -1062,16 +1153,16 @@ Notes:
   is already failing. Gate on all three facts, which is why they arrive together:
 
   ```tsx
-  const { data, refreshError } = use(promise);
+  const { data, error } = use(promise);
   // ...inside the IntersectionObserver effect:
-  if (!data.hasNext || isInvalidationPending || refreshError) return;
+  if (!data.hasNext || isInvalidationPending || error) return;
   ```
 
-  `refreshError` clears on the next successful read, so recovery is an explicit
+  `error` clears on the next successful read, so recovery is an explicit
   retry — a button calling `loadMore` again, which resumes from the same cursor.
   A caller that would rather not route through the rendered value can await
   `loadMore` instead: it hands back the entry's next promise, which *resolves*
-  with `refreshError` set rather than rejecting. (The equivalent React Query list
+  with `error` set rather than rejecting. (The equivalent React Query list
   has the same shape — `hasNextPage` stays `true` after a failed `fetchNextPage`
   — and gates on `isFetchNextPageError` instead.)
 - **Depth is only as durable as the entry.** Remounting reuses the cached value
@@ -1167,7 +1258,7 @@ Caveats:
   the state change that drives the key in a transition too (see
   [Transitions](./integrations.md#transitions-and-the-backforward-caveat)).
 - `use(promise)` resolves to a [`LaneRead<T>`](#lanereadt) — read `.data` (and
-  `.refreshError` if present).
+  `.error` if present).
 - This **always fetches**. Deferring the reveal is for data you *will* need but
   want off the critical paint. When a read may genuinely never be needed, gate
   the *loader* instead (`loader: undefined`) — see
@@ -1370,8 +1461,8 @@ class LaneReadError extends Error {
 ```
 
 What a failed read throws — the loader's error wrapped in one that says *which
-key* failed. Only a first load (nothing to show) throws at all; a failed refresh
-over existing data resolves `{ data, refreshError }` instead, and that field
+key* failed. Only a load with nothing to show throws at all; a failure over data
+over existing data resolves `{ data, error }` instead, and that field
 carries the loader's error **unwrapped**.
 
 The wrapper exists because of what a throw destroys. In the common shape —
@@ -1484,7 +1575,7 @@ type LaneInvalidateOptions = {
 - `"stale"` → only fulfilled entries older than `staleTime`. With no `staleTime`
   the default (`Infinity`) applies and nothing matches; a rejected entry is never
   stale either, so a failed *first* load is not retried this way (`"settled"` does
-  retry it, and a failed *refresh* keeps the previous value, which stays as old as
+  retry it, and a failed load over data keeps the previous value, which stays as old as
   it was and so is still eligible).
 - `"settled"` → only entries with a settled promise (skips in-flight reads).
 - `"rejected"` → only entries whose last read failed **with nothing to show** —
@@ -1662,7 +1753,7 @@ Where the key lands is decided by what it already had:
 
 | Key holds | Result |
 | --- | --- |
-| a last fulfilled value | reverts to it — readers keep showing their data, and **no `refreshError`**, since the caller asked for the stop |
+| a last fulfilled value | reverts to it — readers keep showing their data, and **no `error`**, since the caller asked for the stop |
 | nothing to revert to | the read settles **rejected** — the only end a transition holding no data can reach |
 
 The rejection is then as sticky as any other failed first load: it is reused until
@@ -1877,15 +1968,17 @@ Two anti-patterns to name, because both look reasonable:
 
 ## Lifecycle behavior
 
-- **Stale-on-error.** <a id="stale-on-error"></a> When an entry already has a
-  fulfilled value and its next read rejects (after invalidation, focus refetch,
-  or a `set` of a rejecting promise), the cached promise keeps resolving
-  with the **last fulfilled value** and the failure surfaces as `refreshError`.
-  Freshness keeps the original fulfillment time, so staleness policies still
-  treat the data as old and retry. Only an **initial** load (no previous value)
-  rejects the promise and reaches the Error Boundary.
-- **The last fulfilled value.** One value per entry backs both the stale-on-error
-  fallback above and the [`current`](#uselaneread) a loader is
+- **Falling back.** <a id="stale-on-error"></a> A failed load does not reject
+  outright if there is something to serve in its place. By default that is the
+  **last fulfilled value**: an entry that already has one keeps resolving with it
+  when its next read rejects (after invalidation, focus refetch, or a `set` of a
+  rejecting promise), and the failure surfaces as [`error`](#lanereadt) beside
+  the data. Freshness keeps the original fulfillment time, so staleness policies
+  still treat the data as old and retry. Only a load with nothing to serve — no
+  previous value, and no [`fallback`](#fallback--what-a-read-serves-when-its-load-fails)
+  that returned one — rejects the promise and reaches the Error Boundary.
+- **The last fulfilled value.** One value per entry backs both the fallback
+  above and the [`current`](#uselaneread) a loader is
   handed. It outlives invalidation (which clears the cached promise, not the
   value) and is dropped by [`remove`](#remove--removeall), by garbage collection,
   and by an invalidation of an entry no reader is holding — that last one deletes
@@ -1938,7 +2031,7 @@ Two anti-patterns to name, because both look reasonable:
 ## Type exports
 
 `InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
-`Lane`, `LaneClientLoader`, `LaneEntryInfo`, `LaneEventSource`, `LaneExternalLoader`, `LaneExternalReadSpec`, `LaneExternalResult`, `LaneGatedExternalReadSpec`, `LaneGatedExternalResult`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidate`, `LaneInvalidateOptions`,
+`Lane`, `LaneClientLoader`, `LaneEntryInfo`, `LaneEventSource`, `LaneExternalLoader`, `LaneExternalReadSpec`, `LaneExternalResult`, `LaneFallback`, `LaneGatedExternalReadSpec`, `LaneGatedExternalResult`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidate`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneLoaderMeta`, `LaneLoaderMetaArgs`, `LaneLoaderMetaProp`, `LaneOptions`,
 `LaneKeyOf`, `LanePlainKey`, `LaneProviderProps`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneRegister`,
 `LaneResult`, `LaneRevalidateHandlers`,

@@ -51,18 +51,18 @@ export function SectionError({
  * Compact notice for a failed background refresh. Stale data stays rendered
  * (lane's stale-on-error), so this only flags it instead of replacing the UI.
  */
-export function RefreshErrorChip({
-  refreshError,
+export function ErrorChip({
+  error,
   onRetry,
   isRetrying,
   className,
 }: {
-  refreshError: unknown;
+  error: unknown;
   onRetry: () => void;
   isRetrying?: boolean;
   className?: string;
 }) {
-  if (refreshError === undefined) {
+  if (error === undefined) {
     return null;
   }
 

@@ -1,5 +1,11 @@
 import { createLane, laneRead } from "use-lane";
-import type { Lane, LaneKeyOf, LaneLoader, LaneReadSpec } from "use-lane";
+import type {
+  Lane,
+  LaneFallback,
+  LaneKeyOf,
+  LaneLoader,
+  LaneReadSpec,
+} from "use-lane";
 
 /** Whether the loader fails. Read at the start of each call, never mid-flight. */
 export type FailureMode = "never" | "always";
@@ -74,7 +80,7 @@ export const WARM_TIMES: Record<WarmTimeSetting, number | undefined> = {
 };
 
 /**
- * What the card does with a `refreshError` — the field a failed refresh over
+ * What the card does with a `error` — the field a failed refresh over
  * existing data comes back in.
  *
  * - `inline`: render the data *and* the error, which is what the docs ask for.
@@ -82,7 +88,37 @@ export const WARM_TIMES: Record<WarmTimeSetting, number | undefined> = {
  *   put a price on that, so the frame carries a text input: whatever is typed
  *   into it is the local state a throw destroys.
  */
-export type RefreshErrorMode = "inline" | "throw";
+export type ErrorMode = "inline" | "throw";
+
+/**
+ * This card's `fallback` — the read's own policy for what a failed load serves.
+ *
+ * - `none`: no policy, so the built-in one applies. A failure over data serves
+ *   the previous value; a *first* failure has nothing to serve and rejects.
+ * - `previous`: what the built-in policy does, with a floor under the empty
+ *   case. The difference is visible only on a first failure, which now shows
+ *   `(empty)` instead of the error frame — this card never reaches a boundary.
+ * - `empty`: always the substitute, previous value or not. The axis carries it
+ *   because it is the mistake worth seeing: a refresh failure over real data
+ *   replaces what was on screen, which is what a `try`/`catch` in the loader
+ *   does too, and quietly.
+ * - `throw`: never serve a value that is not current. A failure reaches the
+ *   boundary whether or not there is a previous value — the one policy the
+ *   built-in behaviour cannot express.
+ */
+export type FallbackSetting = "none" | "previous" | "empty" | "throw";
+
+export const FALLBACKS: Record<
+  FallbackSetting,
+  LaneFallback<string> | undefined
+> = {
+  none: undefined,
+  previous: ({ lastFulfilled }) => lastFulfilled ?? "(empty)",
+  empty: () => "(empty)",
+  throw: ({ error }) => {
+    throw error;
+  },
+};
 
 /** Two keys, so that "somebody else is reading this" is a thing you can arrange. */
 export type LabKeyName = "A" | "B";
@@ -119,7 +155,9 @@ export type Variation = {
   gcTime: ReadGcTimeSetting;
   /** How long its value waits for it if it never arrives. */
   warmTime: WarmTimeSetting;
-  refreshError: RefreshErrorMode;
+  error: ErrorMode;
+  /** What a failed load of this card's read serves. */
+  fallback: FallbackSetting;
   staleTime: StaleTimeSetting;
   /**
    * The revalidation triggers, a different mechanism from the two above: those
@@ -144,7 +182,8 @@ export function createVariation(patch: Partial<Variation> = {}): Variation {
     mounted: true,
     gcTime: "lane",
     warmTime: "lane",
-    refreshError: "inline",
+    error: "inline",
+    fallback: "none",
     staleTime: "none",
     refetchOnMount: false,
     refetchOnFocus: false,

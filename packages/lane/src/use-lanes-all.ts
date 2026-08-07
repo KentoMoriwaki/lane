@@ -9,11 +9,13 @@ import {
   useTransition,
 } from "react";
 import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
+import type { LaneReadOptions } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneContext } from "./provider";
 import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
   Lane,
+  LaneFallback,
   LaneKey,
   LaneLoader,
   LaneLoaderMeta,
@@ -35,6 +37,11 @@ type Descriptor<T, C> = {
   // a fresh object literal every render, and every consumer already reads it at
   // render or fire time so a changed value takes effect without re-subscribing.
   options: LaneUseOptions;
+  // Never merged with the batch's, because the batch has no `T` to type one
+  // against: a shared option set spans members of different types, and this is
+  // the one read option that is the member's value. So a batch read falls back
+  // exactly as the member defines it, or not at all.
+  fallback: LaneFallback<T> | undefined;
 };
 
 /**
@@ -249,6 +256,7 @@ function toDescriptor<T, C>(read: LaneReadSpec<T, C>): Descriptor<T, C> {
     keyId: serializeKey(read.key),
     loader: read.loader,
     options: read,
+    fallback: read.fallback,
   };
 }
 
@@ -313,7 +321,11 @@ function computeAggregate<T, C>(
         d.keyId,
         d.key,
         d.loader,
-        toReadOptions(optionsFor(options, d), loaderMeta),
+        toReadOptions(
+          optionsFor(options, d),
+          loaderMeta,
+          d.fallback as LaneReadOptions["fallback"],
+        ),
       ),
     ),
   );

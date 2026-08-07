@@ -88,7 +88,7 @@ describe("LaneRead.revision", () => {
     // so a derived key built from it still names the content actually shown.
     expect(fallback).toEqual({
       data: "loaded",
-      refreshError: error,
+      error: error,
       revision: first.revision,
     });
 

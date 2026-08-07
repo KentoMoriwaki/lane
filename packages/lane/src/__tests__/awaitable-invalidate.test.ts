@@ -123,7 +123,7 @@ describe("awaitable invalidate", () => {
     // revision, and the failure riding alongside — no try/catch at the caller.
     expect(next!).toEqual({
       data: "loaded",
-      refreshError: error,
+      error: error,
       revision: first.revision,
     });
     expect(container.textContent).toBe("loaded");

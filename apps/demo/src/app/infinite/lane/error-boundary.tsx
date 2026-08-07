@@ -7,7 +7,7 @@ import * as React from "react";
  *
  * Lane only rejects a read that has no previous value; once the key has data, a
  * failed re-read keeps serving the last good value and rides along as
- * `refreshError` instead (rendered inline in the list, never thrown). So this
+ * `error` instead (rendered inline in the list, never thrown). So this
  * boundary is reached exactly once per key: the first page failing before there
  * is anything to show.
  *

@@ -77,14 +77,15 @@ You have them — they live in React, not in your component's state:
 | Initial loading (no data yet) | a `Suspense` fallback |
 | Initial-load failure (nothing to show) | an Error Boundary |
 | "Refreshing" while the current data stays on screen | `isInvalidationPending` (explicit) / `isBackgroundPending` (focus, poll, …) from `useLane` |
-| A refresh that failed *over* existing data | `refreshError` from `use(promise)` — render `data` **and** a small inline hint |
+| A refresh that failed *over* existing data | `error` from `use(promise)` — render `data` **and** a small inline hint |
 
 **Don't** keep `const [isLoading, setIsLoading] = useState(true)` — there is no
 place to set it correctly and it duplicates Suspense.
 
-**Don't** treat `refreshError` as fatal (throwing it, or replacing the whole UI).
-A failed refresh keeps the last good `data`; show it with a non-blocking hint.
-Only an *initial* load (no previous value) rejects and reaches the Error Boundary.
+**Don't** treat `error` as fatal (throwing it, or replacing the whole UI).
+A failed load keeps the last good `data`; show it with a non-blocking hint. Only
+a load with nothing to serve — no previous value, and no `fallback` that returned
+one — rejects and reaches the Error Boundary.
 
 ## Loading & revealing on your terms
 

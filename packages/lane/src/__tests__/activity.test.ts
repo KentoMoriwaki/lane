@@ -14,7 +14,7 @@
  * current one — the commit invariant that a reader only ever commits the
  * store's current promise. A replacement that settled while hidden (a value
  * published behind the reader's back) is adopted at the reveal without another
- * loader call; a repudiated or removed entry drops to the boundary's fallback
+ * loader call; an invalidated or removed entry drops to the boundary's fallback
  * with the re-read starting at the reveal. Nothing else can do this job: the
  * subscription re-opened in the same layout effect only carries what happens
  * from the reveal onwards, and nothing was listening for the hidden stretch.
@@ -135,7 +135,7 @@ describe("Activity", () => {
 
     await app.rerender("visible");
 
-    // The reveal reconciliation drops the repudiated promise inside the reveal
+    // The reveal reconciliation drops the invalidated promise inside the reveal
     // commit: the re-read starts at the reveal and the boundary shows its
     // fallback — the invalidated value is not offered as a new appearance.
     expect(loads.calls).toBe(2);
@@ -281,9 +281,9 @@ describe("Activity", () => {
 
     await app.rerender("visible");
 
-    // Staleness is suspicion, not repudiation: the default `whenStale`
-    // ("revalidate") reuses the cache, the reconciliation sees the committed
-    // promise still current, and the reveal shows the value as-is.
+    // Staleness never discards: a read always reuses the cache, the
+    // reconciliation sees the committed promise still current, and the reveal
+    // shows the value as-is.
     expect(loads.calls).toBe(1);
     expect(app.container.textContent).toBe("v1|background:0|transition:0");
     expect(valueElement(app).style.display).toBe("");
@@ -465,9 +465,8 @@ describe("Activity", () => {
       await settlePromiseHandlers();
     });
 
-    // Hidden and past its staleTime, so the value is now exactly what
-    // `whenStale: "refetch"` discards — but only at an idle remount, which is
-    // what the reveal is. The republish below is not one.
+    // Hidden and past its staleTime. The republish below must not be treated
+    // as a remount of this reader.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(50);
     });
@@ -481,10 +480,9 @@ describe("Activity", () => {
       await settlePromiseHandlers();
     });
 
-    // The regression this scopes out: the reader is unsubscribed, so nothing
-    // shields its stale cache from a read-through, and an offscreen render
-    // carrying somebody else's payload would have discarded it and started a
-    // fetch for a tree that may never be revealed.
+    // The regression this scopes out: the reader is unsubscribed, and an
+    // offscreen render carrying somebody else's payload must not re-read its
+    // entry — that could start a fetch for a tree that may never be revealed.
     expect(loads.calls).toBe(1);
 
     await act(async () => {

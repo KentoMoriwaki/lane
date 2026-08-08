@@ -37,7 +37,7 @@ stating because it is the most common wrong answer: data a client component only
 > A key that arrives from a publication *and* is written to locally has two
 > sources of truth and no way to reconcile them — the next payload silently
 > overwrites the local write, or it never comes and the local write outlives the
-> truth. Since 0.8, a seeded key is external, and `lane.set` / `update` /
+> truth. A seeded key is external, and `lane.set` / `update` /
 > `invalidate` / `remove` on one **throw**
 > ([`LaneOwnershipError`](./api-reference.md#laneownershiperror)) in development
 > and production alike. Pick a row; the runtime holds you to it.

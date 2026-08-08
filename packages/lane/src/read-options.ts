@@ -8,19 +8,9 @@ import type {
 
 /**
  * The subset of a read's options that reaches `readOrCreate`, with the meta
- * resolved: the read's own `loaderMeta` where it sets one, the lane's otherwise.
- *
- * The lane's value is a second argument rather than a field of `options` because
- * it does not come from the read — the read carries what it was defined with, the
- * lane carries what its loaders are handed. The read wins because it is the more
- * specific of the two, and it can only ever narrow: the lane's value is
- * guaranteed to exist, so an absent override is "use the lane's", never "there
- * isn't one".
- *
- * `fallback` is a third argument for a different reason: it is the one read
- * option typed by the read's `T`, and `LaneUseOptions` has no `T` — which is
- * also why a batch's shared options cannot carry one and a member's own read
- * always does.
+ * resolved: the read's `loaderMeta` wins over the lane's (an absent override
+ * means "use the lane's"). `fallback` is a separate argument because it is
+ * typed by the read's `T`, which `LaneUseOptions` does not carry.
  */
 export function toReadOptions(
   options: LaneUseOptions,
@@ -37,27 +27,13 @@ export function toReadOptions(
 /**
  * Translate a revalidation trigger (`refetchOnMount` / `refetchOnFocus` /
  * `refetchOnReconnect`) into the conditional invalidation a reader fires, or
- * `undefined` when the trigger is off. A trigger refreshes stale values, and
- * `staleTime` is what says which those are.
- *
- * There is deliberately no "refresh regardless of freshness" form. It read as a
- * convenience and behaved as a trap: the same spelling in react-query costs
- * nothing on a fresh mount, because a mount fetch and a stale refetch are one
- * mechanism there. Here they are two — the read runs during render, the trigger
- * fires from an effect — so it also refetched the value that same mount had just
- * loaded. `staleTime: 0` expresses the same intent without hiding the cost, and
- * `lane.invalidate(key, { onlyIf: "settled" })` remains for an unconditional
- * refresh an app schedules itself.
- *
- * All three triggers share this one mapping, and coalescing across readers of
- * the same key falls out of the store rather than being computed centrally: the
- * first reader to fire refetches, and `onlyIf` makes the rest skip while that
- * load is in flight — so the smallest effective `staleTime` wins.
- *
- * `staleTime` is also the rate limit on the trigger it gates: a value refreshed
- * within it is not refreshed again, however many times the trigger fires. That is
- * why a trigger without one is a misconfiguration rather than a shorthand — see
- * the warning below.
+ * `undefined` when off. Triggers refresh only stale values; `staleTime` says
+ * which, and doubles as the rate limit. There is deliberately no "refresh
+ * regardless of freshness" form: the read runs during render but the trigger
+ * fires from an effect, so it would refetch what that same mount just loaded —
+ * use `staleTime: 0`, or `lane.invalidate(key, { onlyIf: "settled" })`.
+ * Coalescing falls out of the store: the first reader to fire refetches,
+ * `onlyIf` makes the rest skip while it is in flight.
  */
 export function revalidateOptions(
   trigger: boolean | undefined,

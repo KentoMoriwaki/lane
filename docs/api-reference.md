@@ -110,7 +110,7 @@ type LaneOptions = {
 | Option | Default | Description |
 | --- | --- | --- |
 | `gcTime` | `300000` (5 min) | How long (ms) an entry is kept **after its last reader leaves** — the default for reads that do not set their own. Idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. |
-| `warmTime` | `60000` (1 min) | How long a settled entry **nobody has ever held** waits for its first reader — the default for reads that do not set their own. Shorter than `gcTime`'s and unrelated to it: this is spent on an arrival that has not happened, that one on a reader who was there and may return. Both situations here are short — the seconds between a hover and the click, a navigation that changed its mind — so a minute is generous for either; a prefetch placed further ahead than that should state its own. |
+| `warmTime` | `60000` (1 min) | How long a settled entry **nobody has ever held** waits for its first reader — the default for reads that do not set their own. Shorter than `gcTime`'s and unrelated to it: this is spent on an arrival that has not happened (a hover prefetch, a render that suspended and went away), that one on a reader who was there and may return. |
 
 ## Reading data
 
@@ -123,8 +123,9 @@ its loader, and the options it is read with:
 function useLane<T, C = T>(read: LaneReadSpec<T, C>): LaneResult<T>;
 
 type LaneReadSpec<T, C = T> = LaneUseOptions & {
-  key: LaneKeyOf<T> | LanePlainKey;
-  loader: LaneLoader<T, C>;
+  key: LaneKey;
+  loader: LaneClientLoader<T, C>;
+  fallback?: LaneFallback<T>;
 };
 ```
 
@@ -148,16 +149,15 @@ Write it inline for a one-off read, or build it with
 than one place — same value either way, and every consumer of a read takes it.
 
 **`current`** is the entry's last fulfilled value, or `undefined` on a first
-load — snapshotted when the read is created, so a publication landing while the
-read starts cannot change what the loader was handed. It lets a loader re-read
-*as much as it already had* rather than only what the key describes: the
-accumulated pages of a list, a cursor to resume from, a revision to send as
-`If-None-Match`. It survives invalidation, which
-clears the cached promise and not the last fulfilled value, and is `undefined`
-again once the entry itself is gone — [removed](#remove--removeall), collected,
-or invalidated while nothing was subscribed to hold it — so a loader must always
-define what a first load means. It is not a way to skip work: the value is the
-previous read's, and returning it unchanged strands the entry on stale data.
+load — snapshotted when the read is created. It lets a loader re-read *as much
+as it already had* rather than only what the key describes: the accumulated
+pages of a list, a cursor to resume from, a revision to send as `If-None-Match`.
+It survives invalidation (which clears the cached promise, not the last
+fulfilled value) and is `undefined` again once the entry itself is gone —
+[removed](#remove--removeall), collected, or invalidated while nothing was
+subscribed to hold it — so a loader must always define what a first load means.
+It is not a way to skip work: the value is the previous read's, and returning it
+unchanged strands the entry on stale data.
 
 Its type is the read's **second type parameter, defaulting to the loaded type**,
 so annotating the read is what types it:
@@ -174,10 +174,7 @@ const { promise } = useLane<Feed>({
 
 Reading `current` without that annotation is a type error asking for one, never a
 silent `any`. The loaded type stays in the return position, so a loader that
-ignores `current` keeps inferring exactly as before — `useLane({ key: ["task",
-id], loader: ({ signal }) => fetchTask(id, signal) })` still yields
-`LaneResult<Task>` with no type argument. Give `C` explicitly only for a loader whose `current` is deliberately
-narrower or wider than its result. [Why it is shaped this
+ignores `current` keeps inferring with no type argument. [Why it is shaped this
 way](./design-notes.md#a-loaders-input-includes-what-it-already-produced).
 
 Returns a [`LaneResult<T>`](#laneresultt). Unwrap `result.promise` with `use()`
@@ -220,11 +217,6 @@ from it. It is Lane's equivalent of react-query's `queryOptions()`.
 function laneRead<T, C = T>(
   spec: LaneReadSpec<T, C>,
 ): LaneReadSpec<T, C> & { key: LaneKeyOf<T> };
-
-type LaneReadSpec<T, C = T> = LaneUseOptions & {
-  key: LaneKeyOf<T> | LanePlainKey;
-  loader: LaneLoader<T, C>;
-};
 ```
 
 ```ts
@@ -263,31 +255,23 @@ const { data: task } = use(promise);
 | [`set`](#set) / [`update`](#update--updateall) | `lane.set(taskLanes.detail(task.id).key, task)` — checked |
 
 The split is not arbitrary. `prefetch` *performs* a read, so it needs the loader;
-publishing, invalidating, and removing *address an entry*, and none of them does.
-Making them take the whole read would mean a mutation path importing fetchers —
-and whatever request context those fetchers need — to name a key it already
-knows. So the loaded type travels on the **key** instead: see
+publishing, invalidating, and removing *address an entry*, and none of them does
+— so the loaded type travels on the **key** instead: see
 [`LaneKeyOf`](#lanekeyoft--a-key-that-knows-what-it-holds).
 
 **Why colocate.** A key factory in one module and a fetcher in another are two
-halves of one fact, and no type checks that a call site pairs them correctly —
-`useLane(taskKeys.detail(id), () => fetchTasks(filters))` compiles and is wrong.
+halves of one fact, and nothing checks that a call site pairs them correctly.
 Options drift the same way, and more quietly: they live at the call site while
 the key does not, so one component reads a key with `staleTime: 60_000` and the
 next reads the same key with none.
 
-**What the factory buys you.** At runtime it returns its argument — a hand-written
-object literal reads the same way. What it adds is types:
-
-- **`T` is inferred at the definition** from the loader's return type, so every
-  consumer reads that type back instead of re-inferring it — and the `key` it
-  hands back is a [`LaneKeyOf<T>`](#lanekeyoft--a-key-that-knows-what-it-holds),
-  which is how the type reaches the write side.
-- **The shape is checked where it is written**, so a mistyped option is an error
-  at the definition rather than a silently ignored property at three call sites.
-  (An object literal passed straight to `useLane` is checked too — what a
-  variable-held literal loses, and `laneRead` restores, is the key tag and the
-  option names.)
+**What the factory buys you.** At runtime it returns its argument. What it adds
+is types: `T` is inferred at the definition from the loader's return type, and
+the `key` it hands back is a
+[`LaneKeyOf<T>`](#lanekeyoft--a-key-that-knows-what-it-holds), which is how the
+type reaches the write side. The shape is also checked where it is written, so a
+mistyped option is an error at the definition rather than a silently ignored
+property at three call sites.
 
 `C` — the type of [`current`](#uselaneread) — still defaults to `T`
 and is still given explicitly (`laneRead<Feed, Cursor>({ … })`) for a loader whose
@@ -297,63 +281,24 @@ and is still given explicitly (`laneRead<Feed, Cursor>({ … })`) for a loader w
 [gated read](#conditional-reads-gating): `LaneGatedReadSpec<T, C>`, and
 `useLane` hands back a [`LaneGatedResult<T>`](#lanegatedresultt).
 
-```tsx
-const spec = laneRead({
-  key: ["component", componentId],
-  loader: componentId
-    ? ({ signal }) => fetchComponent(componentId, { signal })
-    : undefined,
-});
-const { promise } = useLane(spec);
-const value = promise ? use(promise).data : null;
-```
-
 **A spec describes one read, not a family.** Parameters live in the enclosing
-factory — that is what makes the key and the loader agree, since both close over
-the same variables. (The loader also receives the key in its context, so a
-loader that is shared across keys can derive from it; for a per-key factory the
-closure is both shorter and typed.)
+factory, which is what makes the key and the loader agree — both close over the
+same variables. A dependency that is *not* part of the key (a session, a tenant,
+an API client) does not belong in the factory's arguments: declare it on the
+lane instead — see
+[`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key).
 
-**Bind what a loader needs, take what a key needs.** When the loader depends on
-something that is *not* part of the key — a session, a tenant, an API client —
-bind it once and let each factory take only its identity, rather than threading
-the dependency through every signature:
-
-```ts
-export function taskReads(ctx: RequestCtx) {
-  return {
-    detail: (id: string) =>
-      laneRead({
-        key: taskKeys.detail(id),
-        loader: ({ signal }) => fetchTask(ctx, id, signal),
-        staleTime: 60_000,
-      }),
-    list: (filters: TaskFilters) => laneRead({ … }),
-  };
-}
-
-// In React, bind it where the context is available:
-const reads = useMemo(() => taskReads(ctx), [ctx]);
-useLane(reads.detail(id)); // the argument list is exactly what decides the key
-```
-
-`taskReads(ctx).detail(id)` and `taskDetail(ctx, id)` build the same read; the
-first keeps "what makes this read distinct" and "what it needs to run" in
-separate places, which matters because only the first ends up in the key.
-
-**Overriding at a call site is a spread**, as with `queryOptions()` — the spec is
-a plain object, so nothing special is needed and the result stays typed:
+**Overriding at a call site is a spread** — the spec is a plain object:
 
 ```tsx
 const { promise } = useLane({ ...taskLanes.detail(id), refetchOnFocus: true });
 ```
 
-**No registry, no identity rules.** A spec is a plain object; two calls to the
-same factory produce two objects with equal keys, and Lane addresses entries by
-serialized key. Build them per render, in an event handler, or on the server —
-nothing needs memoizing for identity. (`useLanesAll` still wants a
-[stable `reads` array](#uselanesallreads-options--a-batch-read), for the same
-reason it always did.)
+**No registry, no identity rules.** Two calls to the same factory produce two
+objects with equal keys, and Lane addresses entries by serialized key. Build
+specs per render, in an event handler, or on the server — nothing needs
+memoizing for identity. (`useLanesAll` still wants a
+[stable `reads` array](#uselanesallreads-options--a-batch-read).)
 
 **Scoped operations still take a scope.** `invalidateAll` / `updateAll` /
 `removeAll` take a prefix or predicate, never one read's key —
@@ -392,15 +337,12 @@ export const taskLanes = {
 };
 ```
 
-**The problem it solves is the key, not the plumbing.** The obvious way to give
-loaders a context is to bind it into the factory — `taskLanes(ctx).detail(id)`.
-That works for reading and breaks everywhere else, because naming an entry now
-requires a context: a mutation, a Server Component, a component above the
-provider, an error-boundary retry. Codebases resolve this by keeping a second,
-parallel map of bare keys — and then every read exists twice, with the loaded
-type restated by hand on the key side and no compiler check that the two agree.
-Putting the dependency on the lane keeps the read a plain object whose arguments
-are exactly what decides its key, so `.key` costs nothing to reach:
+**The problem it solves is the key, not the plumbing.** Binding a context into
+the factory — `taskLanes(ctx).detail(id)` — works for reading and breaks
+everywhere else, because naming an entry now requires a context: a mutation, a
+Server Component, an error-boundary retry. Putting the dependency on the lane
+keeps the read a plain object whose arguments are exactly what decides its key,
+so `.key` costs nothing to reach:
 
 ```ts
 lane.set(taskLanes.detail(id).key, task);      // no context needed
@@ -409,8 +351,7 @@ laneSnapshot(taskLanes.list(filters), tasks);  // in an RSC
 
 The mechanism is react-query's `Register`, and so is the asymmetry in naming:
 `loaderMeta` is what you **declare and supply**, `meta` is what the loader
-**receives** — exactly as react-query declares `queryMeta` and delivers
-`context.meta`.
+**receives**.
 
 | | Declared | Not declared |
 | --- | --- | --- |
@@ -431,9 +372,8 @@ useLane({ ...taskLanes.detail(id), loaderMeta: otherTenant });
 
 It is optional and safely so — the lane always has a value, so this narrows a
 guarantee rather than standing in for a missing one, and `meta` stays
-non-optional inside the loader. (This is the one place Lane is stricter than
-react-query, where `meta` is per-query only and therefore always
-possibly-`undefined`.) In a batch, a member's own value wins over the batch's.
+non-optional inside the loader. In a batch, a member's own value wins over the
+batch's.
 
 #### The one obligation: it is not part of the key
 
@@ -450,10 +390,8 @@ for (const scope of [["tasks"], ["projects"], ["insights"]]) {
 ```
 
 **One declaration per app, one value per provider.** The type is program-wide
-(module augmentation), so an app has exactly one `loaderMeta` type. The *value*
-is per provider, and providers nest — a client-only app can read its bootstrap
-under a session-less meta and re-provide the same lane with the real session once
-the user is known, keeping everything already cached.
+(module augmentation), so an app has exactly one `loaderMeta` type; the *value*
+is per provider, and providers nest.
 
 ### `LaneKeyOf<T>` — a key that knows what it holds
 
@@ -492,27 +430,24 @@ lane.set(taskKeys.detail(saved.id), saved); // checked, and nothing else importe
 
 A read can be built on an already-typed key — `laneRead({ key: taskKeys.detail(id),
 loader })` — and what it hands back is tagged from its own loader either way. The
-two are deliberately *not* checked against each other: constraining a read's `key`
-to `LaneKeyOf<T>` costs about 65% more type instantiations on every read, which is
-a poor trade for catching a mismatch you have to construct on purpose.
+two are deliberately *not* checked against each other (the check was measured at
+~65% more type instantiations per read, for a mismatch you have to construct on
+purpose).
 
-Two things to know:
+Three things to know:
 
 - **The tag is an assertion, not a proof.** `laneKey<Task>(…)` states what the
-  entry holds and nothing verifies it. That is why the loaded type belongs on the
-  read wherever a read exists — `laneRead` *infers* the tag from the loader, while
-  a `laneKey` type argument is the one place in Lane where you state a type by
-  hand.
-- **A tagged key is a key.** It is the same array at runtime, matches the same
-  entry, serializes the same way, and is accepted anywhere `LaneKey` is —
-  `invalidate`, `remove`, `cancel`, scopes, hydration snapshots. Only `set` and
-  `update` read the tag.
+  entry holds and nothing verifies it. `laneRead` *infers* the tag from the
+  loader; a `laneKey` type argument is the one place in Lane where you state a
+  type by hand.
+- **A tagged key is a key.** Same array at runtime, same entry, same
+  serialization, accepted anywhere `LaneKey` is. Only `set` and `update` read
+  the tag.
 - **`laneKey` runs on the server too.** `use-lane` marks its React modules
   `"use client"` individually rather than marking the package, so `laneKey`,
-  `laneRead`, and `createLane` are importable from a Server Component — the
-  key module above really is importable from anywhere, including the RSC route
-  that builds your [hydration snapshots](#hydration-rsc-seeding). The import path
-  is the same `"use-lane"` in both graphs; there is no `/server` subpath to learn.
+  `laneRead`, and `createLane` are importable from a Server Component — including
+  the RSC route that builds your [hydration snapshots](#hydration-rsc-seeding).
+  Same `"use-lane"` import path in both graphs.
 
 ### `LaneResult<T>`
 
@@ -531,7 +466,7 @@ type LaneResult<T> = {
 | `promise` | The current promise for the key. Unwrap with `use(promise)` to get a [`LaneRead<T>`](#lanereadt). |
 | `isInvalidationPending` | `true` while an explicit invalidation (`invalidate`, `invalidateAll`, `set`, `update`) is converging through a transition. |
 | `isBackgroundPending` | `true` while a background revalidation (focus / mount / reconnect / a `background: true` invalidation) is converging. |
-| `invalidate` | Invalidate this exact key, re-read, and return **the next read's promise** — awaitable, unlike `lane.invalidate` (a key alone does not know its loader; the hook holds the whole read). The returned promise is the one subscribed readers adopt, by the store's dedupe — never a second fetch. It resolves with the read's usual contracts: a failed load with something to serve resolves `{ data, error }` rather than rejecting, a failure with nothing to serve rejects, and resolving means the data settled — not that React committed. An invalidation skipped by `onlyIf` returns the current cached promise, so awaiting is always awaiting "the key's value after this call". Accepts the same `LaneInvalidateOptions` (e.g. `{ background: true, onlyIf: "settled" }` for a self-scheduled poll); defaults to an explicit transition. See [Derived reads](#derived-reads--reacting-to-a-source-that-actually-changed) for the cascade it enables. |
+| `invalidate` | Invalidate this exact key, re-read, and return **the next read's promise** — awaitable, unlike `lane.invalidate` (a key alone does not know its loader; the hook holds the whole read). The returned promise is the one subscribed readers adopt, by the store's dedupe — never a second fetch — and it keeps the read's usual contracts: a failed load with something to serve resolves `{ data, error }`, one with nothing to serve rejects, and resolving means the data settled, not that React committed. An invalidation skipped by `onlyIf` returns the current cached promise, so awaiting is always awaiting "the key's value after this call". Accepts the same `LaneInvalidateOptions`. See [Derived reads](#derived-reads--reacting-to-a-source-that-actually-changed). |
 | `startInvalidationTransition` | Run an action inside this reader's invalidation transition, so `isInvalidationPending` is on from when it *starts*. See [below](#startinvalidationtransition--pending-from-the-start-of-an-action). |
 
 ### `startInvalidationTransition` — pending from the start of an action
@@ -581,39 +516,28 @@ export async function saveTask(patch: Patch) {
 
 Inside the action rather than as an argument, because that is where the
 knowledge is: a mutation helper knows which keys it touches and its caller does
-not. Passing them in would hoist that list to every call site and freeze it
-there — it could not be built conditionally, or by the helper itself.
-
-What you announce is not what you converge. What converges is what changed; what
-is announced is what should look busy, which is usually the smaller set — a
-`background: true` refresh is explicitly asking not to be one of them.
+not.
 
 #### What to know
 
 - **The action is not Lane's.** Its resolved value is ignored and its rejection
   is never caught, so a failed save cannot reach a reader as
   [`error`](#lanereadt) — that field means a *load* of this key failed over data
-  still worth showing, which is a different fact about a different thing. Handle
-  the failure inside the action, where you would have anyway.
-- **Nothing is stored when the window opens.** An announcement schedules no read:
-  the caller has not changed the source yet, so re-reading now would just fetch
-  the pre-mutation data. Only the transitions open; the re-reads are the ones the
-  action asks for.
-- **Converge inside the action, however the change needs it.** `invalidate`,
-  `set`, `update`, a prefix scope — all of them land in the same transition.
+  still worth showing. Handle the failure inside the action.
+- **Nothing is stored when the window opens.** An announcement schedules no read
+  — the caller has not changed the source yet. Converge inside the action,
+  however the change needs it: `invalidate`, `set`, `update`, a prefix scope —
+  all land in the same transition.
 - **External reads do not have it.** The announcement promises that an
-  invalidation is coming, and a published key's reader is the one that cannot
-  make it — see [`LaneExternalResult`](#external--a-read-the-owner-publishes).
-  The owner's own transition (a Server Action, a router revalidation) is already
-  the pending signal there.
-- **Announcing a published key throws** [`LaneOwnershipError`](#laneownershiperror),
-  and the scope is checked before anything is announced, so a scope that reaches
-  one is refused rather than half-applied.
+  invalidation is coming, and a published key's reader cannot make it; the
+  owner's own transition (a Server Action, a router revalidation) is already the
+  pending signal. Announcing a published key throws
+  [`LaneOwnershipError`](#laneownershiperror), checked over the whole scope
+  before anything is announced.
 - **`lane.startInvalidationTransition` outside any transition is close to a
-  no-op.** Each reader opens an empty transition that commits immediately, so
-  nothing shows pending — which is the thing you called it for, making the
-  symptom its own diagnosis. It is documented rather than guarded because there
-  is no way to ask React whether a transition is in progress.
+  no-op** — each reader opens an empty transition that commits immediately.
+  There is no way to ask React whether a transition is in progress, so it is
+  documented rather than guarded.
 
 ### Derived reads — reacting to a source that actually changed
 
@@ -665,14 +589,12 @@ const prepared = use(
 );
 ```
 
-No cascade to enumerate and no way to render a new source against stale
-derived data — at the price that each identity is a fresh entry: a new-key load
-starts from nothing (no `current`, no stale-on-error fallback; a failure
-suspends into the Error Boundary like any first load), which is the ordinary
-Suspense meaning of a key change. Old entries idle out through `gcTime`. A
-server-provided hash is the stronger key material when you have one — stable
-across sessions and reverts — where `revision` is session-local and only ever
-moves forward.
+No cascade to enumerate and no way to render a new source against stale derived
+data — at the price that each identity is a fresh entry: a new-key load starts
+from nothing (no `current`, no stale-on-error fallback), and old entries idle
+out through `gcTime`. A server-provided hash is the stronger key material when
+you have one — stable across sessions and reverts — where `revision` is
+session-local and only ever moves forward.
 
 ### `LaneRead<T>`
 
@@ -689,15 +611,15 @@ type LaneRead<T> = {
 | Field | Description |
 | --- | --- |
 | `data` | The value for the key. |
-| `revision` | The identity of `data`'s **content** — a serializable stand-in for the reference equality [structural sharing](#structural-sharing) guarantees. A refetch that came back deep-equal keeps the previous reference *and* the previous revision; only a genuine content change (through any write path: a loader, `set`, `update`) mints a new one, from a lane-wide counter. Equality is the entire contract — nothing about order, density, or reuse across entries may be read into the numbers, and they are session-local: never serialize one into a snapshot. What it is for is naming content where a reference cannot go — chiefly as **key material for a derived read**, so the derived key changes exactly when the source's content does: `useLane(prepareRead(source.data.documentId, source.revision))`. For comparing two reads you already hold, `revision` adds nothing over `===` on `data`. A stale-on-error result keeps serving the old data under the old revision — the pair is one settlement and cannot tear. **On an [external](#external--a-read-the-owner-publishes) read the identity is one notch weaker: the publication's, not the content's.** An external entry keeps no previous value to compare against (its weak retention forbids the strong reference), so "unchanged" is not a fact the client can establish — every publication mints, a republish of identical content included. Same revision ⇒ same content still holds; the converse does not, so a derived key built from an external revision re-derives per publication. When the content has a real version, its owner has it — ship it in the payload and key on that instead. |
-| `error` | The failure of the load that would have produced `data`, present when something else is being served in its place — the last fulfilled value, or what the read's [`fallback`](#fallback--what-a-read-serves-when-its-load-fails) returned (see [Falling back](#stale-on-error)). Absent when the latest load succeeded, and absent after a `cancel`: the caller asked for the stop, so it is not a failure to report. Its presence says `data` did not come from a successful load; it does **not** say the read is broken, and the value beside it may be perfectly good, only older than it should be — treat it as a reason to annotate, not a reason to discard what is on screen. A load with nothing to serve rejects `promise` instead, so this field never carries the failure that had no answer. Carrying the error *in the resolved value* (rather than a field read live from the store during render) keeps `data` and `error` consistent under concurrent rendering and avoids a render-purity violation — which is also why it is here and not on `useLane`. |
+| `revision` | The identity of `data`'s **content** — a serializable stand-in for the reference equality [structural sharing](#structural-sharing) guarantees. A refetch that came back deep-equal keeps the previous reference *and* the previous revision; only a genuine content change (through any write path) mints a new one, from a lane-wide counter. Equality is the entire contract — nothing about order or density may be read into the numbers, and they are session-local: never serialize one into a snapshot. What it is for is naming content where a reference cannot go — chiefly as **key material for a derived read**: `useLane(prepareRead(source.data.documentId, source.revision))`. For comparing two reads you already hold, `revision` adds nothing over `===` on `data`. A stale-on-error result keeps serving the old data under the old revision — the pair is one settlement and cannot tear. **On an [external](#external--a-read-the-owner-publishes) read the identity is the publication's, not the content's**: an external entry keeps no previous value to compare against, so every publication mints a new revision, a republish of identical content included. Same revision ⇒ same content still holds; the converse does not. When the content has a real version, ship it in the payload and key on that instead. |
+| `error` | The failure of the load that would have produced `data`, present when something else is being served in its place — the last fulfilled value, or what the read's [`fallback`](#fallback--what-a-read-serves-when-its-load-fails) returned (see [Falling back](#stale-on-error)). Absent when the latest load succeeded, and absent after a `cancel` (the caller asked for the stop). Its presence says `data` did not come from a successful load; it does **not** say the read is broken — treat it as a reason to annotate, not a reason to discard what is on screen. A load with nothing to serve rejects `promise` instead. Carrying the error *in the resolved value* (rather than a field read live from the store during render) keeps `data` and `error` consistent under concurrent rendering — which is why it is here and not on `useLane`. |
 
 ### `LaneGatedResult<T>`
 
 What `useLane` / `useLanePromise` return when the loader may be `undefined` —
-`promise` widens to `Promise<T> | undefined`, and `invalidate` widens the same
-way (while disabled there is no loader to re-read with, so it still clears the
-entry but has no next read to return):
+`promise` widens to `Promise<LaneRead<T>> | undefined`, and `invalidate` widens
+the same way (while disabled there is no loader to re-read with, so it still
+clears the entry but has no next read to return):
 
 ```ts
 type LaneGatedResult<T> = Omit<LaneResult<T>, "promise" | "invalidate"> & {
@@ -719,12 +641,12 @@ other meaning, so it is the single, unambiguous disable signal (there is no
 `enabled` option).
 
 ```tsx
-const detail = useLane(
-  ["component", componentId],
-  componentId
+const detail = useLane({
+  key: ["component", componentId],
+  loader: componentId
     ? ({ signal }) => fetchComponent(componentId, { signal })
     : undefined,
-);
+});
 const value = detail.promise ? use(detail.promise).data : null;
 ```
 
@@ -769,10 +691,10 @@ type LaneFallback<T> = (context: {
 }) => T;
 ```
 
-**It runs on every failed load, not only the first.** Calling it only when there
-is nothing to serve would make the same failure behave differently depending on
-whether the entry happened to have succeeded before — history the caller cannot
-see. Running it always is what lets the whole policy be read off the definition:
+**It runs on every failed load, not only the first** — calling it only when
+there is nothing to serve would make the same failure behave differently
+depending on history the caller cannot see. That is what lets the whole policy
+be read off the definition:
 
 | policy | what it says |
 | --- | --- |
@@ -781,52 +703,39 @@ see. Running it always is what lets the whole policy be read off the definition:
 | `({ error }) => { throw error }` | never serve a value that is not current |
 
 The last one is not reachable any other way. For data where showing a stale value
-is itself wrong — a balance, a lock state, a permission — the built-in policy is
-the wrong answer, and this is how a read says so.
+is itself wrong — a balance, a lock state, a permission — this is how a read
+says so.
 
 **What it returns is served, never stored.** `lastFulfilled` moves only on a
-genuine success and the entry keeps the freshness it had — so a read that fell
-back is still as stale as it was and still refreshes on the next trigger. A
-policy that hands back what it was given serves it under the entry's own
-[`revision`](#lanereadt), since that is what the number already names; a
-substitute the entry never held carries one of its own, so nothing that keys on a
-revision is told the content stayed the same when it did not. A read that has never succeeded counts
-as old as a value can be, which keeps the triggers firing on a key that is
-failing; `staleTime: Infinity` still means what it says, and pins it.
-
-That is the whole reason this is a read option rather than a `try` / `catch`
-inside the loader. A loader that catches and returns a substitute has
-*succeeded* as far as the store can tell: the substitute becomes the last
-fulfilled value, the fulfillment time is restamped so the entry looks freshly
-loaded and stops refreshing, and a new revision is minted as though the content
-changed. None of that is recoverable from outside the store, which is why the
-policy lives here.
+genuine success and the entry keeps the freshness it had — a read that fell back
+is still as stale as it was and still refreshes on the next trigger. A policy
+that hands back what it was given serves it under the entry's own
+[`revision`](#lanereadt); a substitute the entry never held carries one of its
+own. This is the whole reason it is a read option rather than a `try` / `catch`
+inside the loader: a loader that catches and returns a substitute has
+*succeeded* as far as the store can tell — the substitute becomes the last
+fulfilled value, the fulfillment time is restamped so the entry stops
+refreshing, and a new revision is minted.
 
 **Throwing is how a policy declines.** There is no sentinel return, because
-`undefined` may be a legitimate `T`. Rethrowing the error it was handed says "not
-this one" and lands exactly where the built-in policy's empty case lands — a
-rejected promise carrying [`LaneReadError`](#lanereaderror) with the key. A
-policy that throws something else has replaced the failure with its own account
-of it, and that is what the boundary receives.
+`undefined` may be a legitimate `T`. Rethrowing the error it was handed lands
+where the built-in policy's empty case lands — a rejected promise carrying
+[`LaneReadError`](#lanereaderror) with the key.
 
 **Synchronous.** Returning a promise would be a second loader, and retrying a
 failed request belongs to the fetcher.
 
 **It is not in [`LaneUseOptions`](#laneuseoptions).** It is the one read option
 typed by the read's `T`, and that type set has no `T` — which is also why a
-batch's shared options cannot carry one, and why a member of
-[`useLanesAll`](#uselanesallreads-options) falls back exactly as its own read
-defines it or not at all.
+batch's shared options cannot carry one: a member of
+[`useLanesAll`](#uselanesallreads-options--a-batch-read) falls back exactly as
+its own read defines it, or not at all.
 
-**Which read's policy runs** is the one whose loader produced the failure: the
-read that started the load, as with `loaderMeta`. Two reads of one key declaring
-different policies are the drift a shared key factory invites, and
-[`laneRead`](#lanereadspec--key--loader-colocation) is the answer to it — one
-definition per key, options included.
+**Which read's policy runs** is the one whose loader produced the failure — the
+read that started the load, as with `loaderMeta`.
 
-A `cancel` is not a failure, so it never consults the policy: the caller asked
-for the stop, and the read reverts to the last fulfilled value with no `error`
-beside it.
+A `cancel` is not a failure, so it never consults the policy: the read reverts
+to the last fulfilled value with no `error` beside it.
 
 [`external`](#external--a-read-the-owner-publishes) reads take no `fallback`.
 Their only failure is [`LaneExternalTimeoutError`](#laneexternaltimeouterror),
@@ -850,15 +759,12 @@ export const taskLanes = {
 const { promise } = useLane(taskLanes.detail(id)); // no fetch — it waits
 ```
 
-It is a genuine loader value, not a flag, and that is deliberate: the loader slot
-already answers "who fills this key", so it carries three values instead of
-growing a fourth option — a function is client-owned, `external` is published from
-outside, `undefined` is [gated off](#conditional-reads-gating). Every read path in
-`useLane` stays one unconditional read.
+It is a genuine loader value, not a flag: the loader slot answers "who fills
+this key" with three values — a function is client-owned, `external` is
+published from outside, `undefined` is [gated off](#conditional-reads-gating).
 
 **`T` is annotated, because nothing infers it.** `laneRead<Task>({ … })` — a
-loader that never loads has no return type to read it from. It is the one cost of
-the form and it is paid once, at the definition.
+loader that never loads has no return type to read it from.
 
 **The spec takes the key and the loader, and nothing else.** Writing any other
 option is a type error at the `laneRead` call:
@@ -872,29 +778,28 @@ option is a type error at the `laneRead` call:
 #### What it does while it waits
 
 The promise is settled by being **replaced**. A publication of the same key
-overwrites the entry *and* resolves the waiting read with the value it installed,
-so a reader that is suspended on it converges immediately — including one that has
-not committed yet, which has no subscription for a notification to reach.
+overwrites the entry *and* resolves the waiting read with the value it
+installed, so a reader suspended on it converges immediately — including one
+that has not committed yet, which has no subscription for a notification to
+reach.
 
-- **Before the first publication**, a read suspends. Boundary fallback, no
-  request. This makes "read a key some ancestor boundary will publish" a supported
+- **Before the first publication**, a read suspends: boundary fallback, no
+  request. "Read a key some ancestor boundary will publish" is a supported
   pattern — including from a component the publisher cannot pass props to.
-- **On publication**, the wait resolves with the published value, and the store's
-  own promise holds the same value: readers that retried and readers that kept the
-  old promise agree. A reader inside a hidden `<Activity>` converges the same way
-  when its tree is revealed — see [under `<Activity>` and router
-  keep-alive](./consistency.md#activity).
+- **On publication**, the wait resolves with the published value, and the
+  store's own promise holds the same value. A reader inside a hidden
+  `<Activity>` converges the same way when its tree is revealed — see
+  [under `<Activity>` and router keep-alive](./consistency.md#activity).
 - **After ~10 seconds with no publication**, it rejects with
-  [`LaneExternalTimeoutError`](#laneexternaltimeouterror) to your Error Boundary.
-  A read nobody publishes is a typo or a missing boundary, and failing loudly is
-  the point — the alternative is a fallback that never resolves.
+  [`LaneExternalTimeoutError`](#laneexternaltimeouterror) to your Error
+  Boundary. A read nobody publishes is a typo or a missing boundary, and failing
+  loudly is the point.
 
-**A key holds its latest publication, wherever it is read — including a restored
-tree.** If two routes publish the same key and the user navigates back to the
-first, its readers show the *second* route's value, not the one this route
-published: the reveal synchronously adopts the store's current value. That is
-the correct semantics for genuinely shared data (a session, a workspace); for a
-value that belongs to one route, put the route in the key.
+**A key holds its latest publication, wherever it is read.** If two routes
+publish the same key and the user navigates back to the first, its readers show
+the *second* route's value: the reveal adopts the store's current value. That is
+correct for genuinely shared data (a session, a workspace); for a value that
+belongs to one route, put the route in the key.
 
 #### Gating
 
@@ -926,15 +831,14 @@ Thrown into the read (and so to your Error Boundary) when no publication arrives
 within 10 seconds. It means one of three things, in order of likelihood: nothing
 publishes this key; something publishes it under a *different* key (a filters
 object that serializes differently, an id of the wrong type); or the reader is
-mounted outside the boundary that publishes it and no publication has happened
-yet. Compare the serialized key in the message against what the publisher seeds.
+mounted outside the boundary that publishes it. Compare the serialized key in
+the message against what the publisher seeds.
 
-Two runtime behaviors worth knowing (both measured in a production build):
+Two runtime behaviors worth knowing:
 
 - **The rejection is the entry's state, not the reader's.** A reader mounted
-  after the timeout receives the same rejection immediately — it does not start
-  a fresh 10-second wait. The next publication clears it: the key serves again,
-  with no fallback, the moment a value lands.
+  after the timeout receives the same rejection immediately; the next
+  publication clears it.
 - **An errored reader does not heal itself.** React error boundaries stay on
   their error UI after a later publication revives the key, so a screen that can
   hit this error needs a reset path (a retry button that remounts the boundary,
@@ -984,35 +888,26 @@ versus a per-item API:
 - **The return is just the promise** — one stable, `use()`-able `Promise.all`,
   not an array of per-item handles.
 
-**Why a single aggregate, not an array of promises.** Mapping `use()` over a
-per-item array is exactly what a child-per-row already does better (each row
-keeps its own boundary), so a parent gains nothing by holding the array. The one
-thing a parent *can't* easily build itself is a **stable** `Promise.all`:
-`use(Promise.all(...))` inline gets a fresh promise every render (re-suspends) and
-dead-loops on a rejection (a suspended component never commits, so a
-per-render/ref memo keeps resetting). `useLanesAll` owns that identity for you and
-swaps it inside a transition when a member changes — so a background refresh keeps
-the previous values on screen (you just don't get a pending flag).
+**Why a single aggregate, not an array of promises.** The one thing a parent
+can't easily build itself is a **stable** `Promise.all`: built inline it is a
+fresh promise every render (re-suspends) and dead-loops on a rejection (a
+suspended component never commits, so a per-render/ref memo keeps resetting).
+`useLanesAll` owns that identity and swaps it inside a transition when a member
+changes, so a background refresh keeps the previous values on screen.
 
-There is deliberately **no `combine` option.** Combine in render from
-`use(promise)`. (react-query's `combine` is incremental over synchronous
-per-query *status*; Lane is suspense-based, so reading the values means
-suspending — an aggregate is all-or-nothing by nature. A partial combine would
-need status fields Lane intentionally does not have.)
+There is deliberately **no `combine` option** — combine in render from
+`use(promise)`. Lane is suspense-based, so an aggregate is all-or-nothing; a
+partial combine would need status fields Lane intentionally does not have.
 
 Notes:
 
 - **Each member behaves exactly like `useLane`** — transitions, stale-on-error,
-  focus / reconnect, `refetchOnMount`, GC, and reacting to (shared) option changes
-  (`staleTime` / `refetchOnFocus` / `refetchOnReconnect` re-subscribe;
-  the new options apply on the next read). A batch is N `useLane`s feeding one
+  focus / reconnect, `refetchOnMount`, GC. A batch is N `useLane`s feeding one
   `Promise.all`.
-- **Adding a read** subscribes and loads just that read; the reads already on
-  screen are not refetched. **Removing one** unsubscribes it.
-- **Invalidation** is by key: `lane.invalidate(key)` for one, or
+- **Adding a read** subscribes and loads just that read; **removing one**
+  unsubscribes it. **Duplicate keys** in one call share a single entry.
+- **Invalidation** is by key: `lane.invalidate(key)` for one,
   `lane.invalidateAll(scope)` for a family.
-- **Duplicate keys** in one call share a single entry (like two `useLane` calls
-  with the same key).
 
 For rendering N *independent* rows (not aggregating), don't use `useLanesAll` at
 all — render a child component per row and call `useLane` inside each, so every
@@ -1030,7 +925,10 @@ nothing an ordinary read does not already do.
 function useInfiniteLane<P, C>(read: {
   key: LaneKey;
   initialCursor: C;
-  fetchPage: (cursor: C, context: { signal?: AbortSignal }) => Promise<P>;
+  fetchPage: (
+    cursor: C,
+    context: { signal?: AbortSignal; meta: LaneLoaderMeta },
+  ) => Promise<P>;
   nextCursor: (page: P, cursor: C) => C | null;
 } & LaneUseOptions): {
   promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
@@ -1040,6 +938,7 @@ function useInfiniteLane<P, C>(read: {
   invalidate: (
     options?: LaneInvalidateOptions,
   ) => Promise<LaneRead<InfiniteLaneValue<P, C>>>;
+  startInvalidationTransition: (action: () => unknown) => void;
 };
 ```
 
@@ -1051,7 +950,7 @@ options in one value.
 ```ts
 function infiniteLaneRead<P, C>(
   spec: InfiniteLaneReadSpec<P, C>,
-): InfiniteLaneReadSpec<P, C>;
+): InfiniteLaneReadSpec<P, C> & { key: LaneKeyOf<InfiniteLaneValue<P, C>> };
 
 type InfiniteLaneReadSpec<P, C> = LaneUseOptions &
   InfiniteLaneOptions<P, C> & { key: LaneKey };
@@ -1070,12 +969,14 @@ export const feedLanes = {
 };
 
 const { promise, loadMore } = useInfiniteLane(feedLanes.list(filters));
-lane.invalidate(feedLanes.list(filters)); // the key travels with it
+lane.invalidate(feedLanes.list(filters).key); // the key travels with it
 ```
 
 Like `laneRead`, it is identity at runtime; what it buys is that `P` and `C` are
 inferred and checked where the list is defined — `nextCursor` must return the
-cursor `fetchPage` takes — instead of at each call site.
+cursor `fetchPage` takes — instead of at each call site. The `key` it hands back
+is tagged with the accumulated `InfiniteLaneValue`, so `lane.set` / `lane.update`
+through it are checked against the whole list rather than one page.
 
 The value stored under the key — `P` is one page as your endpoint returns it,
 `C` is your cursor type:
@@ -1089,68 +990,54 @@ type InfiniteLaneValue<P, C> = {
 ```
 
 ```tsx
-const { promise, loadMore, isInvalidationPending } = useInfiniteLane(
-  ["feed", filters],
-  {
-    initialCursor: null as string | null,
-    fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
-    nextCursor: (page) => page.nextCursor,
-  },
-);
+const { promise, loadMore, isInvalidationPending } = useInfiniteLane({
+  key: ["feed", filters],
+  initialCursor: null as string | null,
+  fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+  nextCursor: (page) => page.nextCursor,
+});
 
 const { data, error } = use(promise);
 const items = data.pages.flatMap((page) => page.items);
 ```
 
-Two things about this hook are worth knowing before you use it, because both are
-easy to guess wrong.
+Two things about this hook are easy to guess wrong.
 
 **A re-read costs one request per page already loaded, and they run
 sequentially.** Any refresh of the key — `invalidate`, focus, mount, a poll —
-re-walks the chain from the first page, re-deriving each cursor from the page
-that just came back, because page N+1's cursor does not exist until page N has.
-A list five pages deep is five round trips, one after another. That is
-inherent to cursor pagination rather than to Lane, and it is the same cost the
-equivalent React Query list pays; see
-[migrating](./migrating.md#step-6--infinite-lists). What Lane's model buys is
-what the user sees while it happens: the list is held on screen by the
-transition, and a failure part-way through keeps it there with `error`
-instead of moving the read into an error state.
+re-walks the chain from the first page, because page N+1's cursor does not exist
+until page N has come back. A list five pages deep is five round trips. That is
+inherent to cursor pagination, and the same cost the equivalent React Query list
+pays; see [migrating](./migrating.md#step-6--infinite-lists). What Lane's model
+buys is what the user sees while it happens: the transition holds the list on
+screen, and a failure part-way through keeps it there with `error`.
 
 **`hasNext` is in the resolved value, not on the hook.** The hook returns a
 promise it never resolves, so it cannot know — and keeping the flag next to the
-pages it describes is what stops the two disagreeing mid-render, the same reason
-`error` rides inside the value. The rule for this hook: **actions come
-from the hook, data comes from `use(promise)`.**
+pages it describes is what stops the two disagreeing mid-render. The rule for
+this hook: **actions come from the hook, data comes from `use(promise)`.**
 
 Notes:
 
-- **`loadMore` appends one page** through `update`, so the key never changes: the
-  reader converges through a transition with the list still on screen, and
-  `isInvalidationPending` covers it with no `useTransition` of your own. The name
-  is not a mismatch — `update` is a [prefilled
-  invalidation](./design-notes.md#authoritative-publication-is-secondary), so an
-  append converges through the same surface an `invalidate` does. It is a no-op
-  at the end of the list; gate your control on `data.hasNext` so an over-eager
-  click does not cost even a notification.
+- **`loadMore` appends one page** through `update`, so the key never changes:
+  the reader converges through a transition with the list still on screen, and
+  `isInvalidationPending` covers it with no `useTransition` of your own. It is a
+  no-op at the end of the list; gate your control on `data.hasNext`.
 - **`fetchPage`'s `signal` is optional because it is genuinely absent on the
   append path.** A refresh runs as a read and gets the read's abort signal; an
   updater is handed the current value and no controller, so a `loadMore` in
-  flight cannot be aborted. It is left optional rather than faked.
+  flight cannot be aborted.
 - **A list can come back shorter.** If a re-derived cursor returns `null` before
   the walk reaches the old depth, the walk stops there — rows were deleted
   underneath it, and the shorter list is the truth.
-- **`loadMore`'s identity follows `fetchPage` / `nextCursor`.** It is a
-  `useCallback` over those plus the lane and the serialized key, so it is stable
-  exactly when the caller's functions are. An `onClick` does not care; driving it
-  from an effect (a scroll sentinel) is the caller's `useEffectEvent`.
-- **An auto-load trigger must also gate on `error`.** A scroll sentinel is
-  a loop, and only a change in what it observes stops it. A *successful* append
-  stops it by adding rows (the sentinel moves) and eventually clearing
-  `data.hasNext`. A *failed* one changes neither: the value is unchanged, so
-  `hasNext` is still `true`, the sentinel is still on screen, and the pending flag
-  has gone back down — so the observer fires again, forever, against a server that
-  is already failing. Gate on all three facts, which is why they arrive together:
+- **`loadMore`'s identity follows `fetchPage` / `nextCursor`** (a `useCallback`
+  over those plus the lane and serialized key) — stable exactly when the
+  caller's functions are. Driving it from an effect (a scroll sentinel) is the
+  caller's `useEffectEvent`.
+- **An auto-load trigger must also gate on `error`.** A failed append changes
+  neither the rows nor `hasNext`, so a scroll sentinel fires again, forever,
+  against a server that is already failing. Gate on all three facts, which is
+  why they arrive together:
 
   ```tsx
   const { data, error } = use(promise);
@@ -1158,19 +1045,14 @@ Notes:
   if (!data.hasNext || isInvalidationPending || error) return;
   ```
 
-  `error` clears on the next successful read, so recovery is an explicit
-  retry — a button calling `loadMore` again, which resumes from the same cursor.
-  A caller that would rather not route through the rendered value can await
-  `loadMore` instead: it hands back the entry's next promise, which *resolves*
-  with `error` set rather than rejecting. (The equivalent React Query list
-  has the same shape — `hasNextPage` stays `true` after a failed `fetchNextPage`
-  — and gates on `isFetchNextPageError` instead.)
+  `error` clears on the next successful read, so recovery is an explicit retry —
+  a button calling `loadMore` again. A caller can also await `loadMore`: it
+  hands back the entry's next promise, which *resolves* with `error` set rather
+  than rejecting.
 - **Depth is only as durable as the entry.** Remounting reuses the cached value
-  with no request at all, and the depth comes back with it, so the *next* refresh
-  covers every page again. An `invalidate` while *nothing* is mounted is the
-  exception: it drops the entry (no cache, no subscriber), so the next mount
-  starts from one page — the same asymmetry described under
-  [`current`](#uselaneread).
+  (no request) and the depth comes back with it. An `invalidate` while *nothing*
+  is mounted drops the entry, so the next mount starts from one page — the same
+  asymmetry described under [`current`](#uselaneread).
 
 ### Deferred reads (render first, swap when ready)
 
@@ -1219,49 +1101,30 @@ function ComponentGraph({ selectedId }: { selectedId: string }) {
 Why each piece matters:
 
 - **Loader always set.** `useLane` runs the loader during render and caches the
-  promise, so the fetch is in flight before the transition — the earliest start,
-  and the entry is subscribed (focus / reconnect / invalidation live) from mount.
+  promise, so the fetch is in flight before the transition, and the entry is
+  subscribed from mount.
 - **Reveal gated, not the loader.** `if (!reveal)` returns before `use`, so the
-  first render commits the placeholder without suspending. That committed output
-  is the already-revealed content React keeps while the transition is pending.
+  first render commits the placeholder without suspending.
 - **Flip inside a transition.** A plain `setReveal(true)` would suspend as a
-  non-transition update, and React would replace the placeholder with the nearest
-  Suspense fallback. The transition turns "show the fallback" into "keep the
-  current UI until ready." `isPending` is `true` meanwhile — drive a loading
-  affordance off it.
+  non-transition update and replace the placeholder with the nearest Suspense
+  fallback. The transition keeps the current UI until ready; drive a loading
+  affordance off `isPending`.
 
-Multiple deferred reads:
-
-Each loader is set unconditionally, so **every read's fetch starts in parallel on
-mount** — you don't orchestrate it. How they *reveal* is set by how you gate the
-`use()` calls:
-
-- **Gate them together** (one `reveal`, one transition) → they reveal together,
-  when the last resolves. Right when the output needs all of them.
-- **Stagger the gates** (reveal the fast one, switch the next on once it has
-  committed) → fast data shows first. The fetches already started on mount, so the
-  slow one still lands at its own latency, not after the fast one.
-
-The staggering is necessary because **transitions that suspend at the same time
-commit together** (the slower one gates the pair): revealing together is
-automatic, but fast-first needs the staggered gate. Data you don't integrate at
-all is simpler read in its own `<Suspense>` boundary, which reveals independently
-with a fallback.
+With multiple deferred reads, every loader is set unconditionally, so all
+fetches start in parallel on mount; how they *reveal* is set by how you gate the
+`use()` calls. One gate reveals them together (transitions that suspend at the
+same time commit together); staggered gates reveal fast data first. Data you
+don't integrate at all is simpler read in its own `<Suspense>` boundary.
 
 Caveats:
 
-- **Keep a `<Suspense>` boundary above** as the backstop. The transition holds
-  the committed UI; the boundary is still the safety net.
-- **This defers the reveal, not the key change.** When `selectedId` changes,
-  `useLane` switches to the new key's promise during an ordinary update, which
-  suspends and reveals the fallback again. To keep those swaps flash-free, wrap
-  the state change that drives the key in a transition too (see
+- **Keep a `<Suspense>` boundary above** as the backstop.
+- **This defers the reveal, not the key change.** When `selectedId` changes, the
+  key switch suspends and reveals the fallback again — wrap the state change
+  that drives the key in a transition too (see
   [Transitions](./integrations.md#transitions-and-the-backforward-caveat)).
-- `use(promise)` resolves to a [`LaneRead<T>`](#lanereadt) — read `.data` (and
-  `.error` if present).
-- This **always fetches**. Deferring the reveal is for data you *will* need but
-  want off the critical paint. When a read may genuinely never be needed, gate
-  the *loader* instead (`loader: undefined`) — see
+- This **always fetches**. When a read may genuinely never be needed, gate the
+  *loader* instead (`loader: undefined`) — see
   [Conditional reads](#conditional-reads-gating).
 
 ### `prefetch`
@@ -1285,10 +1148,13 @@ prefetch<T, C = T>(
 ): Promise<LaneRead<T>>;
 ```
 
-`prefetch` takes the read's key, its loader, and its `loaderMeta` — the three
-things running one needs. Everything else on the read describes what a *reader*
-does with the value (`staleTime` / `gcTime` / `refetchOn*`), and warming is not
-the read, so those stay the eventual reader's call.
+`prefetch` uses the read's key, loader, and `loaderMeta` — the things running one
+needs — plus its `warmTime` (warming is a bet on an arrival, and this is where
+the bet is placed) and its `fallback` (which describes the load, so a warmed key
+that failed holds what the eventual reader would have gotten). Everything else on
+the read describes what a *reader* does with the value (`staleTime` / `gcTime` /
+`refetchOn*`), and warming is not the read, so those stay the eventual reader's
+call.
 
 `prefetch` is a method on the
 [`Lane` instance](#mutation-convergence--the-lane-instance)
@@ -1308,8 +1174,8 @@ const warm = () =>
 ```
 
 - **Deduped.** A repeat `prefetch` of the same key (a re-fired hover) reuses the
-  cached promise — the loader runs once. `prefetch` always reads with
-  `"revalidate"` semantics, so it never discards an in-flight or settled cache.
+  cached promise — the loader runs once. A prefetch never discards an in-flight
+  or settled cache.
 - **Not subscribed.** A prefetched entry has no reader, so it does not revalidate
   on focus, or anchor against GC. If no reader adopts it, it is an orphan
   reclaimed by the lane's sweep (within `warmTime`); if a reader mounts first, the
@@ -1346,8 +1212,8 @@ type LaneUseOptions = {
 | --- | --- | --- |
 | `loaderMeta` | the lane's | Read this entry with a different `meta` than the lane carries — see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key). Not part of the key. In a batch, a member's own value wins over the batch's. |
 | `staleTime` | `Infinity` | How long (ms) a fulfilled value is considered fresh. Once stale, the entry becomes eligible for `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` reloads — which refresh what a reader is showing rather than taking it away. The default means **nothing is ever stale until you say what stale means** — so all three revalidation triggers do nothing without a `staleTime`, and warn in development. `staleTime` is also the rate limit on the triggers it gates: a value refreshed within it is not refreshed again however many times they fire. `staleTime: 0` asks for "always stale", which includes a mount refetching the value that same mount just loaded — the read runs during render and the trigger fires from an effect, so the two stack. |
-| `gcTime` | the lane's | How long (ms) **this read's** value is worth keeping once nothing holds it — this read's override of [`createLane`](#createlaneoptions)'s, and the way to say "do not serve this again after I leave". `0` makes every remount a fresh load; `Infinity` keeps it. It reads as a memory setting and is a freshness one too, because for an *idle* entry those are the same question: a value nobody holds is kept for exactly one reason, the reader who might come back. Which is why the load a remount starts after the deadline **suspends** — the entry is gone, so the wait joins whatever transition the remount is part of, instead of committing a stale value and refreshing it afterwards. The deadline is set when the entry goes idle, from the `gcTime` of whoever held it last; eviction is never synchronous, so an unsubscribe and a resubscribe in one task (StrictMode's double invoke, a re-suspension) collect nothing. |
-| `warmTime` | the lane's | How long **this read's** value is kept for a reader who has *not arrived yet*, measured from the moment it settles. Two situations, and they are the same one: a value warmed by [`prefetch`](#prefetch) that nobody has read, and an entry created by a render that suspended and unmounted before it could commit. Both are a load done for a reader who may still be coming, and this says how long "still coming" stays plausible. Deliberately not `gcTime`, which answers "somebody had this and left — how long is it worth keeping for their return": the two share a unit and nothing else. **The clock never runs while the read is in flight** — an entry nobody holds is not evidence that nobody is coming, and a load still running is evidence that somebody might be, so collecting one would abort a read a suspended render is still waiting on. |
+| `gcTime` | the lane's | How long (ms) **this read's** value is worth keeping once nothing holds it — this read's override of [`createLane`](#createlaneoptions)'s, and the way to say "do not serve this again after I leave". `0` makes every remount a fresh load; `Infinity` keeps it. For an *idle* entry, "worth keeping" and "worth serving again" are the same question, which is why the load a remount starts after the deadline **suspends**: the entry is gone, so the wait joins whatever transition the remount is part of. The deadline is set when the entry goes idle, from the `gcTime` of whoever held it last; eviction is never synchronous, so an unsubscribe and a resubscribe in one task (StrictMode's double invoke, a re-suspension) collect nothing. |
+| `warmTime` | the lane's | How long **this read's** value is kept for a reader who has *not arrived yet*, measured from the moment it settles: a value warmed by [`prefetch`](#prefetch) that nobody has read, or an entry created by a render that suspended and unmounted before it could commit. Deliberately not `gcTime` — that answers "somebody had this and left; how long is it worth keeping for their return". **The clock never runs while the read is in flight** — collecting an in-flight read would abort a load a suspended render may still be waiting on. |
 | `refetchOnFocus` | `false` | Reloads stale entries on window focus. Needs a `staleTime` to fire at all — with the `Infinity` default nothing is stale, and Lane warns in development. |
 | `refetchOnMount` | `false` | Reloads stale entries when a reader mounts. Needs a `staleTime` to fire at all. `staleTime: 0` makes it fire on every mount — including the mount that just loaded the value, since the read runs during render and this fires from an effect. |
 | `refetchOnReconnect` | `false` | Same as `refetchOnFocus`, driven by the browser `online` event. |
@@ -1461,9 +1327,9 @@ class LaneReadError extends Error {
 ```
 
 What a failed read throws — the loader's error wrapped in one that says *which
-key* failed. Only a load with nothing to show throws at all; a failure over data
-over existing data resolves `{ data, error }` instead, and that field
-carries the loader's error **unwrapped**.
+key* failed. Only a load with nothing to show throws at all; a failure over
+existing data resolves `{ data, error }` instead, and that field carries the
+loader's error **unwrapped**.
 
 The wrapper exists because of what a throw destroys. In the common shape —
 `useLane` and `use()` in one component, under the boundary — the reader that
@@ -1513,17 +1379,12 @@ failed during SSR reaches the browser as an ordinary error.
 #### Why a rejection is never retried by a read
 
 A cached rejection is served to every later read of the key until the key is
-invalidated, removed, or collected. No read retries one.
-
-Retrying is an event; a render is not one. React renders a suspended reader as
-many times as it likes and throws the work away, so a retry decided during a read
-fires again on every attempt: the reader is handed a fresh pending promise each
-time, suspends instead of throwing, and the failure never reaches the boundary at
-all: against a server that is down, the fallback would spin forever.
-
-So recovery is always something that *happens*: an `invalidate`, a `remove`, a
-revalidation trigger firing from an effect, or garbage collection. Reads only
-read.
+invalidated, removed, or collected. Retrying is an event; a render is not one —
+React renders a suspended reader as many times as it likes and throws the work
+away, so a retry decided during a read would fire on every attempt and the
+failure would never reach the boundary. Recovery is always something that
+*happens*: an `invalidate`, a `remove`, a revalidation trigger firing from an
+effect, or garbage collection. Reads only read.
 
 ### `LaneOwnershipError`
 
@@ -1567,7 +1428,6 @@ type LaneInvalidateOptions = {
   onlyIf?: "stale" | "settled" | "rejected";
   staleTime?: number;
   background?: boolean;
-  after?: Promise<unknown>;
 };
 ```
 
@@ -1626,27 +1486,15 @@ function Polled({ id }: { id: string }) {
 - Depending on `[promise]` makes it a **poll-after-response** loop (a fixed gap
   after each load). For a fixed **wall-clock** interval, use `setInterval` plus
   `{ onlyIf: "settled" }` so a tick during an in-flight read is skipped instead of
-  aborting it:
-  ```tsx
-  setInterval(() => lane.invalidate(key, { background: true, onlyIf: "settled" }), 5_000);
-  ```
+  aborting it.
 - **Keep the schedule off the render path.** Don't put the key *array* in the
-  effect's dependency list — it is a fresh reference every render, so the effect
-  tears down and recreates the timer on each render, and if the component
-  re-renders faster than the interval it never fires. Depend on a stable key id
-  (e.g. a serialized key) and read the latest key from a ref, or prefer the
-  `setTimeout` form above — it re-arms after each load, so it is naturally
-  independent of render frequency.
-- **A reader can poll itself.** The `invalidate` returned from `useLane` accepts
-  the same options and is bound to that read's key, so a per-reader poll needs no
-  external key, and its identity is stable across renders — depend on it directly
-  and the render-path caveat above falls away:
+  effect's dependency list — it is a fresh reference every render, so the timer
+  is torn down and recreated each render and may never fire. The simplest fix is
+  the bound `invalidate` from `useLane`: it accepts the same options, is
+  addressed to the read's key, and is stable across renders — depend on it
+  directly:
   ```tsx
-  const { promise, invalidate } = useLane({
-    key: ["task", id],
-    loader: ({ signal }) => fetchTask(id, signal),
-  });
-  const task = use(promise).data;
+  const { promise, invalidate } = useLane(taskLanes.detail(id));
   useEffect(() => {
     const timer = setInterval(() => invalidate({ background: true, onlyIf: "settled" }), 5_000);
     return () => clearInterval(timer);
@@ -1726,15 +1574,11 @@ lane.invalidate(["report", id]);
 lane.cancel(["report", id]); // changed my mind — stop the refresh, keep the rows
 ```
 
-There is no `cancelAll`, and `useLane` returns no bound `cancel`. Scoped
-operations exist for the ones that converge — `invalidateAll` / `updateAll` /
-`removeAll` leave every key they touch in a defined state, whatever the
-[scope](#scopes) matched. Cancelling does not: on a key with nothing to revert to
-it leaves a rejection, so applying it to an unenumerated family means leaving one
-on an unknown number of keys. (`set` and `prefetch` have no scoped twin either —
-they need per-key knowledge, and here that knowledge is ownership.) A bound form
-would be safe, but stopping a read is rare enough that it would be dead weight in
-every reader's result.
+There is no `cancelAll`, and `useLane` returns no bound `cancel`: on a key with
+nothing to revert to a cancel leaves a rejection, so applying it to an
+unenumerated family would leave one on an unknown number of keys — and stopping
+a read is rare enough that a bound form would be dead weight in every reader's
+result.
 
 **Only cancel a read you started and can still account for.** Two conditions,
 both about the call site rather than about the cache:
@@ -1744,9 +1588,8 @@ both about the call site rather than about the cache:
 2. **Nothing else reads this key** — cancelling is addressed by key, so on a
    shared key one call stops your refresh *and* someone else's first load.
 
-A read left behind by a superseded transition — switching tabs, retyping a search
-— fails the first, and is the one place not to reach for this. Nobody issued those
-requests: state changed, React chose to render it, and the read followed. See
+A read left behind by a superseded transition — switching tabs, retyping a
+search — fails the first, and is the one place not to reach for this. See
 [Cancelling is for reads you own](./design-notes.md#cancelling-is-for-reads-you-own).
 
 Where the key lands is decided by what it already had:
@@ -1811,20 +1654,17 @@ A given snapshots instance is applied to a given lane **at most once**, so
 repeated provider renders and Strict Mode do not re-seed. Identity is what that
 promise is keyed on, which has a corollary worth stating plainly:
 
-> **`snapshots` must be produced outside render** — one object per data payload,
-> delivered to the component. A Server Component's props satisfy this, and so does
-> a router loader's data ([React Router / TanStack](./integrations.md#data-mode--loaders-publish-into-lane));
+> **`snapshots` must be produced outside render** — one object per data payload.
+> A Server Component's props satisfy this, and so does a router loader's data
+> ([React Router / TanStack](./integrations.md#data-mode--loaders-publish-into-lane)):
 > both hand back the same object across re-renders and a new one when the data
-> reloads, which is exactly when re-seeding is wanted. Nothing about it is
-> server-only.
+> reloads, which is exactly when re-seeding is wanted.
 >
 > What breaks is building it *inside* a render —
-> `<LaneHydration snapshots={buildSnapshots(seeds)}>` in a component body. Every
-> render then hands over a new object, so every render suspends on a fresh
-> hydration promise and the boundary never commits: the subtree stays on its
-> Suspense fallback indefinitely. (Same failure as an inline
-> [`Promise.all`](#uselanesallreads-options--a-batch-read), for the same reason.)
-> If the assembly has to happen in a component, `useMemo` it on the source data.
+> `<LaneHydration snapshots={buildSnapshots(seeds)}>` in a component body hands
+> over a new object every render, so every render suspends on a fresh hydration
+> promise and the boundary never commits. If the assembly has to happen in a
+> component, `useMemo` it on the source data.
 
 Build the snapshots on the server from the same keys your hooks use:
 
@@ -1837,21 +1677,10 @@ const snapshots: LaneHydrationSnapshots = {
 };
 ```
 
-The *same keys* can be the same code. [`laneKey`](#lanekeyoft--a-key-that-knows-what-it-holds)
+The *same keys* can be the same code: [`laneKey`](#lanekeyoft--a-key-that-knows-what-it-holds)
 and [`laneRead`](#lanereadspec--key--loader-colocation) are importable from a
-Server Component — only the modules that touch React carry `"use client"` — so a
-key module shared with your hooks can be imported here directly, and the seed path
-does not need a duplicate list of key literals to stay server-safe:
-
-```ts
-// keys.ts — imported by both the RSC seed path and the client hooks.
-export const taskKeys = {
-  list: (filters: TaskFilters) => laneKey<Task[]>(["tasks", filters]),
-};
-
-// page.tsx — a Server Component
-const snapshots = { entries: [{ key: taskKeys.list(filters), data: tasks }] };
-```
+Server Component — only the modules that touch React carry `"use client"` — so
+the key module your hooks import serves the seed path too.
 
 #### `laneSnapshot(readOrKey, data)`
 
@@ -1893,13 +1722,8 @@ something the publisher holds, so from the client's side the key is read-only:
 `set` / `update` / `invalidate` / `remove` on it throw
 [`LaneOwnershipError`](#laneownershiperror), and `useLane` hands back no
 `invalidate` when the read declares itself
-[`external`](#external--a-read-the-owner-publishes).
-
-That is a behavior change in 0.8. Before it, a seeded key could be edited locally
-and usually appeared to work — until a navigation re-streamed the payload and
-overwrote the edit, or the payload never came and the edit outlived the truth.
-The pairing was never sound; it is now refused at the point of the write instead
-of failing later somewhere else.
+[`external`](#external--a-read-the-owner-publishes). The pairing is refused at
+the point of the write rather than failing later somewhere else.
 
 Two consequences worth planning for:
 
@@ -1908,10 +1732,6 @@ Two consequences worth planning for:
   in a snapshot. Mixing is the one configuration Lane rejects.
 - **Mutations go back through the publisher.** See
   [mutating a server-owned key](#mutating-a-server-owned-key).
-
-Hydration is for seeding and navigation, not post-mutation patching — and for a
-published key, "post-mutation patching" is exactly the thing that no longer
-exists: the mutation's own republication is the patch.
 
 ### Mutating a server-owned key
 
@@ -1937,13 +1757,10 @@ In a client router it is the router's own revalidation — see
 [Data mode](./integrations.md#data-mode--loaders-publish-into-lane).
 
 What that buys is agreement: one publication updates the entity, every list it
-appears in, and every count derived from it, because one source read produced them
-all. The client-owned equivalent has to name each of those keys and get the set
-right.
-
-What it costs is the round trip, and the answer to that is **`useOptimistic` over
-the read value** — display state that belongs to the action, not a write to a key
-you do not own:
+appears in, and every count derived from it, because one source read produced
+them all. What it costs is the round trip, and the answer to that is
+**`useOptimistic` over the read value** — display state that belongs to the
+action, not a write to a key you do not own:
 
 ```tsx
 const { data: task } = use(promise);
@@ -1957,14 +1774,11 @@ async function changeStatus(status: Status) {
 }
 ```
 
-Two anti-patterns to name, because both look reasonable:
-
-- **`lane.set` for optimism.** It publishes a guess to *every* reader of the key
-  and has no rollback; on a published key it now throws. Optimism is per-action
-  display state — `useOptimistic`.
-- **`lane.invalidate` after the action.** It asks the client to re-fetch a key the
-  client does not fetch. The revalidation inside the action already brings the new
-  payload; adding an invalidation converges nothing and throws.
+Two anti-patterns, because both look reasonable: **`lane.set` for optimism**
+(publishes a guess to every reader, no rollback; on a published key it throws)
+and **`lane.invalidate` after the action** (asks the client to re-fetch a key it
+does not fetch; the revalidation inside the action already brings the new
+payload, and the call throws).
 
 ## Lifecycle behavior
 
@@ -2006,27 +1820,24 @@ Two anti-patterns to name, because both look reasonable:
 - **Focus / reconnect.** The provider coalesces `focus` + `visibilitychange`
   into one revalidation per `focusThrottleInterval` (default 5s); `online` drives
   reconnect revalidation (not throttled).
-- **Garbage collection.** An inactive entry (no subscribers) is retained for the
-  lane's `gcTime` (`createLane({ gcTime })`, default 5 min; `Infinity` opts out)
-  and then collected. Collection is a single coalesced sweep per lane — armed
-  when an entry loses its last subscriber, so timing is approximate. Because the
-  sweep is lane-wide, it also reclaims orphans (entries from renders that never
-  committed) on whatever cycle a later unsubscribe triggers.
+- **Garbage collection.** An inactive entry (no subscribers) is retained for its
+  `gcTime` — the departing reader's, or the lane's default (`createLane({ gcTime })`,
+  default 5 min; `Infinity` opts out) — and then collected. Collection is a
+  single coalesced sweep per lane, armed for the nearest deadline; it is never
+  synchronous, so an unsubscribe and resubscribe within one task (StrictMode,
+  a re-suspension) collect nothing. An entry that settled with **no reader ever**
+  (a prefetch nobody adopted, a render that never committed) is reclaimed on the
+  shorter `warmTime` instead.
 - **Retention of published entries.** <a id="external-retention"></a> An
   [external](#external--a-read-the-owner-publishes) entry is **exempt from
   `gcTime`** — Lane does not time out a value it did not fetch and cannot
   re-fetch. It holds the value weakly instead, so it lives exactly as long as
   something else keeps it reachable: the publisher's payload (the snapshots
-  object a publication came from is tethered to what it published, so the value
-  lives as long as the framework holds the payload) or any committed reader
-  (React state holds the promise it is rendering) — including a reader inside a
-  hidden `<Activity>`, which is [why keep-alive needs no `gcTime`
-  tuning](./consistency.md#activity). In practice: a back-navigation
-  into a tree the framework kept shows what that tree held, with no request; a
-  key whose payload *and* readers are both gone reads as absent and its next read
-  waits for the next publication — which is the same state the publisher is in,
-  since it would have to re-fetch too. Client-owned entries are untouched by any
-  of this and keep the normal `gcTime` behavior.
+  object is tethered to what it published) or any committed reader — including
+  one inside a hidden `<Activity>`, which is [why keep-alive needs no `gcTime`
+  tuning](./consistency.md#activity). A key whose payload *and* readers are both
+  gone reads as absent, and its next read waits for the next publication.
+  Client-owned entries are untouched by any of this.
 
 ## Type exports
 
@@ -2035,7 +1846,7 @@ Two anti-patterns to name, because both look reasonable:
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneLoaderMeta`, `LaneLoaderMetaArgs`, `LaneLoaderMetaProp`, `LaneOptions`,
 `LaneKeyOf`, `LanePlainKey`, `LaneProviderProps`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneRegister`,
 `LaneResult`, `LaneRevalidateHandlers`,
-`LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`, `LaneWhenStale`,
+`LaneScope`, `LaneSnapshot`, `LaneUpdater`, `LaneUseOptions`, `LaneValue`,
 `ReactNativeAppState`, `ReactNativeEventSourceOptions`, `ReactNativeNetInfo`.
 
 Runtime exports beyond the hooks and `createLane`: `external` (see

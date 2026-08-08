@@ -107,11 +107,11 @@ route leaves the history stack), drive `lane.remove(key)` from the Navigation AP
 
 The retention knobs above make *back*-navigation instant. For *forward*
 navigation, warm the destination's data on intent: call
-[`lane.prefetch(key, loader)`](./api-reference.md#prefetch) from a link's
+[`lane.prefetch(read)`](./api-reference.md#prefetch) from a link's
 `onMouseEnter` / `onFocus`, so its keys are in flight (or settled) before the
 route mounts and the reader adopts the warm cache instead of fetching. Repeat
-hovers dedupe, and a warm-up nothing adopts is reclaimed by GC. Use the same key
-the destination's `useLane` will use, so they line up.
+hovers dedupe, and a warm-up nothing adopts is reclaimed within `warmTime`. Use
+the same read the destination's `useLane` will use, so the keys line up.
 
 ## Next.js App Router
 

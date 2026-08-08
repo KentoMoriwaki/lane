@@ -1,25 +1,10 @@
 import type { LaneKey } from "./types";
 
-/**
- * Who owns an entry, and what the store does about it — the small shared
- * vocabulary between the store and the `external` loader.
- *
- * It is its own module because the two sides need different parts of it and
- * must not need each other: the store asks whether a loader is external, throws
- * when a client writes to a key that is, and marks the read it supersedes with a
- * publication; the loader asks whether the abort that just landed *was* one.
- * Putting these three facts here is what lets `external.ts` — the waiting loader,
- * its timeout, and its error — stay out of every bundle that never mentions it.
- */
+// Shared vocabulary between the store and the `external` loader, split out so
+// neither needs the other — keeps external.ts out of bundles that never use it.
 
-/**
- * The loaders that mean "somebody else fills this key".
- *
- * A set rather than a property on the loader: `external` is a value applications
- * pass around, and a marker hung on it would be part of its shape. Membership is
- * the whole classification — a loader is external or it is not, and nothing else
- * about it changes.
- */
+// A WeakSet rather than a property, so `external` — a value applications pass
+// around — carries no marker in its shape.
 const externalLoaders = new WeakSet<object>();
 
 /** Declare a loader external. Called once, on `external` itself. */
@@ -29,23 +14,16 @@ export function markExternalLoader<T extends object>(loader: T): T {
   return loader;
 }
 
-/**
- * Whether this loader's key is filled from outside. Safe on anything — a
- * `WeakSet` reports non-objects (an absent loader, say) as absent.
- */
+/** Whether this loader's key is filled from outside. Safe on non-objects. */
 export function isExternalLoader(loader: unknown): boolean {
   return externalLoaders.has(loader as object);
 }
 
 /**
- * What using a client-side mutation on an externally published entry throws.
- *
- * An external entry's value is a copy of something its owner holds — an RSC
- * payload, a router's loader data — and Lane is the distribution layer for it,
- * not a second source of truth. Writing to it locally desynchronizes the two in
- * the one direction nothing repairs: the owner republishes on its own schedule
- * and overwrites the write, or it never republishes and the local edit outlives
- * the truth. Both are silent, so the write is not.
+ * Thrown when a client-side mutation targets an externally published entry.
+ * The value is a copy of something its owner holds; a local write is either
+ * overwritten by the next republish or outlives the truth — both silently, so
+ * the write is not.
  */
 export class LaneOwnershipError extends Error {
   readonly key: LaneKey;
@@ -53,14 +31,9 @@ export class LaneOwnershipError extends Error {
 
   constructor(key: LaneKey, keyId: string, operation: string) {
     super(
-      // The explanation is development-only, the identification is not: this
-      // error throws in production too, because it reports a write that silently
-      // loses, but the paragraph saying why belongs to the build where someone
-      // is reading it. The condition is written out literally and wraps the
-      // whole literal, exactly as in `warnDev` — that is what a bundler folds,
-      // and the prose then never reaches an application's users. (A helper that
-      // returned the prose would not: the string would still be an argument, and
-      // arguments ship.)
+      // Diagnosis in dev, identification in prod (this throws in prod too).
+      // The env condition wraps the whole literal so bundlers fold the prose
+      // out of production builds; a helper returning it would still ship it.
       typeof process !== "undefined" && process.env.NODE_ENV !== "production"
         ? `${keyId} is published externally, so \`${operation}\` is not the ` +
             "client's to call. Its owner publishes the key (an RSC payload, a " +
@@ -77,29 +50,17 @@ export class LaneOwnershipError extends Error {
   }
 }
 
-/**
- * The brand on a publication's abort reason. A symbol rather than a shape, so
- * nothing an application aborts with can be mistaken for a publication —
- * including an object that happens to carry a `value`.
- */
+// A symbol brand, so nothing an application aborts with can be mistaken for a
+// publication — even an object that happens to carry a `value`.
 const PUBLICATION = Symbol("lane.publication");
 
 export type LanePublication = { [PUBLICATION]: true; value: unknown };
 
 /**
- * The abort reason that says "replaced by a publication, and here is what with".
- *
- * Reusing the abort channel is the point: the store already aborts the read it
- * is superseding, at exactly the moment the value exists, and a signal already
- * belongs to one read. Carrying the value on the reason means no second channel
- * between the store and the waiting loader — nothing registered, nothing to
- * clean up, and no way for the two to disagree about which read is being
- * settled.
- *
- * It carries the **raw published value**, not a `LaneRead`: the store wraps
- * whatever a loader resolves with, so handing it the wrapper would wrap it
- * twice. What a reader ends up holding is the same `{ data }` the entry's new
- * cache resolves to.
+ * Abort reason meaning "replaced by a publication, and here is what with" —
+ * reusing the abort the store already fires when superseding a read avoids a
+ * second channel. Carries the **raw published value**, not a `LaneRead`: the
+ * store wraps what a loader resolves with, so a wrapper here would wrap twice.
  */
 export function publicationReason(value: unknown): LanePublication {
   return { [PUBLICATION]: true, value };

@@ -25,43 +25,19 @@ import type {
 export type LaneInvalidationSource = "background" | "transition";
 
 /**
- * What the store needs from a read, which is now only what the *loader* needs.
- *
- * `staleTime` and `gcTime` are not here, and their absence is the design: one
- * decides when a mounted reader refreshes (an effect fires it, as an
- * invalidation), the other how long an entry outlives its last reader (the
- * subscription carries it). Neither is a question a read answers, so neither
- * reaches the read path.
+ * What the store needs from a read: only what the loader needs — `staleTime`
+ * and `gcTime` describe a reader and deliberately never reach the read path.
  */
 export type LaneReadOptions = {
-  /**
-   * How long the value is kept for a reader who has not arrived yet, from the
-   * moment it settles. The read is what created an entry nobody is holding, and
-   * the reason it did — a hover prefetch, a render that suspended — is the only
-   * thing that says how long waiting for the first holder is worth it.
-   */
+  /** How long the settled value waits for its first reader, from settlement. */
   warmTime?: number;
-  /**
-   * What this load serves if it fails — the read's {@link LaneFallback}, erased
-   * to `unknown` because the store never knows a `T`.
-   *
-   * It belongs to the load rather than to the reader for the same reason
-   * `loaderMeta` does: it interprets *this* loader's failure, and a read whose
-   * loader never ran has no standing to say what that failure means. So the
-   * policy that runs is the one carried by the read that started the load.
-   */
+  /** Failure policy — the starting read's {@link LaneFallback}, erased to `unknown`. */
   fallback?: (context: {
     error: unknown;
     key: LaneKey;
     lastFulfilled: unknown;
   }) => unknown;
-  /**
-   * The lane's `loaderMeta`, handed to the loader as `context.meta`. It rides in
-   * the read options rather than in the read because it belongs to the lane, not
-   * to the definition — which is what keeps a read's arguments to exactly what
-   * decides its key. Nothing here reads it: it is threaded to `runLoader` and
-   * never participates in cache reuse.
-   */
+  /** The lane's `loaderMeta`, passed as `context.meta`; never affects cache reuse. */
   loaderMeta?: LaneLoaderMeta;
 };
 
@@ -73,36 +49,21 @@ type LaneSubscription = (
 type LaneRemoveSubscription = (entry: LaneEntryInfo) => void;
 
 /**
- * "An invalidation is coming for your key — open its transition now."
- *
- * Separate from {@link LaneSubscription} because it is the one notification that
- * does not describe a cache: no source to pick a surface with (this is always
- * the explicit one), and nothing to re-read. A subscriber that acts on it
- * schedules nothing — see `useLane`, where an empty `startTransition` is the
- * whole handler, and the flag it raises is the `isInvalidationPending` this is
- * named after.
+ * "An invalidation is coming for your key — open its transition now." Nothing
+ * to re-read: `useLane`'s whole handler is an empty `startTransition` that
+ * raises `isInvalidationPending`.
  */
 type LaneInvalidationPendingSubscription = (entry: LaneEntryInfo) => void;
 
-// A subscriber is a pure notify hook plus a GC anchor — it carries no policy.
-// When to revalidate (focus / reconnect / mount / stale) is the reader's
-// concern, expressed as per-read invalidations; the store only notifies. Even
-// focus / reconnect stay out of here — they are DOM concerns the provider owns.
+// A subscriber is a notify hook plus a GC anchor — no revalidation policy.
+// Focus / reconnect / mount triggers are the reader's and provider's concern.
 export type LaneSubscriber = {
   onInvalidate?: LaneSubscription;
   onInvalidationPending?: LaneInvalidationPendingSubscription;
   onRemove?: LaneRemoveSubscription;
   /**
-   * This reader's `gcTime`, read at the moment it leaves — the one piece of
-   * policy a subscriber carries, and it carries it because the store cannot ask
-   * anyone else. When the count reaches zero the only subscriber left is the one
-   * leaving, so "the shortest among the current subscribers" and "the departing
-   * reader's" are the same value; making it any shorter would mean remembering
-   * readers that are already gone, and letting a departed component's option
-   * decide what a future one gets.
-   *
-   * A function rather than a number because a reader's options are re-read on
-   * every render and the subscription is not re-opened for them.
+   * This reader's `gcTime`, read as it leaves (the only reader left to ask). A
+   * function: options are re-read every render without re-subscribing.
    */
   gcTime?: () => number | undefined;
 };
@@ -115,11 +76,8 @@ type LaneState = {
   /** When {@link sweepTimer} is due, so a nearer deadline can replace it. */
   sweepAt: number | undefined;
   /**
-   * Mints {@link LaneEntry.revision} values, one counter for the whole lane.
-   * Lane-wide rather than per-entry so that an entry evicted and re-created can
-   * never re-issue a number an older generation of the same key already used —
-   * a reader that folds a revision into another key's arguments would otherwise
-   * hit that key's stale cache and read it as current.
+   * Mints {@link LaneEntry.revision}; lane-wide so a re-created entry never
+   * re-issues a number an older generation of the same key used.
    */
   revisionCounter: number;
 };
@@ -131,27 +89,17 @@ type LanePromiseSettlement = {
 
 type LanePromiseCache = {
   /**
-   * The read itself: the promise for a client-owned entry, and a weak reference
-   * to it for an external one, whose value the lane does not keep alive (see
-   * {@link cacheSlot}). Which of the two is decided by the entry, never by
-   * inspecting this — `entry.external` says how to read the slot, and marking an
-   * entry external converts the slot it already had, so the two cannot disagree.
-   *
-   * A client-owned entry holds the promise directly rather than through a
-   * wrapper, because every entry in every app has one of these and almost none
-   * of them are external.
+   * The promise for a client-owned entry; a weak reference for an external one
+   * (see {@link cacheSlot}). `entry.external` says how to read the slot;
+   * `markExternal` converts an existing slot, so the two cannot disagree.
    */
   promise: Promise<unknown> | LaneWeakSlot;
   settlement: LanePromiseSettlement | undefined;
   startedAt: number;
   controller: AbortController | undefined;
-  // Set by `cancel` on a read that is still in flight. Every other abort path
-  // displaces the cache in the same breath, so a late settlement is already
-  // dropped by the identity check below; a cancel deliberately leaves the cache
-  // in place to revert to the previous value, which puts its settlement
-  // handlers back in play. They read this to fold the settlement into the
-  // fallback — so a loader that ignores its `signal` and runs to completion
-  // cannot undo a cancel.
+  // Set by `cancel` on an in-flight read; the cache stays, so its settlement
+  // handlers read this and fold into the fallback — a loader that ignores its
+  // `signal` cannot undo a cancel.
   cancelled: boolean;
 };
 
@@ -162,33 +110,21 @@ type LaneEntry = {
   subscribers: Set<LaneSubscriber>;
   lastFulfilled: { value: unknown; at: number } | undefined;
   /**
-   * When this entry stops being worth keeping — set when it becomes idle (on
-   * creation, and on the last unsubscribe) from the `gcTime` of whoever was
-   * last holding it, and cleared while it has subscribers. `undefined` means
-   * "someone is holding it", which is the only state the sweep skips;
-   * `Infinity` means idle and kept anyway.
+   * Idle-eviction deadline; cleared while subscribed. `undefined` = held (the
+   * only state the sweep skips); `Infinity` = idle but kept anyway.
    */
   evictAt: number | undefined;
   /**
-   * The identity of the content this entry currently holds — advanced (from the
-   * lane-wide counter) exactly when a fulfillment's value is a *new reference*,
-   * which structural sharing has already decided: a refetch that came back
-   * deep-equal kept the old reference and keeps the old revision. An external
-   * entry has no previous value to compare against, so every publication
-   * advances it — publication identity, the strongest claim the client can
-   * make about content it does not own (see {@link rememberFulfilled}). `0`
-   * until the first fulfillment, which no settled read ever shows.
+   * Identity of the held content — advanced only when a fulfillment is a new
+   * reference (deep-equal refetches keep the old revision); external entries
+   * advance on every publication (see {@link rememberFulfilled}). `0` until
+   * the first fulfillment.
    */
   revision: number;
   /**
-   * Whether this key's value comes from outside: read with `external`, or seeded
-   * by a publication (see `hydrate.ts`, which marks everything it seeds). It
-   * decides two things and nothing else — the client mutation surface throws on
-   * it, and its retention is delegated to reachability rather than to `gcTime`.
-   *
-   * It is one-way. A key someone declared external stays external for as long as
-   * the shell lives: the second reader of a key cannot be the one that decides
-   * nobody owns it.
+   * Value comes from outside: read with `external`, or seeded by a publication
+   * (`hydrate.ts`). Client mutations throw on it; retention is by reachability,
+   * not `gcTime`. One-way for the shell's lifetime.
    */
   external: boolean;
 };
@@ -209,23 +145,12 @@ export function createLane(options: LaneOptions = {}): Lane {
 
   const lane: Lane = {
     prefetch<T, C = T>(read: LaneReadSpec<T, C>, ...args: LaneLoaderMetaArgs) {
-      // Warm the cache without subscribing or suspending: start the load and
-      // hand back the promise for a later reader to adopt. A re-fired prefetch
-      // (e.g. repeated link hover) dedupes onto the in-flight or settled cache,
-      // because a read never discards one.
-      //
-      // `staleTime` and `gcTime` stay out of it: they describe a reader — when
-      // one refreshes, and how long a value outlives one — and this is not a
-      // reader. `warmTime` is exactly this call's business: warming a value is
-      // a bet that somebody will come for it, and this is where the bet is
-      // placed. `fallback` comes along for the same reason: it describes the
-      // load, and this call is the one starting it — so a warmed key that failed
-      // holds what the eventual reader would have gotten by loading it itself,
-      // which is the only way warming can be transparent.
+      // Warm the cache without subscribing or suspending; a re-fired prefetch
+      // dedupes onto the existing cache. `warmTime` / `fallback` describe the
+      // load and apply here; `staleTime` / `gcTime` describe a reader.
       if (isExternalLoader(read.loader)) {
-        // Rejected by `LaneReadSpec`'s loader type as well; this catches the
-        // spec that reached here as `any` or through a cast. Warming an
-        // external key would start a wait whose only outcome is the timeout.
+        // Also rejected by `LaneReadSpec`'s loader type; catches `any` / cast.
+        // Warming an external key would only ever hit the timeout.
         throw new LaneOwnershipError(
           read.key,
           serializeKey(read.key),
@@ -234,8 +159,7 @@ export function createLane(options: LaneOptions = {}): Lane {
       }
 
       return readOrCreate<T, C>(lane, serializeKey(read.key), read.key, read.loader, {
-        // Same precedence as a hook read: the read's own override wins over the
-        // value supplied alongside it.
+        // Same precedence as a hook read: the read's own override wins.
         loaderMeta: read.loaderMeta ?? args[0]?.loaderMeta,
         warmTime: read.warmTime,
         fallback: read.fallback as LaneReadOptions["fallback"],
@@ -282,10 +206,8 @@ export function createLane(options: LaneOptions = {}): Lane {
     updateAll<T>(scope: LaneScope, updater: LaneUpdater<T>) {
       const entries = matchingEntries(state.entries, scope);
 
-      // Checked over the whole match before anything is written, so a scope that
-      // happens to reach a published key is refused rather than half-applied.
-      // (`invalidateAll` cannot do the same: whether it touches an entry at all
-      // is `onlyIf`'s decision, entry by entry.)
+      // Checked over the whole match before writing, so a scope reaching a
+      // published key is refused rather than half-applied.
       assertScopeClientOwned(entries, "updateAll");
 
       return entries.flatMap((entry) => {
@@ -329,14 +251,9 @@ export function createLane(options: LaneOptions = {}): Lane {
 }
 
 /**
- * Publish a value under a key as the entry's authoritative content, and announce
- * it — `lane.set` addressed by key rather than by an entry the caller already
- * holds, which is what the publication path (`hydrate.ts`) needs.
- *
- * `external` says the value came from outside, marking the key as one the client
- * may not write to and whose retention is reachability's business rather than
- * `gcTime`'s. Not exported from the package: publishing on someone else's behalf
- * is an internal seam, and `lane.set` is the public way to publish your own.
+ * `lane.set` addressed by key, as the publication path (`hydrate.ts`) needs;
+ * `external` marks the key not client-writable, retained by reachability. Not
+ * exported from the package — `lane.set` is the public way to publish.
  */
 export function publishEntry<T>(
   lane: Lane,
@@ -359,10 +276,8 @@ export function publishEntry<T>(
 }
 
 /**
- * Record that this key is filled from outside, once. Converting the cache it
- * already holds is what keeps `entry.external` a sound description of the slot:
- * a key read with a client loader first and `external` second would otherwise be
- * an entry that says "weak" over a bare promise.
+ * Record that this key is filled from outside, once; converts an existing
+ * cache slot so `entry.external` stays a sound description of it.
  */
 function markExternal(entry: LaneEntry): void {
   if (entry.external) {
@@ -377,12 +292,8 @@ function markExternal(entry: LaneEntry): void {
 }
 
 /**
- * Addressed by canonical id, like every internal entry API — the id is what a
- * hook's effects hold and depend on, so it is what they hand over. The key
- * object rides along as creation material only: the entry may not exist (or may
- * have been removed) and a shell without its key could never answer a prefix
- * match or hand its loader real arguments. `keyId` must be `serializeKey(key)`;
- * callers hold both already, so the pair travels instead of being re-derived.
+ * Addressed by canonical id like every internal entry API; the key rides along
+ * as creation material. `keyId` must be `serializeKey(key)`.
  */
 export function readOrCreate<T, C = T>(
   lane: Lane,
@@ -394,26 +305,14 @@ export function readOrCreate<T, C = T>(
   const state = getLaneState(lane);
   const entry = getOrCreateEntry(state, key, keyId);
 
-  // The one place the store asks *which* loader it was handed: reading a key
-  // with `external` declares that it is filled from outside. Nothing downstream
-  // branches on the loader again — the wait is a loader like any other — but the
-  // entry's mutation surface and its retention both hang off whose value this
-  // is.
+  // An `external` read declares the key is filled from outside; mutation
+  // surface and retention hang off this. Nothing downstream re-checks the loader.
   if (isExternalLoader(loader)) {
     markExternal(entry);
   } else if (
-    // The two claims of ownership meeting, which is the one moment either side
-    // can see the other. A publication marks the key it seeds (`hydrate.ts`),
-    // and this read says it fetches the same key itself — so one of the two is a
-    // mistake, and nothing downstream will say which: the read *works*, it just
-    // works with none of a client-owned entry's guarantees, until the first
-    // write throws somewhere else entirely.
-    //
-    // Checked here rather than where the seed is written because this is the
-    // only place both facts exist. A publication is addressed by key, and a key
-    // does not carry its loader — `laneSnapshot` takes a read for ergonomics,
-    // but its plain-key forms carry nothing to check, so a check on that side
-    // would cover some spellings of the same mistake and not others.
+    // A publication marked this key external but this read supplies a client
+    // loader — a mistake nothing downstream reports until a write throws.
+    // Checked here: only here do both facts exist (a key carries no loader).
     typeof process !== "undefined" &&
     process.env.NODE_ENV !== "production" &&
     entry.external
@@ -438,10 +337,7 @@ export function readOrCreate<T, C = T>(
   }
 
   const controller = new AbortController();
-  // Snapshot the last fulfilled value now, so a publication landing between here
-  // and the loader's first call cannot change what the read was started from. It
-  // outlives invalidation (which clears the cache, not `lastFulfilled`) and is
-  // `undefined` once the entry itself is gone.
+  // Snapshot: a publication landing before the loader runs must not change this.
   const current = entry.lastFulfilled?.value as C | undefined;
   const promise = runLoader(loader, key, controller.signal, options, current);
 
@@ -449,26 +345,11 @@ export function readOrCreate<T, C = T>(
 }
 
 /**
- * The promise a read reuses, if the entry has one.
- *
- * This is the whole of it: a read looks, and takes what is there. It does not
- * discard a stale value, retry a rejection, or judge anything — every one of
- * those is a decision about *when* something should happen, and a render is not
- * a moment. React renders a suspended reader as many times as it likes and
- * throws the work away, so a read that acted would act again on every attempt;
- * and a read that dropped what other readers are holding would have to tell
- * them, during someone else's render, which React does not allow.
- *
- * So values leave the store only through events: `invalidate`, `remove`, a
- * publication, or eviction once nothing holds the entry (see
- * {@link LaneEntry.evictAt} — the read-time freshness option that used to do
- * this became the per-read `gcTime`). Staleness while a reader is mounted is
- * the revalidation triggers' business, and they fire from effects.
- *
- * The one case that is not a plain lookup belongs to an external entry, whose
- * value may simply be *gone*: a collected value reads as an absent one, so the
- * read goes through the loader (which, being `external`, waits for the next
- * publication) exactly as it would for a key never read before.
+ * A read takes whatever promise the entry has — never discarding, retrying, or
+ * notifying: React re-renders a suspended reader arbitrarily, and dropping
+ * what others hold would notify them mid-render. Values leave only through
+ * events (invalidate, remove, publication, eviction); an external entry's
+ * collected value reads as absent and re-runs the (waiting) loader.
  */
 function reuseCache(entry: LaneEntry): Promise<unknown> | undefined {
   const cache = entry.cache;
@@ -480,9 +361,7 @@ function reuseCache(entry: LaneEntry): Promise<unknown> | undefined {
   const promise = cachedPromise(entry, cache);
 
   if (promise === undefined) {
-    // Pruned here rather than on a timer, the way the router evicts its own
-    // caches: the read is the moment the shell's emptiness first matters, and
-    // an unread dead shell costs a map slot until then.
+    // Pruned on read: the first moment the shell's emptiness matters.
     entry.cache = undefined;
 
     return undefined;
@@ -508,10 +387,8 @@ export function invalidateEntry(
 }
 
 /**
- * `Lane.update` addressed by canonical id instead of key — the update-side twin
- * of `invalidateEntry`. A hook already holds the serialized id and would
- * otherwise have to keep the key array alive just to re-serialize it, which
- * makes the key a dependency of every callback that writes to the entry.
+ * `Lane.update` addressed by canonical id (twin of `invalidateEntry`), so
+ * hooks need not keep the key array alive to re-serialize.
  */
 export function updateEntry<T>(
   lane: Lane,
@@ -530,10 +407,7 @@ export function updateEntry<T>(
   return updateLaneEntry(state, entry, updater);
 }
 
-/**
- * Same id-plus-key contract as {@link readOrCreate}: the id addresses, the key
- * is the material for the entry this subscribe may have to (re)create.
- */
+/** Same id-plus-key contract as {@link readOrCreate}. */
 export function subscribeLane(
   lane: Lane,
   keyId: string,
@@ -554,10 +428,7 @@ export function subscribeLane(
     }
 
     if (entry.external) {
-      // Lane does not time an external entry out, because it does not know what
-      // the value is worth: the publisher and the readers do, and both of them
-      // hold it. Idleness says nothing here — the shell stays, and whether it
-      // still points at anything is settled by reachability, checked on read.
+      // Never timed out: the shell stays; reachability (checked on read) decides.
       return;
     }
 
@@ -570,21 +441,15 @@ export function subscribeLane(
       return;
     }
 
-    // Idle with a cache: retained for reuse until this reader's `gcTime` is up.
-    // The departing reader is the one that decides, because at zero subscribers
-    // it is the only one there is to ask.
+    // Idle with a cache: retained until the departing reader's `gcTime` is up.
     entry.evictAt = Date.now() + resolveGcTime(state, subscriber.gcTime?.());
     scheduleSweep(state);
   };
 }
 
 /**
- * The promise the entry currently holds, if any — the loader-free read-back
- * behind the bound `invalidate`, for the invalidation that notified nobody: an
- * `onlyIf` that declined cleared nothing, so the current cache *is* "the key's
- * value after this call". Deliberately not a public read API (the store returns
- * promises to readers, never data, and this returns only what a read already
- * created); addressed by canonical id like every internal entry API.
+ * The entry's current promise — read-back behind the bound `invalidate` for an
+ * `onlyIf` that declined. Not public: returns only what a read already created.
  */
 export function peekEntryPromise(
   lane: Lane,
@@ -622,12 +487,8 @@ function invalidateLaneEntry(
     return;
   }
 
-  // After the `onlyIf` gate, not before: an invalidation that would not have
-  // done anything has not reached into anyone's ownership. That is what keeps a
-  // revalidation trigger (`refetchOnMount` / focus / reconnect) from throwing out
-  // of an effect merely for being configured on a reader that happens to sit
-  // over a published key — while a trigger that *would* discard the owner's
-  // value still fails, because that is the violation.
+  // After the `onlyIf` gate: a no-op invalidation has not touched ownership,
+  // so a trigger over a published key throws only if it would discard the value.
   assertClientOwned(entry, "invalidate");
 
   removeEntryCache(entry);
@@ -637,51 +498,20 @@ function invalidateLaneEntry(
 
 function removeLaneEntry(state: LaneState, entry: LaneEntry): void {
   removeEntryCache(entry);
-  // Drop the last fulfilled value too. `remove` means the entry no longer
-  // belongs in client state — sign out, team switch, a deleted entity — and
-  // `cleanupEntry` cannot enforce that alone: an entry a reader still holds
-  // survives the removal, so anything left on it outlives the sign-out. That
-  // value is the stale-on-error fallback *and* the `current` handed to the next
-  // loader, either of which would serve the removed data back.
+  // Drop `lastFulfilled` too: it feeds the stale-on-error fallback and the
+  // next loader's `current`, either of which would serve removed data back.
   entry.lastFulfilled = undefined;
   notifyRemove(entry);
   cleanupEntry(state, entry);
 }
 
 /**
- * Stop an in-flight read without converging the key.
- *
- * Every other abort is a consequence of the cached promise being displaced, so
- * the key always ends up with something newer. Cancelling is the one case where
- * stopping *is* the intent, which makes it the only operation that must not
- * notify: announcing it would make subscribed readers re-read, turning "stop"
- * into "start again". Readers keep the promise they already hold and it settles
- * underneath them.
- *
- * The cache is always left in place, and that is what makes the stop stick. A
- * transition has no third outcome: it commits, or it commits an error boundary.
- * So a cancelled read still has to settle into one of those, and which one is
- * decided by what the key already had:
- *
- * - a previous value — the settlement handlers fold the abort into it. Readers
- *   keep showing the data they had, and the entry stays exactly as stale as it
- *   was (freshness keeps the original fulfillment time, so a later staleness
- *   policy still refreshes it).
- * - nothing to revert to — the read settles rejected, which is the only end a
- *   transition with no data can reach. Emptying the entry instead would look
- *   tidier and quietly undo the cancel: a reader mid-transition is still trying
- *   to reach that key, React retries the render it never committed, and an empty
- *   entry turns that retry into a fresh load. Keeping the rejection is what lets
- *   the retry terminate.
- *
- * The rejection is then as sticky as any other failed first load — reused until
- * the key is invalidated, removed, collected, or read with
- * `whenStale: "refetch"`. That is deliberately not special-cased: a cancelled
- * first load recovers the same way every other one does.
- *
- * A settled cache is a value (or an error) the key holds, not a request in
- * progress, so it is left alone — discarding one is what `invalidate` and
- * `remove` are for.
+ * Stop an in-flight read without notifying — announcing would turn "stop" into
+ * "start again"; readers keep their promise and it settles underneath them.
+ * The cache stays: with a previous value the settlement folds the abort into
+ * it (original fulfillment time kept); with nothing to revert to it settles
+ * rejected — an emptied entry would turn React's retry of the uncommitted
+ * render into a fresh load. A settled cache is left alone.
  */
 function cancelLaneEntry(entry: LaneEntry): void {
   const cache = entry.cache;
@@ -724,17 +554,9 @@ function publishEntryValue<T>(
   entry: LaneEntry,
   valueOrPromise: LaneValue<T>,
 ): Promise<LaneRead<T>> {
-  // The read being replaced is aborted, as it always was — but an external one
-  // is told *what* replaced it, on the abort itself. A publication is the value
-  // that read was waiting for, so it ends as a fulfilled read rather than an
-  // abandoned one, and that is the only thing that reaches a reader suspended on
-  // it: uncommitted, therefore not a subscriber, and retried by React only when
-  // the promise it suspended on settles.
-  //
-  // Only an external entry's abort carries the reason. A client loader's read is
-  // aborted exactly as before, so nothing it might do with `signal.reason`
-  // changes — and `abort(undefined)` is `abort()`, so there is no third case
-  // here.
+  // An external entry's abort carries the publication as its reason: a reader
+  // suspended on the wait is retried only when its promise settles, so the
+  // wait must end fulfilled with the published value.
   entry.cache?.controller?.abort(
     entry.external ? publicationReason(valueOrPromise) : undefined,
   );
@@ -762,17 +584,10 @@ function notifyInvalidate(
 }
 
 /**
- * Open the invalidation transition of every reader in a scope, without touching
- * a cache. The whole point is that nothing is stored: a notification that
- * *replaced* the cache would make readers re-read now, against a source the
- * caller has not changed yet, which is the pre-mutation data. So this schedules
- * no work and answers no question about the entry — it only reaches subscribers,
- * and what they do with it is open their transition.
- *
- * Checked over the whole match before anything is announced, for the reason
- * `updateAll` is: a scope that happens to reach a published key is refused
- * rather than half-applied. Announcing one is the same claim `invalidate` makes
- * and cannot back — the client does not know whether a publication is coming.
+ * Open the invalidation transition of every reader in a scope without touching
+ * a cache: replacing the cache would make readers re-read pre-mutation data.
+ * Ownership is checked over the whole match first (as in `updateAll`), so a
+ * scope reaching a published key is refused rather than half-applied.
  */
 function startScopeInvalidationTransition(
   state: LaneState,
@@ -840,12 +655,8 @@ function entryInfo(entry: LaneEntry): LaneEntryInfo {
 function noop(): void {}
 
 /**
- * What a cancelled read rejects with when its loader ignored the signal and
- * resolved anyway — the case where there is no abort error to propagate.
- *
- * A shared instance: it carries no per-read information, and a cancellation is
- * not a failure worth a stack trace. A plain `Error` rather than a
- * `DOMException` so it works wherever Lane runs (Hermes has no `DOMException`).
+ * Rejection for a cancelled read whose loader ignored the signal and resolved.
+ * Shared instance; a plain `Error`, not `DOMException` (Hermes lacks it).
  */
 const CANCELLED = new Error("Lane read cancelled");
 
@@ -870,11 +681,9 @@ function runLoader<T, C>(
   options: LaneReadOptions | undefined,
   current: C | undefined,
 ): Promise<T> {
-  // Started off a resolved promise rather than called outright, so a loader that
-  // throws synchronously rejects the read like any other failure instead of
-  // throwing out of the render that created it. Reading `loaderMeta` inside that
-  // callback is safe where `current` had to be snapshotted: `options` is built
-  // fresh per read and held by nobody, so nothing can move it across the defer.
+  // Deferred so a synchronously-throwing loader rejects the read instead of
+  // throwing out of the render. `options` is built fresh per read, so reading
+  // it inside the callback is safe where `current` had to be snapshotted.
   return Promise.resolve().then(() =>
     loader({
       current,
@@ -889,11 +698,8 @@ function createEntry(state: LaneState, key: LaneKey, keyId: string): LaneEntry {
   return {
     cache: undefined,
     external: false,
-    // No deadline yet, and none for as long as the read is in flight: an entry
-    // nobody holds is not evidence that nobody is coming, and a load still
-    // running is evidence that somebody might be — a suspended render is exactly
-    // that, and collecting it would abort a read someone is still waiting on.
-    // The clock starts where the wait can be judged: at the settlement.
+    // No deadline while a load is in flight — a suspended render may be
+    // waiting on it. The clock starts at settlement (see `startWarmClock`).
     evictAt: undefined,
     key,
     keyId,
@@ -904,10 +710,8 @@ function createEntry(state: LaneState, key: LaneKey, keyId: string): LaneEntry {
 }
 
 /**
- * The client mutation surface, closed on an entry whose value came from outside.
- * Thrown in production as well as development: this is not a lint about style
- * but a write that silently loses, and there is no degraded mode worth shipping
- * where it half-works.
+ * Client mutation surface, closed on externally-owned entries. Throws in
+ * production too: the write would silently lose, not merely be unidiomatic.
  */
 function assertClientOwned(entry: LaneEntry, operation: string): void {
   if (entry.external) {
@@ -925,16 +729,9 @@ function assertScopeClientOwned(
 }
 
 /**
- * Start the pre-arrival clock on an entry that has just settled with nobody
- * holding it — a prefetch nobody read, or a render that suspended and unmounted
- * before it could commit. The two are the same situation: a value was loaded for
- * a reader who has not arrived, and `warmTime` is how long arriving is still
- * considered possible.
- *
- * Deliberately not `gcTime`. That one answers "somebody had this and left, how
- * long is it worth keeping for their return" — a different question with no
- * reason to share an answer, and using it here was reading a memory policy as
- * evidence about a reader who never came.
+ * Start the pre-arrival clock on an entry that settled unheld (unread
+ * prefetch, or a suspend that went away). `warmTime`, not `gcTime` — that
+ * answers the different question "somebody had this and left".
  */
 function startWarmClock(
   state: LaneState,
@@ -983,57 +780,33 @@ function setEntryCache<T>(
     startedAt,
   };
 
-  // Every way this read can end goes through here, which is also the one moment
-  // the pre-arrival clock can start: settling is when "nobody is holding this"
-  // stops being ambiguous.
+  // Every way this read can end goes through here; settling is when the
+  // pre-arrival clock can start.
   const settle = (settlement: LanePromiseSettlement) => {
     cache.settlement = settlement;
     startWarmClock(state, entry, options);
   };
 
   /**
-   * Where a read that produced no usable value lands — a rejection, or a
-   * cancelled read whose loader resolved anyway. Both want the same thing, which
-   * is why the fulfilled path routes through here rather than repeating it.
-   *
-   * What gets served is the read's `fallback` policy, or the built-in one when
-   * it declares none: the last fulfilled value if there is one, and otherwise
-   * nothing, which is a rejection. Declaring a policy replaces that default
-   * outright rather than extending it — it is handed the same two facts the
-   * default decides from (the error, and the last fulfilled value), so
-   * "previous, else empty" and "never serve a previous value" are both things it
-   * can say. A policy that throws lands where the default's empty case lands.
-   *
-   * **What is served is not stored.** `lastFulfilled` moves only on a genuine
-   * success, and freshness keeps the original fulfillment time — so a
-   * fallen-back entry is still as stale as it was and still
-   * refreshes on the next trigger. This is the whole reason the policy lives
-   * here instead of in a `try`/`catch` inside the loader: a loader that returns
-   * a substitute has *succeeded* as far as the store can tell, which restamps
-   * the fulfillment time and overwrites the last good value.
-   *
-   * A cancel is not a failure, though — the caller asked for the stop, so it
-   * reverts silently to the last fulfilled value and never consults the policy.
-   * Running one here would ask an app to interpret an abort it requested itself,
-   * and every consumer rendering `error` would have to filter that back out.
+   * Lands a read with no usable value (rejection, or cancelled read whose
+   * loader resolved anyway): serves the read's `fallback` policy, else the
+   * default (last fulfilled value, else reject); a policy that throws lands in
+   * the empty case. What is served is not stored — `lastFulfilled` moves only
+   * on genuine success and freshness keeps the original time, which is why the
+   * policy lives here, not in a loader try/catch (a substitute would look like
+   * success and restamp both). A cancel skips the policy and reverts silently.
    */
   const settleWithoutValue = (error: unknown): LaneRead<T> => {
     const previous = entry.lastFulfilled;
 
-    // Two reads have no policy to run. An external key is the owner's to fill,
-    // so it has nothing to fall back to but a publication that never came. And a
-    // cancel is not a failure — the caller asked for the stop, so there is
-    // nothing to interpret, and the entry reverts to what it had exactly as it
-    // did before policies existed.
+    // No policy runs for an external key (nothing to fall back to) or a cancel.
     const policy =
       entry.external || cache.cancelled ? undefined : options?.fallback;
     let served: { value: unknown } | undefined = previous
       ? { value: previous.value }
       : undefined;
 
-    // What the rejection below reports. A policy that throws has replaced the
-    // failure with its own account of it — that is the error worth surfacing,
-    // and rethrowing the one it was handed is the ordinary way to keep it.
+    // A policy that throws replaces the failure with its own account of it.
     let unanswered = error;
 
     if (policy) {
@@ -1046,10 +819,8 @@ function setEntryCache<T>(
           }),
         };
       } catch (declined: unknown) {
-        // Declining lands where the default's empty case lands, whether the
-        // policy meant "not this failure" or simply threw. The entry has nothing
-        // to show either way, and a caught throw must not escape past the
-        // `settle` below or the cache is left with no settlement at all.
+        // Declining lands in the default's empty case; the throw must not
+        // escape past the `settle` below or the cache is left unsettled.
         served = undefined;
         unanswered = declined;
       }
@@ -1058,36 +829,22 @@ function setEntryCache<T>(
     if (!served) {
       settle({ at: Date.now(), kind: "rejected" });
 
-      // Wrapped on the way out, because this is the throw that unmounts the
-      // reader: whatever it was holding — the subscription, its `invalidate` —
-      // goes with it, and the error is all that reaches the boundary. A
-      // published key is left alone; recovering it is not the client's to offer
-      // (see `LaneReadError`).
+      // This throw unmounts the reader, so wrap the error to carry the key to
+      // the boundary (see `LaneReadError`). An external key's error passes
+      // through unwrapped: recovering it is not the client's to offer.
       throw entry.external
         ? unanswered
         : new LaneReadError(entry.key, entry.keyId, unanswered);
     }
 
-    // The entry's own freshness, not this settlement's: falling back is not a
-    // fulfillment. With a previous value that is its fulfillment time; with only
-    // a policy's value there has never been one, so the epoch stands in — which
-    // keeps the triggers firing on a key that is failing.
-    //
-    // The epoch and not `-Infinity`, so that `staleTime: Infinity` still means
-    // what it says. A read that has never loaded is as old as a value can be,
-    // but "never stale" is the app's decision and applies here too.
+    // Freshness is the entry's, not this settlement's: previous fulfillment
+    // time, or the epoch — so triggers keep firing on a failing key. The
+    // epoch, not `-Infinity`: `staleTime: Infinity` must still mean never stale.
     settle({ at: previous?.at ?? 0, kind: "fulfilled" });
 
-    // The entry's revision names what `lastFulfilled` holds, so it applies only
-    // while that is what is being served — the built-in policy always, and a
-    // declared one whenever it hands back what it was given. A policy serving
-    // anything else is serving content the entry never held, and one number must
-    // never name two different values, so that value carries a revision of its
-    // own (the displaced settlement below does the same for the same reason).
-    //
-    // Which means a substitute re-derives whatever keys on it, once per failed
-    // load. That is the honest direction: the content a reader sees really did
-    // change, and the alternative is claiming it did not.
+    // `entry.revision` names what `lastFulfilled` holds; a policy serving
+    // anything else gets a fresh revision — one number must never name two
+    // different values.
     const servedEntryValue =
       previous !== undefined && Object.is(served.value, previous.value);
     const read = settledRead(
@@ -1110,20 +867,14 @@ function setEntryCache<T>(
     (value) => {
       if (entry.cache !== cache) {
         // Displaced before settling: this value never became the entry's
-        // content, so it carries a revision of its own rather than the entry's
-        // — one number must never name two different values, and reading
-        // `entry.revision` here would pair this value with whatever settled
-        // *after* it. The external wait resolved by its own publication lands
-        // here too (the publication is what displaced it): its reader sees the
-        // published value under a number of its own, which external revisions
-        // permit — they only ever promise "same number ⇒ same value" — and the
-        // reveal reconciliation converges it onto the store's promise anyway.
+        // content, so it gets its own revision — `entry.revision` would pair
+        // it with whatever settled *after* it. An external wait resolved by
+        // its own publication lands here too.
         return settledRead(entry, value, ++state.revisionCounter);
       }
 
-      // Cancelled mid-flight. A loader that never forwarded its `signal` still
-      // resolves, and adopting that value would silently undo the cancel, so the
-      // read settles where it would have settled had the abort landed.
+      // Cancelled mid-flight: a loader that ignored its `signal` still
+      // resolves, and adopting the value would silently undo the cancel.
       if (cache.cancelled) {
         return settleWithoutValue(CANCELLED);
       }
@@ -1145,8 +896,7 @@ function setEntryCache<T>(
     },
   );
 
-  // Bookkeeping must not surface as an unhandled rejection when no reader
-  // ever consumes a rejected cache.
+  // A rejected cache no reader consumes must not be an unhandled rejection.
   guarded.catch(noop);
   cache.promise = cacheSlot(entry, guarded);
   entry.cache = cache;
@@ -1155,14 +905,9 @@ function setEntryCache<T>(
 }
 
 /**
- * How this entry holds the read it just installed. Strong for a client-owned
- * entry — the lane promised to keep it for `gcTime` and is the one that will
- * drop it. Weak for an external one, which is the whole retention design: the
- * publisher tethers what it published, a committed reader holds what it is
- * showing, and a value no longer reachable from either is one the owner would
- * have to re-supply anyway. Delegating to reachability is also what sidesteps
- * the thing effects cannot tell apart — a hidden subtree and an unmounted one
- * run the same cleanup, but only one of them still holds its promise.
+ * Strong slot for a client-owned entry; weak for an external one — publisher
+ * and committed readers keep it reachable, which also distinguishes a hidden
+ * subtree (still holds its promise) from an unmounted one.
  */
 function cacheSlot(
   entry: LaneEntry,
@@ -1181,11 +926,8 @@ const weakSlot: LaneWeakSlotFactory = (promise) => new WeakRef(promise);
 let externalRef: LaneWeakSlotFactory = weakSlot;
 
 /**
- * Replace how external entries hold their values, or restore the default
- * (`WeakRef`) with `undefined`. Test seam, deliberately not exported from the
- * package: collection is not schedulable, but "the value is gone" is a state the
- * store must serve correctly, so a test installs a reference it can kill on
- * demand and asserts that a dead value reads as absent.
+ * Test seam (not exported from the package): collection is not schedulable, so
+ * tests install a killable reference. `undefined` restores the `WeakRef` default.
  */
 export function setExternalRefFactory(
   factory: LaneWeakSlotFactory | undefined,
@@ -1193,11 +935,7 @@ export function setExternalRefFactory(
   externalRef = factory ?? weakSlot;
 }
 
-/**
- * The cached read, whichever way this entry holds it. The entry decides, not the
- * slot: a client-owned one is the promise, and only an external one has to be
- * asked whether its value is still there.
- */
+/** The cached read; only an external entry's slot has to be deref'd. */
 function cachedPromise(
   entry: LaneEntry,
   cache: LanePromiseCache,
@@ -1208,30 +946,13 @@ function cachedPromise(
 }
 
 /**
- * Record a fulfilled value as the entry's last — except on an external entry,
- * where it would be a strong reference to the very value the weak one exists to
- * release. Nothing is lost with it: `lastFulfilled` feeds the stale-on-error
- * fallback, the loader's `current`, and structural sharing across reloads, and
- * all three belong to a loader that fetches. An external entry has none.
- *
- * This is also where the entry's revision advances — at the settlement, in the
- * same synchronous run that seals the resolved value, so the number and the
- * data can never pair up wrong. For a client-owned entry the two records must
- * agree: `revision` names the content `lastFulfilled` holds, so they are
- * written in the same breath, and whether the content *changed* is not
- * re-decided here — structural sharing already collapsed a deep-equal refetch
- * onto the previous reference, so a new reference is the store's own verdict
- * that this is new content. (`Object.is`, not `!==`: a value that is literally
- * `NaN` must not read as forever-changing.)
- *
- * An external entry keeps no `lastFulfilled` (a strong reference the weak
- * retention forbids), so there is nothing to compare a publication against —
- * "unchanged" is not a fact this entry can establish. Every publication
- * therefore mints: an external revision is the identity of the *publication*,
- * the client's honest "possibly new content". The safe direction — same
- * revision ⇒ same content — still holds; what is given up is only that a
- * republish of identical content reads as new. An owner with a real content
- * version ships it in the payload.
+ * Record a fulfilled value as the entry's last and advance the revision, in
+ * the same synchronous run so number and data never pair up wrong. A new
+ * reference means new content (structural sharing already collapsed deep-equal
+ * refetches; `Object.is`, so `NaN` is not forever-changing). An external entry
+ * keeps no `lastFulfilled` (a strong ref the weak retention forbids), so every
+ * publication mints: "same revision ⇒ same content" holds, but a republish of
+ * identical content reads as new.
  */
 function rememberFulfilled(
   state: LaneState,
@@ -1254,11 +975,7 @@ function rememberFulfilled(
   entry.lastFulfilled = { at, value };
 }
 
-/**
- * The resolved shape a fulfillment hands its readers: the data under the
- * revision that names it — the entry's, unless the caller mints one of its own
- * (the displaced settlement).
- */
+/** Data under the revision that names it — the entry's, unless the caller mints one. */
 function settledRead<T>(
   entry: LaneEntry,
   data: T,
@@ -1278,44 +995,23 @@ function removeEntryCache(entry: LaneEntry): void {
   entry.cache = undefined;
 }
 
-/**
- * A read's `gcTime`, or the lane's where it has none. The lane's value is the
- * default rather than a floor or a ceiling: a read that says nothing gets the
- * instance policy, and one that says something means it.
- */
+/** A read's `gcTime`, defaulting to the lane's (a default, not a floor or ceiling). */
 function resolveGcTime(state: LaneState, gcTime: number | undefined): number {
   return gcTime ?? state.gcTime;
 }
 
 /**
- * One coalesced GC timer per lane, armed for the *nearest* deadline rather than
- * on a fixed cycle. Entries now expire on their own schedules — `gcTime` is a
- * read option, so two keys in one lane can disagree by minutes — and an interval
- * long enough for one would keep the other reusable long past its time.
- *
- * One timer rather than one per entry: an idle entry then costs a number instead
- * of a pending timer plus its closure, hot keys that mount and unmount in a loop
- * re-arm nothing unless they move the nearest deadline, and a throttled
- * background tab (or React Native) has one late wake-up to catch up on instead of
- * hundreds firing at once. The scan it pays for in exchange is a walk of a map
- * that is a few hundred entries at its largest.
- *
- * **Eviction is never synchronous**, however short the `gcTime`. `0` means "the
- * deadline is now", not "collect inside this call": React's StrictMode runs
- * subscribe → cleanup → subscribe within one commit, a re-suspension tears down
- * and re-creates layout effects, and either would collect an entry between the
- * two halves of a reader that never actually left. Going through the timer makes
- * those free — a resubscribe clears `evictAt` first, and the sweep skips what
- * nobody is waiting on. Leaving in the same task is not leaving.
+ * One coalesced GC timer per lane, armed for the nearest deadline (`gcTime` is
+ * per-read). Eviction is never synchronous, even at `gcTime: 0`: StrictMode
+ * runs subscribe → cleanup → subscribe in one commit, and a re-suspension
+ * re-creates layout effects — either would collect an entry whose reader never
+ * left; a resubscribe clears `evictAt` before the timer fires.
  */
 function scheduleSweep(state: LaneState): void {
   let nearest: number | undefined;
 
   for (const entry of state.entries.values()) {
-    // External entries are not the lane's to collect — their value lives as long
-    // as the publisher's payload or a committed reader keeps it reachable, and
-    // an idle timer would only race that. They are skipped rather than given a
-    // deadline, so they never hold a timer open either.
+    // External entries are not the lane's to collect: reachability decides.
     if (entry.external || entry.evictAt === undefined) {
       continue;
     }
@@ -1335,8 +1031,7 @@ function scheduleSweep(state: LaneState): void {
     return;
   }
 
-  // The armed timer already fires at or before the nearest deadline: it will
-  // collect this entry too, and re-arm for whatever is left.
+  // Armed timer already fires at or before this deadline; it re-arms for the rest.
   if (state.sweepTimer !== undefined && state.sweepAt !== undefined && state.sweepAt <= nearest) {
     return;
   }
@@ -1377,10 +1072,7 @@ function evictEntry(state: LaneState, entry: LaneEntry): void {
 
 /**
  * Public invalidations converge through a transition by default; `background:
- * true` routes them through the background transition instead (for automatic
- * refreshes like a self-scheduled poll, so they don't surface as
- * `isInvalidationPending`). Polling itself is not a core feature — schedule your
- * own timer and call `invalidate(key, { background: true, onlyIf: "settled" })`.
+ * true` keeps automatic refreshes (e.g. polls) out of `isInvalidationPending`.
  */
 export function invalidationSource(
   options?: LaneInvalidateOptions,
@@ -1417,11 +1109,8 @@ function shouldInvalidateEntry(
     return true;
   }
 
-  // Exactly the entries whose readers are in an error boundary. A read that fell
-  // back records its settlement as `fulfilled` — whether it served the previous
-  // value or what a `fallback` policy returned — so a key still serving
-  // *something* is not one of these however its last load went, and an in-flight
-  // read was already excluded above. So "retry what is broken" cannot reach
+  // Exactly the entries whose readers are in an error boundary (a read that
+  // fell back records `fulfilled`) — "retry what is broken" cannot reach
   // anything a reader is showing.
   if (options.onlyIf === "rejected") {
     return cache.settlement.kind === "rejected";
@@ -1435,51 +1124,27 @@ function shouldInvalidateEntry(
 }
 
 /**
- * `staleTime`'s default, and the one place it lives — every staleness decision
- * goes through `isStale`.
- *
- * Nothing is stale until an app says what stale means. Lane's revalidation
- * triggers are all off by default, so "how long a value stays fresh" has nothing
- * to answer to until one is turned on — and `staleTime` doubles as the rate limit
- * on the trigger it gates, so a `0` default would ship every app the version with
- * no limit. It also stacks badly with the read/trigger split: a read runs during
- * render and the trigger fires from an effect, so under a `0` default a mount
- * refetches the value that same mount just loaded.
- *
- * `Infinity` inverts both: the limit is on unless an app removes it, and
- * `staleTime: 0` is how you ask for "always stale" and take responsibility for it.
+ * `staleTime` default: nothing is stale until the app says what stale means.
+ * A `0` default would remove the rate limit on the triggers `staleTime` gates,
+ * and make a mount refetch what it just loaded (reads run during render,
+ * triggers fire from effects).
  */
 const DEFAULT_STALE_TIME = Number.POSITIVE_INFINITY;
 
 /**
- * How long a settled entry nobody holds waits for its first reader.
- *
- * Shorter than `gcTime`'s default, and independent of it: this is spent on an
- * arrival that has not happened, not on a reader who was there and may return.
- * Both situations it covers are short ones — the seconds between a hover
- * prefetch and the click, and a render that suspended and went away — so a
- * minute is generous for either. A prefetch placed further ahead of its reader
- * than that is a bet the read should state itself.
+ * How long a settled entry nobody holds waits for its first reader; the
+ * covered cases (hover prefetch → click, a suspend that went away) are short.
  */
 const DEFAULT_WARM_TIME = 60_000;
 
 const warned = new Set<string>();
 
 /**
- * Warns once per message.
- *
- * It exists because the `Infinity` default turns a missing `staleTime` into
- * silence rather than waste: the option is accepted, and then nothing happens.
- * That is the failure mode worth a word at the moment it is configured.
- *
- * Every call site guards with the literal
+ * Warns once per message. Every call site guards with the literal
  * `typeof process !== "undefined" && process.env.NODE_ENV !== "production"`,
- * written out rather than factored into a helper or a module constant. That exact
- * expression is what bundlers substitute (and what esbuild folds on its own when
- * minifying), so the branch is dropped, this function is left unreferenced, and
- * the whole thing tree-shakes out of a production build. A `?.` on `process.env`,
- * or hiding the check behind an imported boolean, defeats the substitution and
- * ships the strings.
+ * written out verbatim — the exact expression bundlers substitute, so the
+ * branch and these strings tree-shake out of production builds. A `?.` on
+ * `process.env` or an imported boolean defeats the substitution.
  */
 export function warnDev(message: string): void {
   if (warned.has(message)) {
@@ -1498,8 +1163,7 @@ function isStale(
     return false;
   }
 
-  // `at` is a past timestamp, so `now - at >= 0`: any staleTime <= 0 is stale,
-  // and the `Infinity` default is never stale.
+  // `now - at >= 0`: any staleTime <= 0 is stale; the Infinity default never is.
   return Date.now() - cache.settlement.at >= (staleTime ?? DEFAULT_STALE_TIME);
 }
 

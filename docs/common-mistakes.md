@@ -39,11 +39,10 @@ function Profile({ id }: { id: string }) {
 }
 ```
 
-This re-creates everything Lane and React already give you — a second copy of the
-data, a hand-rolled loading flag, an error branch — and it is *worse*: the
-`.then` resolves after commit, so there is always an extra render with no data;
-the mirrored state can tear from the promise under concurrent rendering; and you
-lose transitions, so the screen flashes on every refetch.
+This re-creates everything Lane and React already give you, and it is *worse*:
+the `.then` resolves after commit (an extra render with no data), the mirrored
+state can tear from the promise under concurrent rendering, and you lose
+transitions, so the screen flashes on every refetch.
 
 **Do** read the promise with `use()` and let the boundaries own loading/errors:
 
@@ -111,10 +110,10 @@ if (id) {
 **Do** gate the read by passing `loader: undefined`, then unwrap conditionally:
 
 ```tsx
-const { promise } = useLane(
-  ["user", id],
-  id ? ({ signal }) => fetchUser(id, signal) : undefined,
-);
+const { promise } = useLane({
+  key: ["user", id],
+  loader: id ? ({ signal }) => fetchUser(id, signal) : undefined,
+});
 const user = promise ? use(promise).data : null;
 ```
 
@@ -128,19 +127,10 @@ You want a slow read's data, but not at the cost of first paint — render the
 screen now, fill that one region in when it resolves, and never flash a fallback.
 
 **Don't** reach for an effect + `setState` (the big one again), and **don't** gate
-the *loader* to "hold it back":
-
-```tsx
-const { promise } = useLane({
-  key: ["graph", id],
-  loader: reveal ? loader : undefined,
-});
-// Gating the loader delays the FETCH — the data lands late, not early.
-```
-
-Gating the loader is the [conditional](#conditional-reads-gate-the-loader) case —
-for data you might *never* need, not data you *will* need but want off the
-critical paint.
+the *loader* to "hold it back" — `loader: reveal ? loader : undefined` delays the
+FETCH, so the data lands late, not early. Gating the loader is the
+[conditional](#conditional-reads-gate-the-loader) case — for data you might
+*never* need.
 
 **Do** keep the loader always set (the fetch starts and caches immediately), gate
 only the `use()` call, and flip the reveal inside a transition, so the suspend
@@ -165,12 +155,10 @@ const { data } = use(promise); // now suspends — the transition keeps the plac
 return <Graph data={data} />;
 ```
 
-This is the deferred half of that split: own the read (load now), defer the
-`use()`. A plain `setReveal(true)` *without* the transition would flash the
-Suspense fallback. And the `useState` / `useEffect` here drive the *reveal* (local
-UI state), **not** the data — the data still comes from `use(promise)`. See
+The `useState` / `useEffect` here drive the *reveal* (local UI state), **not**
+the data — the data still comes from `use(promise)`. See
 [deferred reads](./api-reference.md#deferred-reads-render-first-swap-when-ready)
-for staggered or multiple reveals and the full set of caveats.
+for staggered reveals and the full set of caveats.
 
 ### Key changes that flash (filters, navigation, props)
 
@@ -211,11 +199,11 @@ function Detail({ id }: { id: string }) {
 ```
 
 Use the deferred value for the loader too, not just the key: during the lagging
-render `useDeferredValue` returns the *old* `id` while the raw `id` prop is already
-the new one, so mixing them would register the old key against a fetch for the new
-target. `useDeferredValue` defers the *reveal* only — the fetch still runs, and a
-genuine first load still suspends, so keep a `<Suspense>` above. See
-[transitions & the back/forward caveat](./integrations.md#transitions-and-the-backforward-caveat).
+render `useDeferredValue` returns the *old* `id` while the raw prop is already
+the new one, so mixing them would register the old key against a fetch for the
+new target. A genuine first load still suspends, so keep a `<Suspense>` above.
+See [transitions & the back/forward
+caveat](./integrations.md#transitions-and-the-backforward-caveat).
 
 ## Suspense boundaries decide what stays mounted
 
@@ -252,14 +240,13 @@ fallback renders *inside* it and the surface stays mounted:
 </Modal>
 ```
 
-The same rule covers **tab panels** — switching to a tab that reads should keep the
-tab bar live, so put a boundary per panel and change tabs in a transition — and
-**popover / combobox option lists** — the boundary goes inside the popover, not on
-the trigger.
+The same rule covers **tab panels** (a boundary per panel, tab changes in a
+transition) and **popover / combobox option lists** (the boundary goes inside
+the popover, not on the trigger).
 
-Mind the split: this is a surface's *initial* read (no prior value — it *must*
-suspend). Once a value exists, changing a filter or key *inside* the surface rides
-a transition and keeps it live (see [key changes that
+Mind the split: this is about a surface's *initial* read. Once a value exists,
+changing a filter or key *inside* the surface rides a transition and keeps it
+live (see [key changes that
 flash](#key-changes-that-flash-filters-navigation-props)) — no extra boundary
 needed for that.
 
@@ -306,12 +293,17 @@ at each call site.
 export const taskKeys = { detail: (id: string) => ["task", id] as const };
 
 // One component
-useLane(taskKeys.detail(id), ({ signal }) => fetchTask(id, signal), {
+useLane({
+  key: taskKeys.detail(id),
+  loader: ({ signal }) => fetchTask(id, signal),
   staleTime: 60_000,
 });
 
 // Another — same key, different freshness, and (here) the wrong loader entirely.
-useLane(taskKeys.detail(id), ({ signal }) => fetchTaskSummary(id, signal));
+useLane({
+  key: taskKeys.detail(id),
+  loader: ({ signal }) => fetchTaskSummary(id, signal),
+});
 ```
 
 Both compile. Both write to the *same entry*, so whichever mounts first decides
@@ -348,9 +340,6 @@ lane.set(taskKeys.detail(saved.id), saved); // still checked
 
 Two reads that genuinely differ should differ in their **key** — `["task", id]`
 and `["task-summary", id]` are different data and belong in different entries.
-[`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation) is what
-makes that visible: one definition per entry, so a second loader for the same key
-has nowhere to hide.
 
 ### Binding a request context into the read factory
 
@@ -372,10 +361,6 @@ useLane(taskLanes(ctx).detail(id));
 // Component, an error-boundary retry, a component above the provider.
 lane.set(taskLanes(???).detail(task.id).key, task);
 ```
-
-What happens next is the actual bug: a second map of bare keys appears so the
-write side has something to import, every read exists twice, the loaded type is
-restated by hand on the key side, and nothing checks that the two agree.
 
 **Do** put the dependency on the lane and keep the read's arguments to what
 decides its key:
@@ -442,22 +427,17 @@ function TaskHeader({ task }: { task: Task }) {
 }
 ```
 
-Three readers of one key are three subscriptions, three `isInvalidationPending`
-flags to reconcile, three places that can suspend, and three independently
-scheduled convergences — the whole reason
+Three readers of one key are three subscriptions, three pending flags to
+reconcile, and three independently scheduled convergences — the whole reason
 [cross-reader consistency](./consistency.md) has anything to say. A child taking
-a prop cannot disagree with its parent, needs no Lane provider to test, and reads
-like ordinary React.
+a prop cannot disagree with its parent.
 
 **The exception is distance.** Two genuinely separate surfaces — a header badge
-and a detail pane in different subtrees, a modal that mounts on its own — should
-each read the key. Threading a prop there would mean lifting it to a common
-ancestor far above both and routing it through components with no business
-knowing about it, which is worse. The rule is *one owner per key per subtree*,
-not *one reader per key*.
-
-This is about the **same** key. Rendering N rows that each read a *different*
-key — `["task", row.id]` — is the right shape; see
+and a detail pane in different subtrees — should each read the key rather than
+thread a prop through components with no business knowing about it. The rule is
+*one owner per key per subtree*, not *one reader per key*. And it is about the
+**same** key: rendering N rows that each read a *different* key is the right
+shape — see
 [batch reads](./api-reference.md#uselanesallreads-options--a-batch-read).
 
 ### Don't drop the abort signal
@@ -466,14 +446,14 @@ key — `["task", row.id]` — is the right shape; see
 running:
 
 ```tsx
-useLane({ key: ["user", id], loader: () => fetchUser(id) };
+useLane({ key: ["user", id], loader: () => fetchUser(id) });
 ```
 
 **Do** forward it to `fetch`, so a stale request aborts when the key changes or
 the entry refreshes:
 
 ```tsx
-useLane({ key: ["user", id], loader: ({ signal }) => fetchUser(id, signal) };
+useLane({ key: ["user", id], loader: ({ signal }) => fetchUser(id, signal) });
 ```
 
 ### Holding an infinite list's depth in component state
@@ -495,13 +475,10 @@ const { promise } = useLane({
 ```
 
 The ref and the cache have different lifetimes, so they drift apart the moment
-anything ends one and not the other. Measured, with six pages loaded: unmounting
-the list and mounting it again restored all six from cache **with no request** —
-and reset the ref to `1`. The screen showed six pages; the reader believed it had
-one. The next invalidation refetched one page and the list silently collapsed
-from 120 rows to 20. No unmount is even required — switching a filter away and
-back does it too, because the previous key's value is still cached while the
-component's ref has moved on.
+anything ends one and not the other: remounting (or switching a filter away and
+back) restores six pages from cache with no request — and resets the ref to `1`.
+The screen shows six pages; the reader believes it has one; the next
+invalidation refetches one page and the list silently collapses.
 
 **Do** derive the depth from the value itself, which is what
 [`current`](./api-reference.md#uselaneread) is for — or reach for
@@ -518,10 +495,8 @@ const { promise, loadMore } = useInfiniteLane({
 const { data } = use(promise); // data.pages, data.hasNext
 ```
 
-There is now no second copy to desync: the loader reads the depth out of the same
-value the screen is rendering. This is the general rule at the top of this page —
-don't put fetched data (or anything derived from it) in component state — in the
-one shape where the cost is delayed long enough to look safe.
+There is now no second copy to desync: the loader reads the depth out of the
+same value the screen is rendering.
 
 ## Mutations & local state
 
@@ -544,12 +519,8 @@ lane.set(["task", id], updated);   // ✗ throws: LaneOwnershipError
 lane.invalidate(["tasks"]);        // ✗ same
 ```
 
-That pairing has two sources of truth: the next payload silently overwrites the
-local write, or it never arrives and the local write outlives the truth. Lane
-refuses it at the point of the write rather than letting it fail later somewhere
-else.
-
-**Do** send the change through the owner, and cover the round trip with
+That pairing has two sources of truth, and Lane refuses it at the point of the
+write. **Do** send the change through the owner, and cover the round trip with
 `useOptimistic`:
 
 ```tsx
@@ -677,24 +648,19 @@ if (user !== base) {
 
 This is React's official "[adjust state while
 rendering](https://react.dev/reference/react/useState#storing-information-from-previous-renders)"
-pattern: guarded by `user !== base` so it can't loop, and updating only *this*
-component's own state. `use(promise)` returns a new `data` reference only when the
-entry actually re-read, so the reset fires on a real remote change — including
-switching to a different `id` — not on every render.
+pattern. `use(promise)` returns a new `data` reference only when the entry
+actually re-read (structural sharing), so the reset fires on a real remote
+change — not on every render.
 
-This makes **remote updates win**: an in-flight refresh replaces the draft. That is
-what you want right after saving and invalidating. If instead you want to *keep*
-edits across background refreshes, gate the reset (e.g. only when the form is not
-dirty), or only `invalidate` once the save has completed. To reset *all* local
-state when you switch records, the coarser alternative is to re-key the component
-(`<EditUser key={id} />`).
+This makes **remote updates win**: an in-flight refresh replaces the draft. To
+*keep* edits across background refreshes instead, gate the reset (e.g. only when
+the form is not dirty). To reset *all* local state when switching records,
+re-key the component (`<EditUser key={id} />`).
 
 **Either way, converge on save:** for a client-owned key, write to the API and
-then `lane.set(key, confirmed)` (publish the returned entity) or
-`lane.invalidate(key)` (re-read); for a published one, submit through the owner
-and let the republication arrive. The draft is now redundant — discard it.
-**Never** write the draft *into* Lane to "share" it; optimistic display elsewhere
-is `useOptimistic`, local to the action.
+then `lane.set(key, confirmed)` or `lane.invalidate(key)`; for a published one,
+submit through the owner and let the republication arrive. **Never** write the
+draft *into* Lane to "share" it.
 
 ## Reimplementing refetching
 
@@ -727,20 +693,15 @@ useLane({ ...taskLanes.detail(id), refetchOnFocus: true, staleTime: 0 });
 ```
 
 The `staleTime` is not just a gate, it is the **rate limit**: a value refreshed
-within it is not refreshed again, however many times the trigger fires. Which is
-why `staleTime: 0` deserves a thought rather than a reflex — it is the setting
-with no limit, and on a fresh mount it makes `refetchOnMount: true` fetch twice
-(the read starts during render, the trigger fires from an effect, and the second
-request refreshes what the first just loaded). Coming from react-query, where `0`
-is the default and mount-fetch and refetch are one mechanism, this is the one
-number worth restating deliberately.
+within it is not refreshed again, however many times the trigger fires. So
+`staleTime: 0` deserves a thought — it is the setting with no limit, and on a
+fresh mount it makes `refetchOnMount: true` fetch twice (the read starts during
+render, the trigger fires from an effect). Coming from react-query, where `0` is
+the default, this is the one number worth restating deliberately.
 
 **Polling is userland** — there is no `refetchInterval` in core. A poll is a
-self-scheduled invalidation, written with primitives (the same stance Lane takes
-on mutations): `lane.invalidate(key, { onlyIf: "settled", background: true })` on
-an interval, or an effect that re-arms after each `use(promise)` load so it never
-fires mid-flight. It converges through the background transition
-(`isBackgroundPending`). See [polling](./api-reference.md#polling).
+self-scheduled `invalidate(key, { onlyIf: "settled", background: true })`. See
+[polling](./api-reference.md#polling).
 
 ## So when *do* you call `useState` / `setState`?
 

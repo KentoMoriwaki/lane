@@ -6,11 +6,8 @@ import { domEventSource } from "./event-source";
 import type { LaneEventSource } from "./event-source";
 import type { Lane, LaneLoaderMeta, LaneLoaderMetaProp } from "./types";
 
-// A reader's opt-in to activity-based revalidation. Focus / reconnect are DOM
-// concerns the provider already owns (it holds the window listeners), so the
-// registry of who wants them lives here — the store stays unaware of "focus".
-// The provider fans its events out to the registered handlers; each one
-// refreshes its own keys with a plain `invalidateEntry`.
+// A reader's opt-in to focus / reconnect revalidation. The registry lives in
+// the provider, keeping the store unaware of "focus".
 export type Revalidator = {
   onFocus?: () => void;
   onReconnect?: () => void;
@@ -20,11 +17,8 @@ export type LaneRevalidation = {
   subscribe: (revalidator: Revalidator) => () => void;
 };
 
-// One context for everything the provider supplies: the store, its revalidation
-// registry, and the loader meta. They share a provider and a lifetime and are
-// always read together (a reader needs all three), so a single context models
-// them more honestly than two — and since `revalidation` never changes, nothing
-// consumes it in isolation that a split would spare a re-render.
+// One context for all three: they share a lifetime and are always read
+// together, and `revalidation` never changes, so a split would spare nothing.
 type LaneContextValue = {
   lane: Lane;
   revalidation: LaneRevalidation;
@@ -35,9 +29,8 @@ const LaneContext = React.createContext<LaneContextValue | null>(null);
 
 const DEFAULT_FOCUS_THROTTLE_INTERVAL = 5_000;
 
-// The registry the provider keeps for its lifetime: `revalidators` is the live
-// set the window listeners fan out to; `revalidation` is the stable `subscribe`
-// handle handed to readers through context. Created once (see the ref below).
+// `revalidators` is the live set the source fans out to; `revalidation` the
+// stable subscribe handle for readers.
 function createRegistry(): {
   revalidators: Set<Revalidator>;
   revalidation: LaneRevalidation;
@@ -65,11 +58,10 @@ export type LaneProviderProps = {
    */
   focusThrottleInterval?: number;
   /**
-   * Where focus / reconnect signals come from. Defaults to browser DOM events
-   * (`domEventSource`), feature-detected so it safely no-ops off the web. Pass
-   * `noopEventSource` for a CLI, `createReactNativeEventSource(...)` for React
-   * Native, or your own {@link LaneEventSource}. Use a stable reference — it is
-   * an effect dependency (the shipped sources are stable).
+   * Where focus / reconnect signals come from; defaults to `domEventSource`.
+   * Pass `noopEventSource`, `createReactNativeEventSource(...)`, or your own
+   * {@link LaneEventSource}. Use a stable reference — it is an effect
+   * dependency (the shipped sources are stable).
    */
   eventSource?: LaneEventSource;
   children: React.ReactNode;
@@ -82,8 +74,7 @@ export function LaneProvider({
   loaderMeta,
   children,
 }: LaneProviderProps) {
-  // Both are created once and never re-created, so they are refs, not state.
-  // The default lane is built lazily — only when no lane is supplied.
+  // Both created once, never re-created: refs, not state.
   const defaultLaneRef = React.useRef<Lane>(undefined);
   const lane = providedLane ?? (defaultLaneRef.current ??= createLane());
 
@@ -91,10 +82,8 @@ export function LaneProvider({
   const { revalidators, revalidation } = (registryRef.current ??= createRegistry());
 
   React.useEffect(() => {
-    // Throttle focus here, not in the source: coalescing repeated focus signals
-    // is policy that applies whatever the source (DOM, AppState, custom), so the
-    // source emits raw signals and the provider owns the window. Reconnect is not
-    // throttled. The source wires the environment and returns its own cleanup.
+    // Focus is throttled here, not in the source: coalescing is policy that
+    // applies whatever the source. Reconnect is not throttled.
     let lastFocusAt = 0;
 
     const onFocus = () => {
@@ -120,28 +109,20 @@ export function LaneProvider({
     return eventSource({ onFocus, onReconnect });
   }, [revalidators, focusThrottleInterval, eventSource]);
 
-  // `revalidation` is stable, so this changes only when `lane` or the loader
-  // meta does. A changed meta re-renders readers, which is what makes the *next*
-  // read use it; reads already in flight keep the meta they started with, and
-  // entries already loaded are not invalidated — see `LaneRegister`.
+  // A changed meta re-renders readers, so the *next* read uses it; in-flight
+  // reads keep theirs, and loaded entries are not invalidated (see `LaneRegister`).
   const value = React.useMemo<LaneContextValue>(
     () => ({ lane, loaderMeta: loaderMeta as LaneLoaderMeta, revalidation }),
     [lane, loaderMeta, revalidation],
   );
 
-  // React 19: render the context object directly as a provider (`.Provider` is
-  // slated for deprecation).
+  // React 19: context object as provider (`.Provider` is slated for deprecation).
   return React.createElement(LaneContext, { value }, children);
 }
 
 /**
- * Everything the provider supplies, in one context read. The read hooks need all
- * of it, so they call this once rather than composing the narrow hooks below —
- * three `useContext` calls and three copies of the "must be used within" message
- * for one lookup, and the message would name whichever narrow hook happened to
- * run first instead of the hook the caller wrote.
- *
- * Internal: the narrow hooks are the public surface.
+ * Everything the provider supplies, in one context read; `hook` names the
+ * caller in the error. Internal: the narrow hooks below are the public surface.
  */
 export function useLaneContext(hook: string): LaneContextValue {
   const value = React.useContext(LaneContext);

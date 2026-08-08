@@ -960,12 +960,12 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
-  it("whenStale 'refetch' + staleTime 0 does not refetch-loop on first mount", async () => {
+  it("staleTime 0 does not refetch-loop on first mount", async () => {
     // A never-yet-mounted entry looks exactly like an idle remount to the store
-    // (settled cache, zero subscribers) during a pre-commit suspense retry. With
-    // staleTime 0 every retry would judge the just-settled value stale, discard
-    // it, and refetch — a loop that never commits. The read must reuse the value
-    // until the reader has actually mounted at least once.
+    // (settled cache, zero subscribers) during a pre-commit suspense retry.
+    // With staleTime 0 every retry judges the just-settled value stale; the
+    // read must still reuse it — a retry that refetched would loop without
+    // ever committing.
     const lane = createLane();
     const gates: Array<ReturnType<typeof deferred<string>>> = [];
     const loader = vi.fn(() => {
@@ -973,7 +973,7 @@ describe("React integration", () => {
       gates.push(gate);
       return gate.promise;
     });
-    const options = { whenStale: "refetch" as const, staleTime: 0 };
+    const options = { staleTime: 0 };
 
     const app = await renderLaneApp({ lane, loader, options });
     await waitForText(app.container, "loading");

@@ -77,62 +77,37 @@ is deliberately not special-cased.
 
 The race that a cancel API usually exists to solve does not arise here, so
 stopping is all it is for. Elsewhere cancellation is load-bearing just before an
-optimistic update — a refetch that started before the mutation must not land after
-it and overwrite the result. Lane closes that path structurally instead: `set`
-aborts and publishes in one step, and `update` chains rather than races. A
-response that arrives late regardless writes into a cache object the entry no
+optimistic update — a refetch that started before the mutation must not land
+after it and overwrite the result. Lane closes that path structurally instead:
+`set` aborts and publishes in one step, and `update` chains rather than races.
+A response that arrives late regardless writes into a cache object the entry no
 longer holds, and is ignored.
 
 **So `cancel` is for a read the caller started and can still account for.** Not
-"stop whatever is in flight under this key" — that reading is what makes it
-dangerous, and the two conditions behind it are both about the call site rather
-than about the cache:
+"stop whatever is in flight under this key" — the two conditions behind it are
+both about the call site rather than about the cache:
 
 - **you issued this read** — your own `invalidate`, a load you are explicitly
   offering to stop, a key whose parameters you know are spent
 - **nothing else reads this key** — `cancel` is addressed by key, so on a shared
   key you can stop your own refresh and a stranger's first load with the same call
 
-Which is also why there is no `cancelAll`: the scoped twins exist for operations
-that converge on every key they touch, and cancelling an unenumerated family
-would leave a rejection on an unknown number of them. `useLane` returns no bound
-`cancel` either. Binding one to the reader's own key would be the safest possible
-form of it — but every reader would carry it and almost none would call it, which
-is the wrong trade for a hook result.
+A superseded read — switching tabs, retyping a search — fails the first
+condition. Nobody *issued* those requests: the caller changed some state, React
+decided to render it, and Lane read what the render asked for. React reports an
+abandoned render to nobody, so there is no event to hang a cancellation on
+either; speculative rendering means speculative requests, and letting them
+finish is the right default — React comes back to abandoned keys (a deleted
+character restores the previous query) and reuses the in-flight read when it
+does. Collection is left to `gcTime` / `warmTime` because the timescales do not
+match: garbage collection is correct if it happens eventually, cancellation is
+worthless unless it happens now.
 
-A superseded read fails the first condition, which is why switching tabs or
-retyping a search is the wrong place for it. Nobody *issued* those requests: the
-caller changed some state, React decided to render it, and Lane read what the
-render asked for. The request is a downstream consequence of a render the caller
-does not control — and React reports an abandoned render to nobody, so there is no
-event to hang a cancellation on either. Reads are created during render and
-subscriptions during an effect, so a transition that never commits leaves an entry
-that was read but never subscribed: no unsubscribe, no cleanup, nothing.
-
-That is not a gap to be closed. Keying a request by identity is what makes
-starting it during render acceptable at all, because a re-run reuses the work
-instead of repeating it — but idempotent re-runs are not reversible runs, and
-nothing un-starts a request whose render was thrown away. Speculative rendering
-means speculative requests, and letting them finish is the right default rather
-than the convenient one: React comes back to abandoned keys — a deleted character
-restores the previous query — and reuses the in-flight read when it does.
-Collection is left to `gcTime` because the timescales do not match either:
-garbage collection is correct if it happens eventually, cancellation is worthless
-unless it happens now.
-
-Ownership cannot be a runtime check, and deliberately so. Lane exposes [no way to
-ask what a key holds](#the-store-returns-promises-never-data), and an option like
-`onlyIf: "revertable"` — cancel, but only where it happens to be safe — would
-make the same button stop the request or not depending on whether the load had
-committed a moment earlier, which the caller cannot observe. `invalidate`'s
-`onlyIf` works because both of its outcomes converge; cancelling's do not. The
-rule belongs where the knowledge is: at the call site, checked by whoever writes
-it.
-
-Resource saving is a side effect and not the point. A stopped request does spare
-the bandwidth, the radio, and — only if the server bothers to notice the closed
-connection — the server's work. But framing `cancel` that way invites exactly the
-broad, speculative use the conditions above rule out.
+Ownership cannot be a runtime check, and deliberately so. Lane exposes [no way
+to ask what a key holds](#the-store-returns-promises-never-data), and an option
+like `onlyIf: "revertable"` would make the same button stop the request or not
+depending on state the caller cannot observe. The rule belongs where the
+knowledge is: at the call site, checked by whoever writes it.
 
 ## React owns UI state
 
@@ -150,18 +125,8 @@ more long-term than a convenient wrapper that diverges from it.
 ## Lane is not an API client
 
 Lane never issues a request. A loader is your code calling your client, and
-Lane's only contribution to it is the argument list. That is not a gap to be
-filled in later — it is the second of Lane's two boundaries. The first faces
-React ([React owns UI state](#react-owns-ui-state)); this one faces the network,
-and it is drawn by asking what each layer can see.
-
-| layer | sees | cannot see |
-| --- | --- | --- |
-| your API client | one request — its input, its response, its failure | who asked, whether anyone still cares, what is on screen, when React will commit |
-| React | the tree, the schedule, what is mounted | which data belongs to which key, when a value went stale |
-| **Lane** | **both sides of the seam** | |
-
-So what belongs in Lane has a factual answer rather than a stylistic one:
+Lane's only contribution to it is the argument list. What belongs in Lane has a
+factual answer rather than a stylistic one:
 
 > To implement this correctly, must you know **(a)** what is on screen right
 > now, **(b)** whether anyone is still reading, or **(c)** when React will
@@ -170,33 +135,23 @@ So what belongs in Lane has a factual answer rather than a stylistic one:
 If none of the three, the feature can be implemented correctly without Lane, and
 putting it in Lane only takes away your choice of client.
 
-**What the test admits.** Stale-on-error needs (a) — serving the last fulfilled
-value requires knowing there is one. `revision` and structural sharing need (a):
-"changed" means changed relative to what is rendered. Dedup, abort-on-discard,
-garbage collection, and focus / reconnect revalidation need (b) — they are all
-questions about who is still subscribed. Transition-native replacement needs (c),
-and nothing else can supply it.
+**What the test admits.** Stale-on-error, `revision`, and structural sharing
+need (a). Dedup, abort-on-discard, garbage collection, and focus / reconnect
+revalidation need (b). Transition-native replacement needs (c).
 
 **What it excludes.** Retry and backoff. Timeouts, rate limiting, circuit
 breaking. Error reporting and telemetry. Auth token refresh, header and base-URL
 policy. Response parsing and error normalization. Each is a function of one
-request, answerable without knowing anything about the render — so each belongs
-to the client you already have, where it also applies to the requests Lane never
-sees.
+request, answerable without
+knowing anything about the render — so each belongs to the client you already
+have, where it also applies to the requests Lane never sees.
 
 **The boundary is a handoff, not a wall.** A loader receives
 `{ key, signal, current, meta }`, and every one of those is something only Lane
-knows, handed down so your client can do its own job better than it could alone:
-`signal` fires when the read is discarded, so work nobody is waiting for stops;
-`current` is the last fulfilled value, so a conditional request can send it as
-`If-None-Match`. Lane supplies the render-relative context; your client makes the
-request.
-
-This is why Lane is smaller than React Query or SWR, and why you bring your own
-fetcher. A library that owned your HTTP stack could ship retry and error
-reporting as built-ins — at the price of owning the layer you are most likely to
-already have opinions about. Lane would rather be the layer you cannot write
-yourself.
+knows: `signal` fires when the read is discarded, so work nobody is waiting for
+stops; `current` is the last fulfilled value, so a conditional request can send
+it as `If-None-Match`. Lane supplies the render-relative context; your client
+makes the request.
 
 ## The store returns promises, never data
 
@@ -211,24 +166,18 @@ field because the promise is the state; the store returns no value because a
 value handed out beside `use()` is a second channel into the same data, and
 nothing keeps the two agreeing.
 
-**Concurrent rendering is what breaks the agreement.** Lane keeps each key's
-promise in React state, so two readers of one key under different Suspense
-boundaries commit on their own schedule: during a transition one can already be
-showing the next value while the other still shows the previous one. "What this
-key holds" has no single answer at that moment, so a getter could only report the
-store's own state — which is neither reader's. An event handler consulting it
-reads a value the tree the user clicked may not be showing. That is the argument
-that already decides `loadMore`'s callback identity in `useInfiniteLane`, where a
-ref refreshed outside render would land a click on a key that has not been
-revealed yet. A getter is that ref, offered as API.
+**Concurrent rendering is what breaks the agreement.** Two readers of one key
+under different Suspense boundaries commit on their own schedule: during a
+transition one can already be showing the next value while the other still shows
+the previous one. "What this key holds" has no single answer at that moment, so
+a getter could only report the store's own state — which is neither reader's,
+and an event handler consulting it reads a value the tree the user clicked may
+not be showing.
 
-**The last fulfilled value is not a way around it.** An entry does keep one, and
-in the ordinary single-reader case it is exactly what is on screen. But it is
-there to serve three recovery paths — the stale-on-error fallback, the loader's
-[`current`](#a-loaders-input-includes-what-it-already-produced), and where
-`cancel` reverts to — and its lifetime rules belong to them. Publishing it would
-freeze those rules: every later change to how a failed refresh or a cancel
-recovers would silently be a change to what the getter returns.
+**The last fulfilled value is not a way around it.** An entry does keep one, but
+it exists to serve three recovery paths — the stale-on-error fallback, the
+loader's [`current`](#a-loaders-input-includes-what-it-already-produced), and
+where `cancel` reverts to — and its lifetime rules belong to them.
 
 So the demand splits, and each half already has somewhere to go:
 
@@ -248,11 +197,6 @@ So the demand splits, and each half already has somewhere to go:
   previous screen live, which is most of what a `getQueryData`-backed
   `initialData` is bought for. When a partial value genuinely should appear
   first, the caller has it in hand and `set` publishes it.
-
-Lane reads its own store, and that is not the same permission: `update` addressed
-by entry id is an internal export, used by the hooks that already know which
-entry they own. What it does not do is extend that reach to callers, whose
-relationship to an entry is a rendered tree rather than a key.
 
 ## Optimistic state is local
 
@@ -282,38 +226,28 @@ fact about the value rather than about the key.
 That fact has to live somewhere. The three places it can go are the key, the
 component, or the value, and only the last one holds:
 
-- **In the key** — `["feed", filters, depth]` — every depth is a different cached
-  list, so growing the list evicts the one being read and scrolling becomes a
-  cache-miss generator. It also makes "the list" un-nameable for invalidation.
-- **In the component** — a ref or state incremented on each append — desyncs from
-  the cache it describes the moment the two have different lifetimes. Remounting
-  over a live cache is enough: the value comes back five pages deep and the
-  component believes it holds one. We measured exactly that (see [common
+- **In the key** — `["feed", filters, depth]` — every depth is a different
+  cached list, and "the list" becomes un-nameable for invalidation.
+- **In the component** — a ref incremented on each append — desyncs from the
+  cache the moment the two have different lifetimes (see [common
   mistakes](./common-mistakes.md#holding-an-infinite-lists-depth-in-component-state)).
 - **In the value** — the loader is handed `current`, the entry's last fulfilled
   value, and derives its work from it. Nothing to keep in sync, because there is
   no second copy.
 
-So `current` is not a pagination feature. It is the general form of "re-read what
-this key already holds," which the loader could not previously ask about: a
-resume cursor, a revision for `If-None-Match`, a window that should keep its
-extent. `useInfiniteLane` is one caller of it, and could be written in userland
-because it uses nothing the core does not already expose.
+So `current` is not a pagination feature. It is the general form of "re-read
+what this key already holds": a resume cursor, a revision for `If-None-Match`, a
+window that should keep its extent. `useInfiniteLane` is one caller of it.
 
-Two properties keep it honest. It is **snapshotted when the read is created**, so
-a value published while the read starts cannot change what it was started from.
-And it is **not a way to skip
-work**: it is the previous read's value, so returning it unchanged strands the
-entry on stale data with no way to notice — a loader that reads it still has to
-produce the current value.
-
-The lifetime is the entry's, which is what makes the rule learnable: `current`
-survives invalidation (that clears the cached promise, not the value) and
-disappears with the entry — on `remove`, on collection, and on an invalidation of
-an entry no reader is holding. So a loader must always define what a first load
-means, and `remove` genuinely forgets: it drops the last fulfilled value along
-with the cache, so neither stale-on-error nor the next loader's `current` can
-serve removed data back after a sign-out.
+Two properties keep it honest: it is **snapshotted when the read is created**,
+and it is **not a way to skip work** — returning it unchanged strands the entry
+on stale data. Its lifetime is the entry's: it survives invalidation (that
+clears the cached promise, not the value) and disappears with the entry — on
+`remove`, on collection, and on an invalidation of an entry no reader is
+holding. So a loader must always define what a first load means, and `remove`
+genuinely forgets: it drops the last fulfilled value along with the cache, so
+neither stale-on-error nor the next loader's `current` can serve removed data
+back after a sign-out.
 
 ## A failed load falls back before it rejects
 
@@ -386,36 +320,27 @@ intentionally authoritative.
 
 Keying that on object *identity* is a deliberate bet on how snapshots reach the
 boundary: produced outside render, once per data payload. A Server Component's
-props satisfy that, and so does a router loader's data — both give exactly the
-granularity the rule wants, one object per load and stable across the re-renders
-of it, without hashing content or diffing entries, and without a "seeded already"
-flag that would have to be reset on navigation. The bet has a cost, and it is not
-a silent one: a caller who *builds* snapshots inside a render gets a new object
-each time, so the boundary suspends on a fresh hydration promise every render and
-never commits. That is the same shape as an inline
-`Promise.all` in a suspending component, and it is documented next to the prop
-rather than guarded at runtime, because the guard would have to be either a
-content hash (which breaks authoritative re-seeding of unchanged data) or a
-dev-only warning in a core measured in bytes.
+props satisfy that, and so does a router loader's data. The bet has a cost, and
+it is not a silent one: snapshots *built* inside a render are a new object each
+time, so the boundary suspends on a fresh hydration promise every render and
+never commits. It is documented next to the prop rather than guarded at
+runtime, because the guard would have to be either a content hash (which
+breaks authoritative re-seeding of unchanged data) or a dev-only warning in a
+core measured in bytes.
 
 **Authoritative is the whole argument for closing the write side.** If a
 publication overwrites whatever it finds — which navigation requires — then a
-client write to a seeded key is a value with a scheduled deletion: the next
-payload replaces it, and nothing anywhere records that it existed. The opposite
-case is no better. A key that stops being republished keeps the local edit
-forever, and now the screen shows something the source never agreed to. Neither
-outcome announces itself, which is why the pairing is refused at the write
-instead of documented as a caveat: seeded entries are external, and the client
-mutation surface throws on them
+client write to a seeded key is a value with a scheduled deletion; and a key
+that stops being republished keeps the local edit forever. Neither outcome
+announces itself, which is why the pairing is refused at the write: seeded
+entries are external, and the client mutation surface throws on them
 ([`LaneOwnershipError`](./api-reference.md#laneownershiperror)).
 
-The enforcement is at runtime rather than in the key's type. A branded key would
-have to travel through every mutation path to be worth anything, and a plain
-`["task", id]` literal — which every app writes somewhere — would slip past it
-with no error at all. The store knows which entries were published; the type
-system only knows which values were annotated. So the type layer does the part it
-is good at (an external read spec accepts no loader options, and its result has no
-`invalidate` to call), and the store does the part that cannot be evaded.
+The enforcement is at runtime rather than in the key's type: a plain
+`["task", id]` literal — which every app writes somewhere — would slip past a
+branded key with no error at all. The type layer does the part it is good at (an
+external read spec accepts no loader options, and its result has no `invalidate`
+to call), and the store does the part that cannot be evaded.
 
 ## Key matching: exact vs scoped
 
@@ -437,72 +362,42 @@ urgent rather than transition-preserving.
 
 ## A read is a value, not three arguments
 
-`useLane(key, loader, options)` spreads one fact across three arguments, and the
-argument list is the only thing holding them together. A shared key factory —
-the usual first move — makes that worse before it makes it better: the key is now
-defined once and the loader and options are still written at each call site, so
-the halves can drift and nothing complains. `useLane(taskKeys.detail(id), () =>
-fetchTasks(filters))` type-checks; two components can read one key with different
-freshness; and the loader that actually fills the entry is whichever one mounted
-first.
+A `useLane(key, loader, options)` signature would spread one fact across three
+arguments, with the argument list the only thing holding them together. A shared
+key factory — the usual first move — makes that worse before it makes it better:
+the key is defined once while the loader and options are still written at each
+call site, so the halves can drift and nothing complains — two components can
+read one key with different freshness, and the loader that actually fills the
+entry is whichever one mounted first.
 
 `laneRead({ key, loader, ...options })` makes the read itself the value that
 travels. It is identity at runtime; the whole feature is where the types live.
 
-**What travels is decided by what an operation needs.** A read needs the loader,
-so `useLane`, `useLanesAll`, and `prefetch` take the whole definition. Publishing,
-invalidating, and removing address an *entry* — the loader has nothing to do with
-them, and requiring one would make every mutation path import fetchers, and
-whatever request context those fetchers close over, to name a key it already
-knows. So they take the key, and the loaded type rides along on it: a
-`LaneKeyOf<T>` is the same array with the type in a phantom property, which is
-what makes `set` and `update` checkable at all. (A key is otherwise where type
-information goes to die: `["task", id]` says nothing about `Task`.) It is the same
-mechanism as react-query's `DataTag`, and it is why the store needed no new
-runtime to gain checked writes.
-
-That split has a consequence worth stating: the type can be declared *without* a
-read. `laneKey<T>(key)` exists for the write-only half of a codebase, and a read
-built on such a key must load what the key claims — the colocation guarantee
-running in the other direction.
+**What travels is decided by what an operation needs.** A read needs the
+loader, so `useLane`, `useLanesAll`, and `prefetch` take the whole definition.
+Publishing, invalidating, and removing address an *entry*, so they take the key,
+and the loaded type rides along on it: a `LaneKeyOf<T>` is the same array with
+the type in a phantom property, which is what makes `set` and `update` checkable
+at all — the same mechanism as react-query's `DataTag`. The type can also be
+declared *without* a read: `laneKey<T>(key)` exists for the write-only half of a
+codebase.
 
 Two boundaries keep it from becoming a second way to describe everything:
-
-- **Scoped operations still take a scope.** `invalidateAll` answers a different
-  question ("every entry under this prefix") and one read's full key is not an
-  answer to it. Colocation does not change what
-  [exact vs scoped](#key-matching-exact-vs-scoped) means.
-- **There is no registry behind either helper.** Lane still addresses entries by
-  serialized key, so two objects from the same factory name the same read and
-  nothing has to be memoized, deduplicated, or registered at startup. Both
-  helpers are worth nothing at runtime — which is exactly why they cost nothing:
-  the core is byte-for-byte the store it was before, apart from `prefetch`
-  learning to accept a read.
+**scoped operations still take a scope** (one read's full key is not an answer
+to "every entry under this prefix"), and **there is no registry behind either
+helper** — Lane still addresses entries by serialized key, so two objects from
+the same factory name the same read and nothing has to be memoized or registered
+at startup.
 
 ## The dependency a loader needs is not part of the read
 
-The note above ends on a near miss. Addressing an entry takes the key and not the
-loader, so a mutation path never has to import fetchers "and whatever request
-context those fetchers close over". But the read side still has to get that
-context from somewhere, and the obvious place turns the argument around.
-
-Binding it into the factory is the natural first move:
-
-```ts
-export const taskLanes = (ctx: Ctx) => ({
-  detail: (id: string) =>
-    laneRead({ key: ["task", id], loader: () => fetchTask(ctx, id) }),
-});
-```
-
-Every read now type-checks and the loaders have what they need. What broke is
-`.key`: naming an entry requires producing a request context, and the places that
-name entries are exactly the places that do not have one — a mutation module, a
-Server Component seeding the cache, a component above the provider, an
-error-boundary retry. The reliable workaround is a second map of bare keys, and
-that is the actual cost: **every read now exists twice**, the loaded type is
-restated by hand on the key side, and nothing checks that the two agree. A key
-map is what colocation was supposed to remove.
+Binding a request context into the read factory is the natural first move —
+`taskLanes(ctx).detail(id)` — and it breaks `.key`: naming an entry now requires
+producing a request context, and the places that name entries are exactly the
+places that do not have one (a mutation module, a Server Component seeding the
+cache, an error-boundary retry). The reliable workaround is a second map of bare
+keys, and that is the actual cost: **every read now exists twice**, with the
+loaded type restated by hand and nothing checking that the two agree.
 
 So the dependency goes on the **lane**, declared once by module augmentation and
 delivered to loaders as `meta`:
@@ -515,31 +410,25 @@ declare module "use-lane" {
 
 A read stays a plain object whose arguments are exactly what decides its key, so
 `.key` costs nothing to reach and there is one definition per read. The
-alternatives were weighed and are worse: a third type parameter on `LaneReadSpec`
-(paid for by every consumer — `useLane` overloads, per-member annotations in
-`useLanesAll`) buys the same thing, and a per-read field alone cannot be
-*required*, so forgetting it degrades silently to `undefined`.
-
-This is react-query's `Register`, with the value moved. react-query puts `meta`
-on the query and lets the client hold a default; Lane makes the lane's value
-mandatory and the per-read one an override. That inversion is the whole gain: the
-guaranteed value is what lets `meta` be non-optional in a loader, where
-react-query's is always possibly-`undefined`.
+alternatives were weighed and are worse: a third type parameter on
+`LaneReadSpec` is paid for by every consumer (`useLane` overloads, per-member
+annotations in `useLanesAll`), and a per-read field alone cannot be *required*,
+so forgetting it degrades silently to `undefined`. This is
+react-query's `Register`, with the value moved: react-query puts `meta` on the
+query, Lane makes the lane's value mandatory and the per-read one an override —
+which is what lets `meta` be non-optional in a loader.
 
 Two consequences are load-bearing, and neither is hidden:
 
-- **One type per app.** Module augmentation is program-wide, so an app has exactly
-  one `loaderMeta` type. Independent lanes in one program (a demo hosting six
-  examples, a monorepo compiled as one unit) all answer to it.
-- **It is not part of any key, and Lane cannot make it be.** Two reads of one key
-  under different meta name the same entry, and whichever loaded first wins.
-  Nothing invalidates when the value changes, because the store has no way to know
-  what the value owns. Scope what it owns into the key, or drop those keys
-  yourself on a switch. This is the same obligation as sending a tenant in a
-  request header instead of the URL, and it is why the value is deliberately
-  *outside* the key rather than quietly folded into it: a hidden key component
-  would make every entry unaddressable from a module that cannot produce the
-  context — the exact problem this solves.
+- **One type per app.** Module augmentation is program-wide, so an app has
+  exactly one `loaderMeta` type.
+- **It is not part of any key.** Two reads of one key under different meta name
+  the same entry, and whichever loaded first wins. Nothing invalidates when the
+  value changes, because the store has no way to know what the value owns. Scope
+  what it owns into the key, or drop those keys yourself on a switch. The value
+  is deliberately *outside* the key rather than quietly folded into it: a hidden
+  key component would make every entry unaddressable from a module that cannot
+  produce the context — the exact problem this solves.
 
 ## A deliberately small core
 
@@ -558,7 +447,7 @@ adapter option -> conditional cache invalidation -> mounted readers re-read thro
 - mount-time stale refresh (`refetchOnMount`)
 - focus / reconnect revalidation (`refetchOnFocus`, `refetchOnReconnect`)
 - polling — userland: a self-scheduled `invalidate(key, { onlyIf: "settled", background: true })` (no core timer)
-- inactive-entry garbage collection (`gcTime`, a per-lane policy on `createLane`)
+- inactive-entry garbage collection (`gcTime`, a read option with a lane-level default on `createLane`; `warmTime` for entries nobody has ever held)
 
 Splitting the durable key slot from its optional cached promise is what makes
 this work: invalidation clears the cache and notifies readers; the first reader
@@ -574,14 +463,6 @@ numbers follow from that, and they are the ones `size-limit` holds in CI —
 minified, Brotli-compressed, `react` / `react-dom` external. The typical
 `LaneProvider` + `useLane` import is about **3.8 kB**, and importing *every*
 export is about **5.4 kB**: that ceiling is the whole of what Lane can cost you.
-
-The marginal cost worth naming is the one that is not there. Moving from loose
-`key` / `loader` arguments to a `laneRead` definition with typed keys costs a
-handful of bytes, so the form the docs recommend everywhere carries no size
-argument against it. Nothing else is priced here on purpose — no consumer imports
-`useLanesAll` *instead of* the typical path, they import it as well, so the
-ceiling already bounds the growth, and whether a feature is worth its bytes is a
-question for prose rather than a table that silently goes stale.
 
 ## Design bias
 

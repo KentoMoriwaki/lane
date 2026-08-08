@@ -154,9 +154,9 @@ rather than by what happened while hidden:
 | --- | --- |
 | the same promise the reader holds | that value, immediately — no work, no request |
 | a settled replacement (a publication, a sibling's finished read) | the replacement, adopted synchronously |
-| repudiated or absent (invalidated, removed) | the boundary's fallback, with the re-read starting *at* the reveal |
+| invalidated or absent (removed, collected) | the boundary's fallback, with the re-read starting *at* the reveal |
 
-The last row is the guarantee worth stating plainly: **a repudiated value is
+The last row is the guarantee worth stating plainly: **an invalidated value is
 never painted.** The correction happens in the same task as the unhide, and the
 browser does not paint mid-task, so there is no frame in which the old value is
 on screen.
@@ -196,16 +196,15 @@ buy a flash-free first frame. If a surface must appear complete on reveal, have
 something read the key (even a hidden `<Activity>` reader) rather than only
 prefetching it.
 
-In measurement, that one retry has been transient enough not to reach the screen —
-in the lab's App Router scene the fallback it produces was committed but never
-painted. Do not lean on that: it is a race that a slower reveal commit can lose,
+In measurement, that one retry has been transient enough not to reach the
+screen. Do not lean on that: it is a race that a slower reveal commit can lose,
 whereas a promise that has already been read cannot suspend at all.
 
 > **Footnote — holding a frame during adoption.** If a specific surface must not
 > risk even that retry, the userland pattern is to keep the outgoing content
 > mounted for one commit while the adopted promise is instrumented (a "flash
-> guard" wrapper around the boundary). Lane ships nothing for this and the lab has
-> not measured a form of it; it is named here so the option is known, not
+> guard" wrapper around the boundary). Lane ships nothing for this and the lab
+> has not measured a form of it; it is named here so the option is known, not
 > recommended as a default.
 
 ### Announce pending at the start of a mutation, not the end
@@ -281,21 +280,11 @@ value for all of them at once.
 
 `packages/lane/src/__tests__/tearing.test.ts` asserts all of the above against a
 log of *committed DOM frames* rather than final state, so a frame that is
-repaired one commit later still fails the test. It covers both entry points for
-the inconsistent case, the same-transition control that removes them, and the
-guarantees at the top of this page — including the one that says an ordinary
-invalidate → refetch is safe on its own.
-
-`transition-entanglement.test.ts` pins the half of the shared-lane claim that
-reaches *outside* Lane, because it is what decides whether keeping readers
-pending across a mutation needs machinery at all. A reader invalidated from
-inside `startTransition(async () => …)` joins that transition rather than
-opening one of its own, so the caller stays pending until the reader has its
-new data — after its own action has already settled. The second case records
-the React behavior behind that: an empty `startTransition`, with no update to
-schedule, still reports pending for as long as the enclosing scope runs,
-because `isPending` is itself transition-lane state and its reset is entangled
-with everything else in the lane.
+repaired one commit later still fails the test.
+`transition-entanglement.test.ts` pins the React behavior the pending window
+relies on: a reader invalidated from inside `startTransition(async () => …)`
+joins that transition rather than opening one of its own, and an empty
+`startTransition` still reports pending for as long as the enclosing scope runs.
 
 ## See also
 

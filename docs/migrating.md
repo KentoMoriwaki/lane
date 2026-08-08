@@ -35,15 +35,15 @@ anti-patterns to avoid, [common mistakes](./common-mistakes.md).
 | `refetchOnWindowFocus` | `refetchOnFocus` (`LaneProvider` wires focus / reconnect) — pair it with a `staleTime`, or it never fires |
 | `refetchOnMount: "always"` | no equivalent — `refetchOnMount: true, staleTime: 0`, or `invalidate(key, { onlyIf: "settled" })` |
 | `retry` / `retryDelay` | no equivalent — retrying a failed request belongs to your fetcher / API client, which already has the `signal` |
-| `staleTime` / `gcTime` | `staleTime` (read option, defaults to `Infinity` — react-query defaults to `0`) / `gcTime` (`createLane`) |
+| `staleTime` / `gcTime` | `staleTime` (read option, defaults to `Infinity` — react-query defaults to `0`) / `gcTime` (read option; lane-wide default via `createLane`) |
 | `QueryClientProvider` | `LaneProvider` |
 
 ## Step 0 — keep your options factories
 
 If the codebase is organised around `queryOptions()` factories, that organisation
 survives the migration intact: `laneRead` is the same idea — one value carrying a
-read's key, its loader, and the options it is read with — and Lane accepts it
-everywhere a key or a `(key, loader)` pair is accepted.
+read's key, its loader, and the options it is read with — and every read hook and
+`lane.prefetch` accepts it whole, while entry operations take its `.key`.
 
 ```ts
 // Before (React Query)
@@ -303,19 +303,15 @@ Three things to carry across:
 
 - **The refetch cost is identical, and it is not a Lane tax.** Invalidating a
   five-page list is five sequential requests in both libraries, because each
-  cursor is re-derived from the page before it. React Query's
-  `infiniteQueryBehavior` walks that loop internally; Lane's loader walks it in
-  front of you. What differs is what the user sees: the transition keeps the list
-  on screen throughout, and a failure part-way through leaves the previous list
-  rendered with `error` beside it rather than flipping the read into an
-  error state.
-- **`hasNextPage` moves into the data.** The hook returns a promise it does not
-  resolve, so it cannot report a flag derived from the pages. Read `data.hasNext`
-  from the same `use(promise)` that gives you the rows — actions from the hook,
-  data from the promise.
-- **Don't keep the page count in component state.** The depth is read back out of
-  the cached value, which is the whole point; mirroring it in a ref reintroduces a
-  desync Lane just removed. See [common
+  cursor is re-derived from the page before it. What differs is what the user
+  sees: the transition keeps the list on screen throughout, and a failure
+  part-way through leaves it rendered with `error` beside it.
+- **`hasNextPage` moves into the data.** Read `data.hasNext` from the same
+  `use(promise)` that gives you the rows — actions from the hook, data from the
+  promise.
+- **Don't keep the page count in component state.** The depth is read back out
+  of the cached value; mirroring it in a ref reintroduces a desync Lane just
+  removed. See [common
   mistakes](./common-mistakes.md#holding-an-infinite-lists-depth-in-component-state).
 
 ## Migration checklist

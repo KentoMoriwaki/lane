@@ -265,6 +265,13 @@ Options drift the same way, and more quietly: they live at the call site while
 the key does not, so one component reads a key with `staleTime: 60_000` and the
 next reads the same key with none.
 
+**The definition is also the unit of sharing.** A read used in more than one
+place is shared by exporting its definition, not by wrapping `useLane` in a
+custom hook — a wrapper that returns `use(promise)` fixes the suspension point
+for every consumer, and a hook cannot serve the read's non-React consumers
+(`prefetch`, entry operations via `.key`, RSC snapshots). See
+[wrapping the read in a custom hook](./common-mistakes.md#wrapping-the-read-in-a-custom-hook).
+
 **What the factory buys you.** At runtime it returns its argument. What it adds
 is types: `T` is inferred at the definition from the loader's return type, and
 the `key` it hands back is a

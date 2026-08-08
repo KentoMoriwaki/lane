@@ -341,6 +341,54 @@ lane.set(taskKeys.detail(saved.id), saved); // still checked
 Two reads that genuinely differ should differ in their **key** — `["task", id]`
 and `["task-summary", id]` are different data and belong in different entries.
 
+### Wrapping the read in a custom hook
+
+The other tempting way to share a read used in two places is a hook. Sharing
+belongs in the **read definition**; a hook on top of it subtracts options
+without adding anything.
+
+**Don't** wrap `useLane` in a hook that reads the promise for its caller:
+
+```tsx
+export function useTask(id: string) {
+  const { promise } = useLane({
+    key: ["task", id],
+    loader: ({ signal }) => fetchTask(id, signal),
+  });
+  return use(promise); // suspends *here*, for every consumer
+}
+```
+
+The wrapper decides the suspension point once, for everyone. A component can no
+longer take the promise and pass it down, start the read in a parent and `use`
+it in a child, or hand it to the boundary that should own the wait — the
+patterns under [deferred reads](#deferred-reads-preload-reveal-lazily) all
+start from holding the promise. And a hook can only be called from a rendering
+component: the same read's definition also serves `prefetch`, `invalidate` /
+`set` (via `.key`), snapshots in a Server Component, and event handlers — none
+of which can call `useTask`.
+
+**Do** share the definition and let each call site decide the rest:
+
+```tsx
+// lanes/tasks.ts
+export const taskLanes = {
+  detail: (id: string) =>
+    laneRead({
+      key: ["task", id],
+      loader: ({ signal }) => fetchTask(id, signal),
+      staleTime: 60_000,
+    }),
+};
+
+// A component that wants the value here:
+const { data } = use(useLanePromise(taskLanes.detail(id)));
+
+// A component that passes the wait down:
+const { promise } = useLane(taskLanes.detail(id));
+return <TaskPanel promise={promise} />;
+```
+
 ### Binding a request context into the read factory
 
 The loaders need a session, a tenant, an API client. The tempting move is to take

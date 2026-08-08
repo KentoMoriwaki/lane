@@ -200,6 +200,13 @@ In measurement, that one retry has been transient enough not to reach the
 screen. Do not lean on that: it is a race that a slower reveal commit can lose,
 whereas a promise that has already been read cannot suspend at all.
 
+> **Footnote — holding a frame during adoption.** If a specific surface must not
+> risk even that retry, the userland pattern is to keep the outgoing content
+> mounted for one commit while the adopted promise is instrumented (a "flash
+> guard" wrapper around the boundary). Lane ships nothing for this and the lab
+> has not measured a form of it; it is named here so the option is known, not
+> recommended as a default.
+
 ### Announce pending at the start of a mutation, not the end
 
 *(Client-owned keys. A published key converges when its owner republishes, so the

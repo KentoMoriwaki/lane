@@ -22,6 +22,13 @@ const hydrationResources = new WeakMap<
  * republishes cannot re-render client-loader reads. It is a chain, not the
  * nearest boundary's snapshots: boundaries nest, and the identity must change
  * when *any* ancestor publishes; readers compare identity only.
+ *
+ * The cost: a reader's `prevSource` state retains the lineage it last rendered
+ * under, so a reader that has not re-rendered (a hidden `<Activity>`) keeps one
+ * superseded generation of seeds reachable until its next render. Bounded, and
+ * of the same order as what the kept tree already retains; if it ever shows in
+ * a profile, swap the chain node for a WeakMap-derived epoch number — readers
+ * compare identity only, so they would not change.
  */
 export type LaneHydrationSource = {
   snapshots: LaneHydrationSnapshots;

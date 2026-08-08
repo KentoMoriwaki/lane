@@ -32,7 +32,7 @@ type Descriptor<T, C> = {
   key: LaneKey;
   keyId: string;
   loader: LaneLoader<T, C>;
-  // Merged with the batch's shared options at fire time, not here, so a
+  // Merged with the batch's shared options at each use, never stored, so a
   // rebuilt shared object takes effect without re-subscribing.
   options: LaneUseOptions;
   // Never merged: shared options have no `T` to type a fallback against.

@@ -80,6 +80,8 @@ stopping is all it is for. Elsewhere cancellation is load-bearing just before an
 optimistic update — a refetch that started before the mutation must not land
 after it and overwrite the result. Lane closes that path structurally instead:
 `set` aborts and publishes in one step, and `update` chains rather than races.
+A response that arrives late regardless writes into a cache object the entry no
+longer holds, and is ignored.
 
 **So `cancel` is for a read the caller started and can still account for.** Not
 "stop whatever is in flight under this key" — the two conditions behind it are
@@ -139,7 +141,8 @@ revalidation need (b). Transition-native replacement needs (c).
 
 **What it excludes.** Retry and backoff. Timeouts, rate limiting, circuit
 breaking. Error reporting and telemetry. Auth token refresh, header and base-URL
-policy. Response parsing. Each is a function of one request, answerable without
+policy. Response parsing and error normalization. Each is a function of one
+request, answerable without
 knowing anything about the render — so each belongs to the client you already
 have, where it also applies to the requests Lane never sees.
 
@@ -320,7 +323,10 @@ boundary: produced outside render, once per data payload. A Server Component's
 props satisfy that, and so does a router loader's data. The bet has a cost, and
 it is not a silent one: snapshots *built* inside a render are a new object each
 time, so the boundary suspends on a fresh hydration promise every render and
-never commits.
+never commits. It is documented next to the prop rather than guarded at
+runtime, because the guard would have to be either a content hash (which
+breaks authoritative re-seeding of unchanged data) or a dev-only warning in a
+core measured in bytes.
 
 **Authoritative is the whole argument for closing the write side.** If a
 publication overwrites whatever it finds — which navigation requires — then a
@@ -403,7 +409,11 @@ declare module "use-lane" {
 ```
 
 A read stays a plain object whose arguments are exactly what decides its key, so
-`.key` costs nothing to reach and there is one definition per read. This is
+`.key` costs nothing to reach and there is one definition per read. The
+alternatives were weighed and are worse: a third type parameter on
+`LaneReadSpec` is paid for by every consumer (`useLane` overloads, per-member
+annotations in `useLanesAll`), and a per-read field alone cannot be *required*,
+so forgetting it degrades silently to `undefined`. This is
 react-query's `Register`, with the value moved: react-query puts `meta` on the
 query, Lane makes the lane's value mandatory and the per-read one an override —
 which is what lets `meta` be non-optional in a loader.
@@ -415,7 +425,10 @@ Two consequences are load-bearing, and neither is hidden:
 - **It is not part of any key.** Two reads of one key under different meta name
   the same entry, and whichever loaded first wins. Nothing invalidates when the
   value changes, because the store has no way to know what the value owns. Scope
-  what it owns into the key, or drop those keys yourself on a switch.
+  what it owns into the key, or drop those keys yourself on a switch. The value
+  is deliberately *outside* the key rather than quietly folded into it: a hidden
+  key component would make every entry unaddressable from a module that cannot
+  produce the context — the exact problem this solves.
 
 ## A deliberately small core
 

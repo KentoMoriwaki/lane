@@ -711,7 +711,10 @@ genuine success and the entry keeps the freshness it had — a read that fell ba
 is still as stale as it was and still refreshes on the next trigger. A policy
 that hands back what it was given serves it under the entry's own
 [`revision`](#lanereadt); a substitute the entry never held carries one of its
-own. This is the whole reason it is a read option rather than a `try` / `catch`
+own. A read that has never succeeded counts as old as a value can be, which
+keeps the triggers firing on a key that is failing; `staleTime: Infinity` still
+means what it says, and pins it. This is the whole reason it is a read option
+rather than a `try` / `catch`
 inside the loader: a loader that catches and returns a substitute has
 *succeeded* as far as the store can tell — the substitute becomes the last
 fulfilled value, the fulfillment time is restamped so the entry stops
@@ -720,7 +723,9 @@ refreshing, and a new revision is minted.
 **Throwing is how a policy declines.** There is no sentinel return, because
 `undefined` may be a legitimate `T`. Rethrowing the error it was handed lands
 where the built-in policy's empty case lands — a rejected promise carrying
-[`LaneReadError`](#lanereaderror) with the key.
+[`LaneReadError`](#lanereaderror) with the key. A policy that throws something
+else has replaced the failure with its own account of it, and that is what the
+boundary receives.
 
 **Synchronous.** Returning a promise would be a second loader, and retrying a
 failed request belongs to the fetcher.

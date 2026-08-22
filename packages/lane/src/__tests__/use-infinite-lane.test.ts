@@ -436,6 +436,11 @@ describe("an infinite list whose first page the route publishes", () => {
     // in the store's write path, so there is no depth-1 value for a reader to
     // commit — which is the whole reason it is not a reader's job.
     expect(frames).toEqual(["0,1,2|more"]);
+
+    // The cursors came back with the pages, not from the publication: the next
+    // append continues from where the list actually ends.
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1,2,3|more");
   });
 
   it("resets to depth 1 when the published page 1 is a different page", async () => {

@@ -13,6 +13,7 @@ const ACME_TASK = "Review billing webhook retry behavior";
 const ACME_TASK_ID = "task_webhook";
 const ACME_INVOICE_TASK = "Generate downloadable invoice PDFs";
 const GROWTH_TASK = "Welcome email rewrite";
+const BILLING_PROJECT = "Billing";
 
 const SEARCH_PLACEHOLDER = "Search tasks, labels…";
 
@@ -21,6 +22,12 @@ const SEARCH_PLACEHOLDER = "Search tasks, labels…";
  * mutates lives in them, so no rerender this route asks for may re-read one.
  */
 const CACHED_READ_PATHS = ["/api/projects", "/api/labels", "/api/members"];
+
+/**
+ * The counts that used to ride inside the cached roster. They are their own
+ * dynamic read now, so a task edit moves them without expiring anything.
+ */
+const PROJECT_COUNTS_PATH = "/api/projects/counts";
 
 type TeamApiRequestRecord = {
   method: string;
@@ -60,9 +67,12 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** A task list row: a button whose accessible name is "Status: <s> <title> …". */
+/**
+ * A task list row: a `<Link>` to the task's own route, named by its title
+ * alone. It used to be a button that toggled a `?task=` parameter.
+ */
 function taskRow(page: Page, title: string) {
-  return page.getByRole("button", { name: new RegExp(escapeRegExp(title)) });
+  return page.getByRole("link", { name: title, exact: true });
 }
 
 /** Every row in the list, in the order the list decided to draw them. */
@@ -80,13 +90,47 @@ function searchInput(page: Page) {
   return page.getByPlaceholder(SEARCH_PLACEHOLDER);
 }
 
-/** The detail panel is the only aside containing textareas (title, description). */
+/**
+ * The two shells `/lane/task/<id>` renders as, each naming itself in the DOM.
+ *
+ * A `<Link>` from a row is intercepted into the panel beside the list; a direct
+ * visit, a reload, or a shared link renders the full page. One URL, one read,
+ * two surfaces — and which one is on screen is what decides how an edit made
+ * there converges.
+ */
 function detailPanel(page: Page) {
-  return page.locator("aside").filter({ has: page.locator("textarea") });
+  return page.getByTestId("task-panel");
+}
+
+function detailPage(page: Page) {
+  return page.getByTestId("task-page");
 }
 
 function detailTitle(page: Page) {
   return detailPanel(page).locator("textarea").first();
+}
+
+function pageTitle(page: Page) {
+  return detailPage(page).locator("textarea").first();
+}
+
+/** The URL both surfaces share. */
+function taskUrl(taskId: string) {
+  return `/lane/task/${taskId}`;
+}
+
+/** Open a task the way the demo intends it to be opened: click its row. */
+async function openTaskPanel(page: Page, title: string) {
+  await taskRow(page, title).click();
+  await expect(detailTitle(page)).toHaveValue(title);
+}
+
+/** The sidebar's count for one project, read out of its nav link. */
+async function projectCount(page: Page, name: string): Promise<number> {
+  const text = await page
+    .getByRole("link", { name: new RegExp(`^${escapeRegExp(name)}`) })
+    .innerText();
+  return Number(text.match(/\d+/)?.[0]);
 }
 
 async function gotoWorkspace(page: Page, path = "/lane") {
@@ -185,7 +229,7 @@ test("loads the seeded workspace", async ({ page }) => {
   await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
 });
 
-test("reload preserves search, selection, and team", async ({ page }) => {
+test("opening a task is a navigation to its own URL", async ({ page }) => {
   await gotoWorkspace(page);
 
   await searchInput(page).fill("billing");
@@ -193,13 +237,49 @@ test("reload preserves search, selection, and team", async ({ page }) => {
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
   await taskRow(page, ACME_TASK).click();
-  await expect(page).toHaveURL(new RegExp(`task=${ACME_TASK_ID}`));
+
+  // The selection is a path, not a parameter — and the view travels with it, so
+  // the list behind the panel still reads the key it was published under.
+  await expect(page).toHaveURL(
+    new RegExp(`${escapeRegExp(taskUrl(ACME_TASK_ID))}\\?.*q=billing`),
+  );
+  // Clicked from a row, it is intercepted: the panel, with the list still there.
   await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await expect(detailPage(page)).toHaveCount(0);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+});
+
+test("a reload of a task URL renders the page, not the panel", async ({
+  page,
+}) => {
+  await gotoWorkspace(page);
+  await searchInput(page).fill("billing");
+  await expect(page).toHaveURL(/q=billing/);
+  await openTaskPanel(page, ACME_TASK);
 
   await page.reload();
 
+  // Nothing intercepts a fresh document load, so `children` is the task page
+  // and the `@modal` slot renders nothing.
+  await expect(pageTitle(page)).toHaveValue(ACME_TASK);
+  await expect(detailPanel(page)).toHaveCount(0);
+  await expect(page).toHaveURL(/q=billing/);
+
+  // The way back carries the view it left with.
+  await page.getByRole("link", { name: "Back to tasks" }).click();
   await expect(searchInput(page)).toHaveValue("billing");
-  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+});
+
+test("Back closes the panel and leaves the list standing", async ({ page }) => {
+  await gotoWorkspace(page);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await openTaskPanel(page, ACME_TASK);
+
+  await page.goBack();
+
+  await expect(page).toHaveURL(/\/lane(\?|$)/);
+  await expect(detailPanel(page)).toHaveCount(0);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
@@ -270,8 +350,7 @@ test("an inline status change lands in the row where it already was", async ({
   // navigation and therefore a republication. The reader has to survive that to
   // converge at all.
   await gotoWorkspace(page);
-  await taskRow(page, ACME_TASK).click();
-  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await openTaskPanel(page, ACME_TASK);
 
   const before = await rowOrder(page);
   const index = before.indexOf(ACME_TASK_ID);
@@ -300,6 +379,11 @@ test("an inline status change lands in the row where it already was", async ({
       (entry) => entry.origin === "browser" && entry.method === "PATCH",
     ),
   ).toHaveLength(1);
+  // And exactly one rerender behind it: the two marked keys — the insights and
+  // the project counts — were marked in the same tick, so Lane asked once.
+  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(1);
+  expect(serverReadsOf(records, "/api/insights")).toHaveLength(1);
+  expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(1);
   // Whatever the rerender that follows reads, it is never one of these.
   for (const path of CACHED_READ_PATHS) {
     expect(
@@ -385,7 +469,7 @@ test("deleting a task drops its row and clears the detail", async ({
   // The row leaves every list holding it as soon as the API confirms — no
   // republication in between.
   await expect(taskRow(page, title)).toBeHidden();
-  await expect(page).not.toHaveURL(/task=/);
+  await expect(page).not.toHaveURL(/\/lane\/task\//);
   await expect(detailPanel(page)).toHaveCount(0);
 
   const records = await readRequestDiagnostics(request);
@@ -437,8 +521,11 @@ test("creating a label expires the cached read that lists them", async ({
   page,
   request,
 }) => {
-  await gotoWorkspace(page, `/lane?task=${ACME_TASK_ID}`);
-  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  // Through the row, because the sidebar has to be on screen for the assertion
+  // below — a direct visit to the task URL renders the page, which has no
+  // workspace frame around it.
+  await gotoWorkspace(page);
+  await openTaskPanel(page, ACME_TASK);
 
   const name = `e2elabel${Date.now()}`;
   await resetRequestDiagnostics(request);
@@ -465,8 +552,8 @@ test("creating a label expires the cached read that lists them", async ({
 });
 
 test("a title-only update lands in the panel and the row", async ({ page }) => {
-  await gotoWorkspace(page, `/lane?task=${ACME_TASK_ID}`);
-  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await gotoWorkspace(page);
+  await openTaskPanel(page, ACME_TASK);
 
   const renamed = `${ACME_TASK} v${Date.now() % 10_000}`;
   await detailTitle(page).fill(renamed);
@@ -526,4 +613,130 @@ test("a failed refresh keeps data visible and recovers through the chip", async 
 
   await expect(page.getByText("Couldn't refresh")).toBeHidden();
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
+});
+
+/**
+ * The other surface, and the whole reason a task is a route of its own.
+ *
+ * An edit made where no list is on screen marks every list entry the lane holds
+ * instead of rewriting one. Nothing is read for it while the page is up — a
+ * marked key with no reader stays marked — and the read happens when a list is
+ * revealed again.
+ */
+test("an edit on the task page is read again only when the list is", async ({
+  page,
+  request,
+}) => {
+  await gotoWorkspace(page);
+  await openTaskPanel(page, ACME_TASK);
+
+  // A reload of the same URL is not intercepted, so the detail is now the full
+  // page: same task, same key, no list beside it.
+  await page.reload();
+  await expect(pageTitle(page)).toHaveValue(ACME_TASK);
+  await expect(detailPanel(page)).toHaveCount(0);
+
+  await resetRequestDiagnostics(request);
+  const next = await chooseAnotherStatus(
+    page,
+    detailPage(page).getByRole("button", { name: /^Status:/ }),
+  );
+  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(
+    detailPage(page).getByRole("button", { name: `Status: ${next}` }),
+  ).toBeVisible();
+
+  // One write and nothing else. The marks this edit left have no reader on this
+  // page — no list, no strip, no sidebar — so no rerender was asked for.
+  const afterEdit = await readRequestDiagnostics(request);
+  expect(
+    afterEdit.filter(
+      (entry) => entry.origin === "browser" && entry.method === "PATCH",
+    ),
+  ).toHaveLength(1);
+  expect(serverReadsOf(afterEdit, "/api/tasks")).toHaveLength(0);
+  expect(serverReadsOf(afterEdit, "/api/insights")).toHaveLength(0);
+
+  await resetRequestDiagnostics(request);
+  await page.goBack();
+
+  // Back on the list: it arrives freshly sorted, with the edit in it, and the
+  // insights are the ones that go with it.
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await expect(
+    taskRow(page, ACME_TASK).getByRole("button", { name: `Status: ${next}` }),
+  ).toBeVisible();
+
+  // Exactly one render answered the traverse.
+  const afterBack = await readRequestDiagnostics(request);
+  expect(serverReadsOf(afterBack, "/api/tasks")).toHaveLength(1);
+  expect(serverReadsOf(afterBack, "/api/insights")).toHaveLength(1);
+  for (const path of CACHED_READ_PATHS) {
+    expect(serverReadsOf(afterBack, path), `${path} after a back`).toHaveLength(
+      0,
+    );
+  }
+});
+
+/**
+ * The count that used to ride inside the cached roster.
+ *
+ * A project's task count is changed by the browser channel — a move, a delete —
+ * which cannot expire a tag. It is its own dynamic read now, so the number
+ * follows the edit while the roster it sits beside stays cached.
+ */
+test("a project's count follows a task the browser moved", async ({
+  page,
+  request,
+}) => {
+  await gotoWorkspace(page);
+
+  const title = `E2E count mover ${Date.now()}`;
+  await createTask(page, title);
+  const before = await projectCount(page, BILLING_PROJECT);
+
+  await resetRequestDiagnostics(request);
+  await detailPanel(page).getByRole("button", { name: "No project" }).click();
+  await page.getByRole("option", { name: new RegExp(`^${BILLING_PROJECT}`) })
+    .click();
+  await expect(page.getByText("Saved")).toBeVisible();
+
+  await expect(async () => {
+    expect(await projectCount(page, BILLING_PROJECT)).toBe(before + 1);
+  }).toPass();
+
+  // The number moved through the dynamic read, and the roster beside it was not
+  // read at all: no tag was expired, because none needed to be.
+  const records = await readRequestDiagnostics(request);
+  expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(1);
+  expect(serverReadsOf(records, "/api/projects")).toHaveLength(0);
+
+  // And back down when the task goes away.
+  await resetRequestDiagnostics(request);
+  await detailPanel(page).getByRole("button", { name: "Delete task" }).click();
+  await expect(taskRow(page, title)).toBeHidden();
+
+  await expect(async () => {
+    expect(await projectCount(page, BILLING_PROJECT)).toBe(before);
+  }).toPass();
+
+  const afterDelete = await readRequestDiagnostics(request);
+  expect(serverReadsOf(afterDelete, PROJECT_COUNTS_PATH)).toHaveLength(1);
+  expect(serverReadsOf(afterDelete, "/api/projects")).toHaveLength(0);
+});
+
+test("opening a task paints the panel's shell before the read lands", async ({
+  page,
+}) => {
+  await gotoWorkspace(page);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+
+  // The intercepted route makes the same claim the list does: its shell is
+  // static, so the navigation produces UI without waiting for the server.
+  await instant(page, async () => {
+    await taskRow(page, ACME_TASK).click();
+    await expect(page.getByTestId("task-panel-skeleton")).toBeVisible();
+  });
+
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
 });

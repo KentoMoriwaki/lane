@@ -94,9 +94,8 @@ type LanePromiseSettlement = {
  * widens a public type — what Lane hands out is still a `Promise<LaneRead<T>>`.
  */
 type LaneThenable<T> = Promise<T> & {
-  status?: "pending" | "fulfilled" | "rejected";
+  status?: "fulfilled";
   value?: T;
-  reason?: unknown;
 };
 
 type LanePromiseCache = {
@@ -759,41 +758,20 @@ function startWarmClock(
 }
 
 /**
- * Write a promise's own settlement onto it, so `use()` can read a settled one
- * synchronously rather than suspending once to learn what it holds. React skips
- * its own instrumentation as soon as `status` is a string, so writing
- * `"pending"` obliges Lane to write the settlement too — this is that pair,
- * mirroring the react.dev example.
+ * A promise for a value already in hand, fulfilled before it is returned:
+ * `status` and `value` written at creation with no microtask in between, so
+ * `use()` reads it in the very render that receives it.
  *
- * Why it is Lane's job and not React's: a reveal adopts the store's promise
- * from a layout effect, which is a synchronous update, and a synchronous render
- * has no microtask to wait in. An unstamped promise therefore commits the
- * boundary's fallback however long it has been settled, and the retry runs on a
- * lane React throttles fallbacks on for 300ms. Stamped, there is nothing to
- * wait for.
- */
-export function instrument<T>(promise: Promise<T>): Promise<T> {
-  const thenable = promise as LaneThenable<T>;
-
-  thenable.status = "pending";
-  thenable.then(
-    (value) => {
-      thenable.status = "fulfilled";
-      thenable.value = value;
-    },
-    (reason: unknown) => {
-      thenable.status = "rejected";
-      thenable.reason = reason;
-    },
-  );
-
-  return promise;
-}
-
-/**
- * The same stamps for a value already in hand, written at creation with no
- * microtask in between — so a promise from `set(key, value)` or a publication
- * is readable in the very render that receives it.
+ * That is what the one path that cannot wait needs. A reveal adopts the store's
+ * promise from a layout effect — a synchronous update with no microtask to wait
+ * in — so an unstamped promise commits the boundary's fallback and comes back
+ * on a retry React throttles fallbacks on for 300ms.
+ *
+ * Only for a value the store received synchronously (`set(key, value)`, a
+ * publication seed). A promise is left exactly as it arrived: it is the
+ * caller's or the loader's result passed through, and there is nothing the
+ * store can say about it synchronously. React writes the same fields itself on
+ * the first `use()` of one.
  */
 function instrumentedValue<T>(value: T): Promise<T> {
   const thenable = Promise.resolve(value) as LaneThenable<T>;
@@ -961,9 +939,6 @@ function setEntryCache<T>(
 
   // A rejected cache no reader consumes must not be an unhandled rejection.
   guarded.catch(noop);
-  // The stamped promise is the one stored and the one returned, because it is
-  // the one `use()` receives.
-  instrument(guarded);
   cache.promise = cacheSlot(entry, guarded);
   entry.cache = cache;
 

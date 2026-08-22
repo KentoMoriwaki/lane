@@ -147,13 +147,14 @@ hidden would fetch data that is stale again by the time anyone sees it.
 **What revealing does.** A reveal re-creates layout effects inside the commit
 that unhides the tree, before paint, and Lane reconciles there: it compares the
 promise the reader is holding against the store's current one, and adopts the
-store's if they differ. Three outcomes, all decided by what the store holds
+store's if they differ. Four outcomes, all decided by what the store holds
 rather than by what happened while hidden:
 
 | Store state at the reveal | What the first revealed frame shows |
 | --- | --- |
 | the same promise the reader holds | that value, immediately — no work, no request |
-| a settled replacement (a publication, a `set`, a finished read, a warmed prefetch) | the replacement, adopted synchronously — no fallback |
+| a replacement the store was handed as a value (a publication, a `set`) | the replacement, adopted synchronously — no fallback |
+| a settled promise nothing has read yet (a finished read, a warmed prefetch) | the replacement, one suspend later — the fallback is committed first |
 | invalidated or absent (removed, collected) | the boundary's fallback, with the re-read starting *at* the reveal |
 
 The last row is the guarantee worth stating plainly: **an invalidated value is
@@ -180,31 +181,44 @@ Per ownership, in one line each:
   is `gcTime`: if the entry was collected while the tree was hidden, the reveal
   re-reads through the loader and falls back until it lands.
 
-#### Flash-free reveals: a settled promise is readable on the spot
+#### Flash-free reveals: a value the store was handed, not a promise it holds
 
-Every promise Lane hands out carries its own settlement — `status` and `value`,
-[React's promise cache protocol](https://react.dev/reference/react/use#how-to-implement-a-promise-cache)
-— so `use()` returns from a settled one in the render that receives it, without
-suspending first to find out what it holds. That is what makes the middle row of
-the table above unconditional: **a reveal that adopts a settled replacement
-commits without a fallback**, whoever settled it and whether or not anything has
-ever read it.
+A value that reached the store synchronously — `set(key, value)`, a
+`<LaneHydration>` seed — is wrapped in a promise that is already fulfilled when
+it is handed back, carrying `status` and `value`
+([React's promise cache protocol](https://react.dev/reference/react/use#how-to-implement-a-promise-cache))
+with no microtask in between. `use()` reads it in the render that receives it,
+so **a reveal that adopts one commits without a fallback** even though nothing
+has ever read it. That is the case the reveal has to survive: a mutation
+converged behind a hidden tree, or a navigation's payload seeding a key the tree
+never saw.
 
-Warming is where that matters most. `lane.prefetch` runs outside React, so
-nothing has ever `use()`d the promise it produces, and a reveal adopts from a
-layout effect — a synchronous update with no microtask to wait in. The stamps
-are what carry the value across that gap, which makes warming a key enough on
-its own to have the surface appear complete on reveal: there is no second reader
-to arrange.
+A *promise* is left as it arrived. A loader's result, `set(key, promise)`, an
+`update` chained onto one, `lane.prefetch` — those are somebody else's promise
+passed through, and there is nothing the store can say about one synchronously.
+React stamps it on its first `use()`, which is one suspend later. That is
+usually invisible, because a suspend inside a transition holds the current
+screen. **A reveal is not a transition**: it adopts from a layout effect, a
+synchronous update with nowhere to wait, so the boundary commits its fallback
+and comes back on a retry React throttles fallbacks on for ~300ms.
 
-The same holds for a `set` that landed while the tree was hidden, for an
-`update` chained onto one, and for a publication seeding a key nobody has read —
-`set(key, value)` and a `<LaneHydration>` seed are fulfilled the moment they are
-created, with no microtask in between.
+So warming still needs care. `lane.prefetch` runs a loader, and the promise it
+leaves in the store has been read by nobody, so a synchronous reveal that adopts
+it shows the fallback. Warming saves the request; it does not by itself buy a
+flash-free first frame. If a surface must appear complete on reveal, either have
+something read the key (a hidden `<Activity>` reader will do) or put the value in
+with `set` rather than warming a loader for it.
 
-What this does *not* buy is a promise that is still loading. A pending
-replacement suspends, as it should: it has nothing to show, and the boundary's
-fallback is the specified presentation for a new appearance.
+What none of this buys is a promise that is still loading. A pending replacement
+suspends, as it should: it has nothing to show, and the boundary's fallback is
+the specified presentation for a new appearance.
+
+> **Footnote — holding a frame during adoption.** If a specific surface must not
+> risk that retry and cannot be served by a `set`, the userland pattern is to
+> keep the outgoing content mounted for one commit while the adopted promise is
+> instrumented (a "flash guard" wrapper around the boundary). Lane ships nothing
+> for this and the lab has not measured a form of it; it is named here so the
+> option is known, not recommended as a default.
 
 ### Announce pending at the start of a mutation, not the end
 

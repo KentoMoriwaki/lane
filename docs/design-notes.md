@@ -198,35 +198,37 @@ So the demand splits, and each half already has somewhere to go:
   `initialData` is bought for. When a partial value genuinely should appear
   first, the caller has it in hand and `set` publishes it.
 
-## A promise Lane hands out says what it holds
+## The store states what it knows synchronously, and nothing more
 
-Every promise a reader gets carries its own settlement as `status` / `value` /
-`reason` — React's promise cache protocol, written out in the `use` reference
-under
+A value that reaches the store as a value — `set(key, value)`, a
+`<LaneHydration>` seed — is wrapped in a promise that is fulfilled before it is
+returned, carrying `status` and `value`: React's promise cache protocol, written
+out in the `use` reference under
 ["How to implement a promise cache"](https://react.dev/reference/react/use#how-to-implement-a-promise-cache).
-So `use()` returns from a settled promise in the render that receives it, rather
-than suspending once to learn what it holds; and where the value is already in
-hand — `set(key, value)`, a `<LaneHydration>` seed — the promise is fulfilled at
-creation, with no microtask in between.
+`use()` reads it in the render that receives it rather than suspending once to
+learn what it holds.
 
-The reason it is Lane's job is the one path that cannot wait a microtask. A
-reveal adopts the store's promise from a layout effect, which is a synchronous
-update: React has nowhere to wait, so it commits the boundary's fallback, and
-the retry runs on a lane where fallbacks are throttled for 300ms. A value that
-had been sitting in the store since before the tree was hidden would spend a
-third of a second announcing itself as loading. React writes the same three
-fields itself on a promise's first `use()`, and skips doing so once `status` is
-a string — which is why writing `"pending"` obliges the writer to write the
-settlement too, and why Lane writes both.
+That exists for the one path that cannot wait a microtask. A reveal adopts the
+store's promise from a layout effect, which is a synchronous update: React has
+nowhere to wait, so it commits the boundary's fallback, and the retry runs on a
+lane where fallbacks are throttled for 300ms. A value converged behind a hidden
+tree would spend a third of a second announcing itself as loading — for data
+that was already in hand when the tree was hidden.
 
-What it costs is cross-reader consistency in one narrow shape, and
-`tearing.test.ts` is where it is pinned down: that first suspend was also what
-kept a render-phase read from committing beside a sibling still holding the
-previous value. A store write landing between two reads of a single render pass
-now commits a frame in which they disagree, corrected by the reader's own layout
-reconciliation in the same task. That is the trade — the same property that lets
-a reveal show a value without a fallback is the one that leaves nothing standing
-between a read and a commit.
+**A promise is passed through untouched**, and that is the more important half
+of the rule. A loader's result, `set(key, promise)`, an `update` chained onto
+one, a `prefetch` — each is somebody else's promise, and the store has nothing
+to say about it that it can say synchronously. Writing `"pending"` on one would
+be a claim the store then owes a settlement for; React already writes all three
+fields itself on a promise's first `use()`, and stops doing so the moment
+`status` is a string, so a store that starts the protocol must finish it. Lane
+declines to start. The cost is the ordinary one — a promise nothing has read
+suspends once — and it is only visible where the adoption is synchronous, which
+is the reveal, and where the fix is to hand the store a value instead.
+
+The same principle runs through the rest of the store: no `get`, no `peek`, and
+`update` chains onto the in-flight promise rather than racing it. Nothing here
+answers a question with a value the store had to guess at.
 
 ## Optimistic state is local
 

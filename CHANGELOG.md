@@ -53,31 +53,33 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
-- **Every promise Lane hands out carries its own settlement.** `status` /
-  `value` / `reason` on the promise, as react.dev's `use` reference describes in
-  ["How to implement a promise cache"](https://react.dev/reference/react/use#how-to-implement-a-promise-cache),
-  so `use()` returns from a settled one in the render that receives it instead
-  of suspending once to learn what it holds. Where the value is already in hand —
-  `set(key, value)`, a `<LaneHydration>` seed — the promise is fulfilled at
-  creation, with no microtask in between.
+- **A value handed to the store comes back as a promise that is already
+  fulfilled.** `set(key, value)` and a `<LaneHydration>` seed return a promise
+  carrying `status` and `value` at creation, with no microtask in between —
+  react.dev's `use` reference calls this
+  ["How to implement a promise cache"](https://react.dev/reference/react/use#how-to-implement-a-promise-cache).
+  `use()` reads it in the render that receives it rather than suspending once to
+  learn what it holds.
 
   This is what an `<Activity>` reveal was missing. A reveal adopts the store's
   promise from a layout effect, a synchronous update with nowhere to wait, so an
   unstamped promise committed the boundary's fallback and came back on a retry
   React throttles fallbacks on for 300ms — a third of a second of "loading" for
-  a value that had been sitting there since before the tree was hidden. A `set`
-  that landed while hidden, and a prefetch nobody read, now reveal without a
-  fallback, so the "have something `use()` it first" workaround and the
-  flash-guard footnote that stood beside it are both gone — see
+  data that was already in hand when the tree was hidden. A `set` that converged
+  behind a hidden tree, and a navigation's payload seeding a key that tree never
+  saw, now reveal with no fallback at all.
+
+  **Promises are passed through untouched**: a loader's result, `set(key,
+  promise)`, an `update` chain, `lane.prefetch`. Each is somebody else's promise
+  and there is nothing the store can say about it synchronously, so React stamps
+  it on its first `use()` as it always has. The consequence to know is that
+  warming still does not buy a flash-free *synchronous* reveal — `prefetch` runs
+  a loader, so what the store holds is a promise nothing has read. Hand the key
+  a value with `set`, or have something read it. See
   [consistency.md](./docs/consistency.md#activity).
 
-  It costs cross-reader consistency in one narrow shape, pinned down in
-  `tearing.test.ts`: that first suspend was also what kept a render-phase read
-  from committing beside a sibling still holding the previous value, so a store
-  write landing between two reads of one render pass now commits a frame in
-  which they disagree — corrected by the reader's own layout reconciliation in
-  the same task. Budgets move 2.73 → 2.79 kB, 4.08 → 4.13 kB, and the ceiling
-  5.71 → 5.77 kB.
+  The store budget moves 2.73 → 2.75 kB (+22 B); the other two limits are
+  unchanged.
 
 - **Breaking: `LaneRead.refreshError` is now `error`.** The old name was accurate
   while the field could only appear over a previous value — a *refresh* had

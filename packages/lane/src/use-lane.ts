@@ -278,13 +278,14 @@ export function useLane<T, C = T>(
   // Deliberately synchronous, never a transition: a reveal is a new
   // appearance, not the continuation the SWR channel serves. A pending
   // replacement suspends into the boundary's fallback — that is the specified
-  // presentation for a new appearance; a replacement that settled while hidden
-  // commits in this same synchronous update, because every promise the store
-  // hands out carries its own settlement (see `instrument` in core.ts) and a
-  // synchronous render has no microtask to wait in. Either way the outdated
-  // value never reappears. Reveals that carry a publication don't land here
-  // (they adopt during render via the source switch above); this is the net
-  // for reveals no signal reached.
+  // presentation for a new appearance. A replacement the store received as a
+  // value (a `set(key, value)`, a publication seed) commits in this same
+  // synchronous update, because that promise carries its own settlement (see
+  // `instrumentedValue` in core.ts); one that came from a loader suspends until
+  // React has stamped it, since a synchronous render has no microtask to wait
+  // in. Either way the outdated value never reappears. Reveals that carry a
+  // publication don't land here (they adopt during render via the source switch
+  // above); this is the net for reveals no signal reached.
   const reconcileOnReveal = useEffectEvent((
     targetLane: Lane,
     targetKeyId: string,

@@ -15,13 +15,15 @@
  *   3. readers that disagree — a transition on the same key that cannot commit
  *      yet, or a store write landing between two reads of one render pass.
  *
- * Condition 2 holds for every settled entry: Lane stamps each promise it hands
- * out with React's thenable protocol, so `use()` reads a settled one in the
- * render that receives it rather than suspending once to learn what it holds.
- * That is what a reveal is built on — nothing between adopting a value and
- * showing it — and it is equally what leaves nothing between a render-phase read
- * and a committed frame. Condition 3 carries the whole weight, and the frames
- * below are what that costs.
+ * Condition 2 is what selects the shapes below. A value the store was handed —
+ * `set(key, value)`, a publication seed — comes back as a promise that is
+ * already fulfilled and says so, so `use()` reads it in the render that
+ * receives it. That is what a reveal is built on, and it is equally what leaves
+ * nothing between a render-phase read and a committed frame. A promise the
+ * store merely holds (a loader's result, a `prefetch`) is untouched and
+ * suspends on its first `use()`, which routes the update through Suspense
+ * instead — so every test here writes its values with `set`, because that is
+ * where condition 2 is met.
  *
  * Assertions run against a log of committed DOM snapshots (`useFrames`), not just
  * the final state: a torn frame repaired one commit later is still a torn frame.
@@ -223,14 +225,15 @@ describe("cross-reader consistency", () => {
       // WebSocket firing while React is yielded mid-render).
       //
       // Condition 3 without a transition anywhere: A read v1, B read v2, and
-      // both promises are readable on the spot, so the pass commits with one
-      // key showing two values. A's own layout reconciliation is the
-      // correction — it reads the store in that same commit and adopts v2
-      // synchronously, so the repair lands in the same task and no paint
-      // separates the two frames. This is the shape of the trade: reading a
-      // settled promise without suspending is what makes a reveal flash-free,
-      // and it is the same property that leaves nothing standing between these
-      // two reads.
+      // both are `set` values, so both are readable on the spot and the pass
+      // commits with one key showing two values. A's own layout reconciliation
+      // is the correction — it reads the store in that same commit and adopts
+      // v2 synchronously, so the repair lands in the same task and no paint
+      // separates the two frames. This is the shape of the trade: a `set` value
+      // being readable without a suspend is what makes a reveal flash-free, and
+      // it is the same property that leaves nothing standing between these two
+      // reads. A loader-produced v2 would suspend B instead, which is the frame
+      // this test used to record.
       const lane = createLane({ gcTime: Infinity });
       lane.set(KEY, "v1");
 

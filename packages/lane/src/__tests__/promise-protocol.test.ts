@@ -2,33 +2,29 @@
 
 /**
  * React's promise cache protocol (react.dev, `use` → "How to implement a
- * promise cache"): a promise carries its own settlement as `status` / `value` /
- * `reason`, and `use()` reads a settled one in the render that receives it
- * instead of suspending once to learn what it holds.
+ * promise cache"): a promise carries its own settlement as `status` / `value`,
+ * and `use()` reads a settled one in the render that receives it instead of
+ * suspending once to learn what it holds.
  *
- * Lane writes those fields on every promise it hands a reader, because the one
- * path that cannot wait a microtask is the one this is for: a reveal adopts the
- * store's promise from a layout effect, which is a synchronous update. A
- * synchronous render has nowhere to wait, so an unstamped promise — however
- * long it has been settled — commits the boundary's fallback, and the retry
- * runs on the lane React throttles fallbacks on for 300ms.
+ * Lane writes those fields in exactly one place — a value it was handed
+ * synchronously, which is `set(key, value)` and a `<LaneHydration>` seed. That
+ * covers the path that cannot wait a microtask: a reveal adopts the store's
+ * promise from a layout effect, a synchronous update, so an unstamped promise
+ * commits the boundary's fallback and comes back on a retry React throttles
+ * fallbacks on for 300ms.
  *
- * React skips its own instrumentation as soon as `status` is a string, so
- * writing `"pending"` is a promise to write the settlement too. These tests are
- * that promise, kept for every way a promise leaves the store.
+ * A promise is left exactly as it arrived. A loader's result, `set(key,
+ * promise)`, an `update` chain, `prefetch` — those are somebody else's promise
+ * passed through, and the store has nothing to say about them that it can say
+ * synchronously. React stamps them itself on their first `use()`, which is one
+ * suspend later, and that is the accepted cost.
  */
 
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import {
-  createLane,
-  external,
-  LaneExternalTimeoutError,
-  LaneProvider,
-  LaneReadError,
-} from "../index";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { createLane, LaneProvider } from "../index";
 import { hydrateMany, publishedBy } from "../hydrate";
 import type { Lane, LaneHydrationSnapshots, LaneRead } from "../types";
 import {
@@ -36,19 +32,15 @@ import {
   readOrCreate,
   resetVitest,
   settlePromiseHandlers,
-  subscribe,
-  subscribeInvalidate,
 } from "./test-utils";
 
 /**
- * The protocol's three fields, read off a promise. Optional because "not
- * stamped at all" is the state the negative control below has to be able to
- * describe.
+ * The protocol's fields, read off a promise. Optional because "not stamped at
+ * all" is the state most of these tests have to be able to describe.
  */
 type Stamped<T> = Promise<T> & {
-  status?: "pending" | "fulfilled" | "rejected";
+  status?: string;
   value?: T;
-  reason?: unknown;
 };
 
 function stamps<T>(promise: Promise<T>): Stamped<T> {
@@ -77,97 +69,7 @@ afterEach(() => {
   resetVitest();
 });
 
-describe("every promise the store hands out", () => {
-  it("says it is pending until it settles", async () => {
-    const lane = createLane();
-    const load = deferred<string>();
-    const promise = readOrCreate(lane, ["tasks"], () => load.promise);
-
-    await settlePromiseHandlers();
-    expect(stamps(promise).status).toBe("pending");
-
-    load.resolve("v1");
-    await promise;
-
-    expect(stamps(promise).status).toBe("fulfilled");
-  });
-
-  it("carries the read it resolved with", async () => {
-    const lane = createLane();
-    const promise = readOrCreate(lane, ["tasks"], async () => "v1");
-    const read = await promise;
-
-    // The same object, not an equal one: `value` is what `use()` returns.
-    expect(stamps(promise).status).toBe("fulfilled");
-    expect(stamps(promise).value).toBe(read);
-    expect(read).toEqual({ data: "v1", revision: expect.any(Number) });
-  });
-
-  it("carries the error it rejected with, wrapped for a client key", async () => {
-    const lane = createLane();
-    const failure = new Error("offline");
-    const promise = readOrCreate(lane, ["tasks"], async () => {
-      throw failure;
-    });
-
-    await expect(promise).rejects.toThrow(LaneReadError);
-
-    expect(stamps(promise).status).toBe("rejected");
-    expect(stamps(promise).reason).toBeInstanceOf(LaneReadError);
-    expect((stamps(promise).reason as LaneReadError).cause).toBe(failure);
-  });
-
-  it("carries an external key's error unwrapped", async () => {
-    vi.useFakeTimers();
-
-    const lane = createLane();
-    const promise = readOrCreate(lane, ["task", "t1"], external);
-
-    promise.catch(() => {});
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(20_000);
-    });
-
-    expect(stamps(promise).status).toBe("rejected");
-    expect(stamps(promise).reason).toBeInstanceOf(LaneExternalTimeoutError);
-  });
-
-  it("stamps what update and updateAll hand back", async () => {
-    const lane = createLane();
-
-    await lane.set(["tasks", "a"], "a1");
-    await lane.set(["tasks", "b"], "b1");
-
-    const updated = lane.update<string>(["tasks", "a"], (data) => `${data}+`);
-    const all = lane.updateAll<string>(["tasks"], (data) => `${data}!`);
-
-    await Promise.all([updated, ...all]);
-
-    // Both chain onto the entry's in-flight promise, so both go the async way
-    // round and are stamped on settlement rather than at creation.
-    expect(stamps(updated as Promise<LaneRead<string>>).status).toBe("fulfilled");
-    expect(all).toHaveLength(2);
-
-    for (const promise of all) {
-      expect(stamps(promise).status).toBe("fulfilled");
-    }
-  });
-
-  it("stamps what prefetch warms", async () => {
-    const lane = createLane();
-    const promise = lane.prefetch({ key: ["tasks"], loader: async () => "warm" });
-
-    await promise;
-
-    expect(stamps(promise).status).toBe("fulfilled");
-    expect(stamps(promise).value).toEqual({
-      data: "warm",
-      revision: expect.any(Number),
-    });
-  });
-});
-
-describe("a value already in hand", () => {
+describe("a value the store received synchronously", () => {
   it("is fulfilled the moment set returns it, with no microtask in between", () => {
     const lane = createLane();
     const promise = lane.set(["tasks"], "v1");
@@ -216,68 +118,62 @@ describe("a value already in hand", () => {
   });
 });
 
-describe("a read with nothing of its own to serve", () => {
-  it("is fulfilled when a fallback policy answers for it", async () => {
+describe("a promise the store was handed", () => {
+  it("carries no stamps of Lane's own, settled or not", async () => {
     const lane = createLane();
-    const failure = new Error("offline");
-    const promise = readOrCreate(
-      lane,
-      ["quota"],
-      async () => {
-        throw failure;
-      },
-      { fallback: () => "empty" },
-    );
-
-    await promise;
-
-    expect(stamps(promise).status).toBe("fulfilled");
-    expect(stamps(promise).value).toEqual({
-      data: "empty",
-      error: failure,
-      revision: expect.any(Number),
-    });
-  });
-
-  it("is fulfilled when a cancel reverts it to the last value", async () => {
-    const lane = createLane();
-    subscribe(lane, ["tasks"]);
-
-    await readOrCreate(lane, ["tasks"], async () => "v1");
-    subscribeInvalidate(lane, ["tasks"], vi.fn());
-    lane.invalidate(["tasks"]);
-
-    // Forwards the signal, the way a loader handing it to `fetch` does.
-    const refresh = readOrCreate(
-      lane,
-      ["tasks"],
-      ({ signal }) =>
-        new Promise<string>((_resolve, reject) => {
-          signal.addEventListener("abort", () => {
-            reject(new Error("aborted"));
-          });
-        }),
-    );
+    const load = deferred<string>();
+    const loaded = readOrCreate(lane, ["tasks"], () => load.promise);
 
     await settlePromiseHandlers();
-    lane.cancel(["tasks"]);
-    await refresh;
+    expect(stamps(loaded).status).toBeUndefined();
 
-    // A cancel is the caller's own stop, so the reverted read carries no
-    // `error` — and it is a fulfilled read like any other.
-    expect(stamps(refresh).status).toBe("fulfilled");
-    expect(stamps(refresh).value).toEqual({
-      data: "v1",
-      revision: expect.any(Number),
-    });
+    load.resolve("v1");
+    await loaded;
+
+    // Still nothing: the store never touched it, and nothing has `use()`d it,
+    // which is the only other thing that would write these fields.
+    expect(stamps(loaded).status).toBeUndefined();
+    expect(stamps(loaded).value).toBeUndefined();
+  });
+
+  it("is left alone when set is given one rather than a value", async () => {
+    const lane = createLane();
+    const published = lane.set(["tasks"], Promise.resolve("v1"));
+
+    await published;
+
+    expect(stamps(published).status).toBeUndefined();
   });
 });
 
 describe("a synchronous adoption", () => {
-  it("reads a settled Lane promise without ever showing the fallback", async () => {
+  it("reads a set value without ever showing the fallback", async () => {
     const lane = createLane();
-    // Warmed outside React and never handed to `use()`: the state the store's
-    // own stamps have to answer for, since React has never seen this promise.
+    // Written as a value and never handed to `use()` — the state a reveal
+    // finds after a mutation landed behind a hidden tree.
+    const promise = lane.set(["tasks"], "v1");
+
+    const container = await renderAdoption(lane, promise);
+
+    expect(container.textContent).toBe("v1");
+    expect(fallbackRenders).toBe(0);
+  });
+
+  it("shows the fallback for an un-instrumented promise of the same value", async () => {
+    const lane = createLane();
+    // The control: a plain promise of the very same read. Everything else about
+    // the render is identical, so the fallback below is the stamps and nothing
+    // else.
+    const plain = Promise.resolve(await lane.set(["tasks"], "v1"));
+
+    const container = await renderAdoption(lane, plain);
+
+    expect(container.textContent).toBe("v1");
+    expect(fallbackRenders).toBeGreaterThan(0);
+  });
+
+  it("shows the fallback for a settled prefetch nothing has read", async () => {
+    const lane = createLane();
     const promise = lane.prefetch({
       key: ["tasks"],
       loader: async () => "warm",
@@ -285,24 +181,13 @@ describe("a synchronous adoption", () => {
 
     await promise;
 
+    // The boundary of the rule, pinned so the docs stay honest: warming runs a
+    // loader, so what the store holds is the loader's promise, and nothing has
+    // `use()`d it. React stamps it on the first `use()` — one suspend later,
+    // and this adoption is synchronous, so that suspend is a committed
+    // fallback. Warming saves the request; it does not buy a flash-free
+    // synchronous reveal. `set` the value, or have something read the key.
     const container = await renderAdoption(lane, promise);
-
-    expect(container.textContent).toBe("warm");
-    expect(fallbackRenders).toBe(0);
-  });
-
-  it("shows it for an un-instrumented promise of the same value", async () => {
-    const lane = createLane();
-    const promise = lane.prefetch({
-      key: ["tasks"],
-      loader: async () => "warm",
-    });
-    // The control: a plain promise of the very same read. Everything else about
-    // the render is identical, so the fallback below is the stamps and nothing
-    // else.
-    const plain = Promise.resolve(await promise);
-
-    const container = await renderAdoption(lane, plain);
 
     expect(container.textContent).toBe("warm");
     expect(fallbackRenders).toBeGreaterThan(0);

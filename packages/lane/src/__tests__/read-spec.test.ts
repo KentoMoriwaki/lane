@@ -6,9 +6,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   createLane,
+  external,
   infiniteLaneRead,
+  infiniteLaneSnapshot,
   laneKey,
   laneRead,
+  laneSnapshot,
   LaneProvider,
   useInfiniteLane,
   useLane,
@@ -18,6 +21,7 @@ import {
 import type {
   Lane,
   LaneGatedReadSpec,
+  LaneSnapshot,
   LaneGatedResult,
   LaneKeyOf,
   LaneLoader,
@@ -27,6 +31,7 @@ import type {
   LaneUseOptions,
 } from "../types";
 import type {
+  InfiniteLaneExternalReadSpec,
   InfiniteLaneReadSpec,
   InfiniteLaneValue,
 } from "../use-infinite-lane";
@@ -586,6 +591,61 @@ function typeExpectations(lane: Lane): void {
   expectTypeOf(feed.key).toEqualTypeOf<
     LaneKeyOf<InfiniteLaneValue<FeedPage, number>>
   >();
+
+  // The list whose first page the route publishes: no `initialCursor` (the
+  // published value carries the cursor page 1 was fetched with), and the same
+  // `loadMore` halves as any other list.
+  const routeFeed = infiniteLaneRead({
+    key: ["feed", "route"],
+    loader: external,
+    fetchPage: async (cursor: number) => ({ rows: [task], next: cursor + 1 }),
+    nextCursor: (page) => page.next,
+  });
+
+  expectTypeOf(routeFeed).toExtend<
+    InfiniteLaneExternalReadSpec<FeedPage, number>
+  >();
+  expectTypeOf(routeFeed.key).toEqualTypeOf<
+    LaneKeyOf<InfiniteLaneValue<FeedPage, number>>
+  >();
+  expectTypeOf(useInfiniteLane(routeFeed).promise).toEqualTypeOf<
+    Promise<LaneRead<InfiniteLaneValue<FeedPage, number>>>
+  >();
+
+  // Freshness is the owner's on this form exactly as on `laneRead`'s external
+  // one — and the pagination halves `loadMore` needs stay required.
+  infiniteLaneRead({
+    key: ["feed", "route"],
+    loader: external,
+    fetchPage: async (cursor: number) => ({ rows: [task], next: cursor + 1 }),
+    nextCursor: (page) => page.next,
+    // @ts-expect-error — nothing local re-reads this key.
+    staleTime: 30_000,
+  });
+  infiniteLaneRead({
+    key: ["feed", "route"],
+    loader: external,
+    fetchPage: async (cursor: number) => ({ rows: [task], next: cursor + 1 }),
+    nextCursor: (page) => page.next,
+    // @ts-expect-error — same for every revalidation trigger.
+    refetchOnMount: true,
+  });
+  infiniteLaneRead({
+    key: ["feed", "route"],
+    loader: external,
+    // @ts-expect-error — `loadMore` is still the client's, so it is required.
+    nextCursor: (page: FeedPage) => page.next,
+  });
+
+  // The seed is the accumulated value, built from one page — checked against
+  // what the key holds, like every other snapshot.
+  expectTypeOf(
+    infiniteLaneSnapshot(routeFeed, { rows: [task], next: 1 }, 0),
+  ).toEqualTypeOf<LaneSnapshot<InfiniteLaneValue<FeedPage, number>>>();
+  // @ts-expect-error — a page is not the list the key holds.
+  laneSnapshot(routeFeed, { rows: [task], next: 1 });
+  // @ts-expect-error — and the cursor is the one `fetchPage` takes.
+  infiniteLaneSnapshot(routeFeed, { rows: [task], next: 1 }, "0");
 }
 
 void typeExpectations;

@@ -390,37 +390,23 @@ function mergePublication<T>(
   entry: LaneEntry,
   published: LaneValue<T>,
 ): LaneValue<T> {
-  const merge = entry.merge;
+  const { cache, merge } = entry;
 
   // A published promise has no value to compare yet, and waiting for one would
-  // give up the synchronous landing every reader of this path depends on.
-  if (!merge || isPromiseLike(published)) {
+  // give up the synchronous landing this whole path exists for.
+  if (!merge || !cache || isPromiseLike(published)) {
     return published;
   }
 
-  const held = fulfilledValue(entry);
+  const stamped = cachedPromise(entry, cache) as
+    | LaneThenable<LaneRead<unknown>>
+    | undefined;
+  const held =
+    stamped?.status === "fulfilled" ? stamped.value?.data : undefined;
 
   return held === undefined
     ? published
     : (merge({ held, key: entry.key, published }) as T);
-}
-
-/**
- * The entry's data if the promise it holds is stamped fulfilled, else
- * `undefined` — the whole of what can be known about an entry's value without
- * awaiting it.
- */
-function fulfilledValue(entry: LaneEntry): unknown {
-  const cache = entry.cache;
-  const promise = cache && cachedPromise(entry, cache);
-
-  if (!promise) {
-    return undefined;
-  }
-
-  const stamped = promise as LaneThenable<LaneRead<unknown>>;
-
-  return stamped.status === "fulfilled" ? stamped.value?.data : undefined;
 }
 
 /**

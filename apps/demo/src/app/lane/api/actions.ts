@@ -1,6 +1,6 @@
 "use server";
 
-import { refresh } from "next/cache";
+import { refresh, updateTag } from "next/cache";
 import type {
   CreateLabelInput,
   CreateProjectInput,
@@ -21,32 +21,37 @@ import {
   removeTaskLabel,
   updateTask,
 } from "./endpoints";
+import { workspaceCacheTags } from "./route-reads";
 
 /**
- * **The only way this workspace changes.**
+ * **The mutations that want the screen read again.**
  *
- * Every key the browser reads here is seeded by the route and read with
- * `external`, which makes them server-owned: the client may not publish to them,
- * invalidate them, or edit them in place. So a mutation cannot end at the API
- * call — it has to come back as a *publication*, and the channel for that is the
- * one the framework already owns: mutate the source, ask for the route to render
- * again, and the RSC payload re-streams into `<LaneHydration>`, which republishes
- * every seeded key at once.
+ * This is one of the two channels the workspace mutates through (see
+ * `docs/integrations.md` § The two mutation channels). The axis is not "server
+ * or client" but *"do I want this screen read again?"* — and for the three
+ * mutations below the answer is yes, because what they change is a position
+ * rather than a value: a created task belongs somewhere in a sorted list, a new
+ * project or label belongs in every picker and filter that lists them. Nothing
+ * the client holds can place them, so the honest answer is a read.
  *
- * `refresh()` is that ask, and it is the only granularity RSC offers: a route
- * renders or it does not. There is no "re-read the insights but leave the task
- * list alone". That is fine here because the reads it re-runs are uncached
- * derivations of the thing just mutated (see `api/route-reads.ts`) — the work
- * being repeated is work the mutation invalidated anyway.
+ * A Server Action is what carries that: the response is the re-rendered route,
+ * so the read costs no extra round trip, and `<LaneHydration>` republishes
+ * every seeded key from it.
  *
- * That is the whole trade. The client-owned variant (`/lane-spa`) pays for
- * immediacy with a cache it must keep honest by hand — publish the task, patch
- * the lists it appears in, invalidate what derives from it, and decide for each
- * of those what "derives" means. Here one round trip republishes the task, every
- * list that contains it, the project counts, and the insights consistently, and
- * nothing has to name that relationship. What it costs is that round trip, which
- * is why the controls that need to feel instant wrap `useOptimistic` around the
- * read value instead.
+ * Which ask each mutation makes depends on where its data lives:
+ *
+ * - `refresh()` re-renders the route without expiring anything. It is enough
+ *   for tasks and insights, which are read dynamically (`api/route-reads.ts`).
+ * - `updateTag(tag)` expires a `"use cache"` entry *and* re-renders the route in
+ *   the same response, which is the only way to change cached data honestly:
+ *   the client router's copy is bumped with it, so a later navigation cannot
+ *   paint the pre-mutation version.
+ *
+ * Everything a user edits on an existing task — status, title, priority,
+ * assignee, project, due date, labels, deletion — goes the other way in
+ * `/lane`: from the browser to the API and back into the lane in place
+ * (`api/hooks.ts`). The bottom of this file keeps those same edits as Server
+ * Actions for `/app-router`, which is the route that answers the other way.
  */
 
 export async function createTaskAction(
@@ -54,10 +59,57 @@ export async function createTaskAction(
   input: CreateTaskInput,
 ): Promise<Task> {
   const task = await createTask(ctx, input);
+  // The list is dynamic, so re-rendering the route is the whole ask. The
+  // project counts are not: they ride inside a cached read, and a new task
+  // changes the count of the project it landed in.
+  if (input.projectId) {
+    updateTag(workspaceCacheTags.projects(ctx.teamId));
+  }
   refresh();
 
   return task;
 }
+
+export async function createLabelAction(
+  ctx: WorkspaceCtx,
+  input: CreateLabelInput,
+): Promise<TeamLabel> {
+  const label = await createLabel(ctx, input);
+  // No `refresh()` beside it: expiring a tag re-renders the current route by
+  // itself, and the response carries that render. Asking twice would only mean
+  // rendering the route against a cache entry that is already gone.
+  updateTag(workspaceCacheTags.labels(ctx.teamId));
+
+  return label;
+}
+
+export async function createProjectAction(
+  ctx: WorkspaceCtx,
+  input: CreateProjectInput,
+): Promise<Project> {
+  const project = await createProject(ctx, input);
+  updateTag(workspaceCacheTags.projects(ctx.teamId));
+
+  return project;
+}
+
+/* ------------------- The props baseline's task mutations ------------------ */
+
+/**
+ * `/app-router` — the plain-props comparison — has one channel, and this is it:
+ * every task edit is a Server Action that mutates and asks for a rerender, and
+ * the whole route comes back as props. These live here because that route
+ * shares this one's endpoints, reads, and URL state; what the two routes differ
+ * in is how a change converges, which is the comparison.
+ *
+ * `/lane` calls none of them. Its task edits go from the browser to the API and
+ * into the lane in place (`api/hooks.ts`).
+ *
+ * They expire the projects tag where a task can change a project's task count,
+ * because that count is read through a cached function now — the browser
+ * channel has no way to say this, and saying it here is what keeps the baseline
+ * exactly as read-again as it was.
+ */
 
 export async function updateTaskAction(
   ctx: WorkspaceCtx,
@@ -65,6 +117,9 @@ export async function updateTaskAction(
   input: UpdateTaskInput,
 ): Promise<Task> {
   const task = await updateTask(ctx, taskId, input);
+  if (input.projectId !== undefined) {
+    updateTag(workspaceCacheTags.projects(ctx.teamId));
+  }
   refresh();
 
   return task;
@@ -75,6 +130,7 @@ export async function deleteTaskAction(
   taskId: string,
 ): Promise<void> {
   await deleteTask(ctx, taskId);
+  updateTag(workspaceCacheTags.projects(ctx.teamId));
   refresh();
 }
 
@@ -98,26 +154,6 @@ export async function removeTaskLabelAction(
   refresh();
 
   return task;
-}
-
-export async function createLabelAction(
-  ctx: WorkspaceCtx,
-  input: CreateLabelInput,
-): Promise<TeamLabel> {
-  const label = await createLabel(ctx, input);
-  refresh();
-
-  return label;
-}
-
-export async function createProjectAction(
-  ctx: WorkspaceCtx,
-  input: CreateProjectInput,
-): Promise<Project> {
-  const project = await createProject(ctx, input);
-  refresh();
-
-  return project;
 }
 
 /**

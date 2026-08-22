@@ -18,7 +18,7 @@ type InsightCard = {
 
 export function InsightStrip() {
   const { filters, viewHref } = useWorkspaceHrefs();
-  const { promise } = useInsights();
+  const { promise, isInvalidationPending } = useInsights();
   const { data } = React.use(promise);
 
   const cards: InsightCard[] = [
@@ -32,11 +32,15 @@ export function InsightStrip() {
 
   return (
     <div className="border-b border-border">
-      {/* No chip here. These numbers are computed by the same server read that
-          produced the task list, in the same publication, so there is no state
-          in which they are separately stale — the one notice the workspace can
-          give sits with the list. */}
-      <div className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3">
+      {/* No chip here. A refresh that never reached the owner is reported once,
+          beside the list. What this strip does show is its own convergence:
+          these counters are the key a task mutation marks stale, so they are
+          the numbers that are briefly behind the row the user just edited, and
+          they dim until the publication that recomputes them arrives. */}
+      <div
+        className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3 transition-opacity"
+        style={{ opacity: isInvalidationPending ? 0.6 : 1 }}
+      >
         {cards.map((card) => (
           <InsightCardButton
             key={card.key}

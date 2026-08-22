@@ -20,10 +20,9 @@ export function isExternalLoader(loader: unknown): boolean {
 }
 
 /**
- * Thrown when a client-side mutation targets an externally published entry.
- * The value is a copy of something its owner holds; a local write is either
- * overwritten by the next republish or outlives the truth — both silently, so
- * the write is not.
+ * Thrown by `lane.prefetch` on an external read — the one operation an external
+ * key still refuses. Everything else the client can do to an entry (`set`,
+ * `update`, `invalidate`, `remove`) it can do to this one.
  */
 export class LaneOwnershipError extends Error {
   readonly key: LaneKey;
@@ -35,13 +34,13 @@ export class LaneOwnershipError extends Error {
       // The env condition wraps the whole literal so bundlers fold the prose
       // out of production builds; a helper returning it would still ship it.
       typeof process !== "undefined" && process.env.NODE_ENV !== "production"
-        ? `${keyId} is published externally, so \`${operation}\` is not the ` +
-            "client's to call. Its owner publishes the key (an RSC payload, a " +
-            "router's loader data) and republishes to change it; a client write " +
-            "would be overwritten, or outlive the truth, without either side " +
-            "noticing. For an optimistic edit, layer `useOptimistic` over the " +
-            "read value instead of writing to the store."
-        : `${keyId} is published externally, so \`${operation}\` is not the client's to call.`,
+        ? `${keyId} is filled by its owner, so \`${operation}\` has no loader ` +
+            "to run. Warming this key would mean asking the owner to render " +
+            "again — a whole route for one key, before anything reads it. Let " +
+            "the read ask when a reader needs the value: `useLane` on an " +
+            "external key asks through the lane's `refresh` if the value is " +
+            "gone, and waits for the publication if it is on its way."
+        : `${keyId} is filled by its owner, so \`${operation}\` has no loader to run.`,
     );
 
     this.name = "LaneOwnershipError";

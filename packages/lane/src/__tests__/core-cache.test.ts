@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readOrCreate } from "./test-utils";
 import { hydrateMany } from "../hydrate";
-import { createLane, LaneOwnershipError } from "../index";
+import { createLane, external } from "../index";
 import { serializeKey } from "../keys";
 import type { LaneRead } from "../types";
 import {
@@ -121,10 +121,9 @@ describe("hydrateMany", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
-  // Hydration seeds an *external* entry, so the client cannot invalidate it —
-  // which is what makes the freshness stamp observable here: the `onlyIf: "stale"`
-  // gate runs first, so the same call is a silent no-op while the seed is fresh
-  // and an ownership violation once it is not.
+  // The `onlyIf: "stale"` gate is what makes the freshness stamp observable:
+  // the same call is a silent no-op while the seed is fresh, and a real
+  // invalidation — announced to the key's subscribers — once it is not.
   it("sets freshness metadata from hydration time", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
@@ -141,20 +140,15 @@ describe("hydrateMany", () => {
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).not.toHaveBeenCalled();
-    await expect(
-      readOrCreate(lane, ["tasks"], async () => "too-early"),
-    ).resolves.toEqual({ revision: expect.any(Number), data: "server" });
+    await expect(readOrCreate(lane, ["tasks"], external)).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "server",
+    });
 
     vi.setSystemTime(11_000);
+    lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
-    expect(() =>
-      lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 }),
-    ).toThrow(LaneOwnershipError);
-
-    expect(listener).not.toHaveBeenCalled();
-    await expect(
-      readOrCreate(lane, ["tasks"], async () => "after-stale"),
-    ).resolves.toEqual({ revision: expect.any(Number), data: "server" });
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it("sets freshness metadata from publication time on a client-owned key", async () => {

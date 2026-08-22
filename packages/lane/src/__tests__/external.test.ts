@@ -1,17 +1,19 @@
 // @vitest-environment jsdom
 
 /**
- * External reads: keys whose values arrive from outside the client — an RSC
- * payload through `<LaneHydration>`, a router's loader data — declared by giving
- * the read `loader: external` instead of a fetcher.
+ * An external read is an ordinary read whose loader the owner holds: the value
+ * arrives by publication (an RSC payload through `<LaneHydration>`, a router's
+ * loader data), and a re-read asks the owner to publish again.
  *
  * `external` is a real loader, so nothing in the read paths branches on it. What
  * it does when it runs is wait: the promise is settled by being replaced, or it
- * rejects on the timeout so that a key nobody publishes fails loudly. Two
- * consequences follow from the entry knowing whose value it holds — the client
- * mutation surface throws on it, and its retention is delegated to reachability
- * (a `WeakRef`, tethered by the publication and by every committed reader)
- * instead of to `gcTime`.
+ * rejects on the timeout — and the ask that makes a publication come is the
+ * lane's `refresh`, fired by the *read* rather than from inside the loader. The
+ * client mutation surface is open on such an entry like on any other; what stays
+ * different is retention (reachability — a `WeakRef` tethered by the publication
+ * and by every committed reader — instead of `gcTime`), the shell that outlives
+ * its value carrying the fact that an owner fills this key, and `prefetch`,
+ * which has no loader to run.
  */
 
 import * as React from "react";
@@ -36,14 +38,20 @@ import { hydrateMany, publishedBy } from "../hydrate";
 import type {
   Lane,
   LaneExternalReadSpec,
-  LaneExternalResult,
-  LaneGatedExternalResult,
+  LaneGatedResult,
   LaneHydrationSnapshots,
   LaneKeyOf,
   LaneRead,
   LaneReadSpec,
+  LaneResult,
 } from "../types";
-import { resetVitest, settlePromiseHandlers, subscribe } from "./test-utils";
+import {
+  deferred,
+  resetVitest,
+  settlePromiseHandlers,
+  subscribe,
+  subscribeLane,
+} from "./test-utils";
 
 type Mode = "hidden" | "visible";
 
@@ -163,7 +171,22 @@ describe("the external wait", () => {
     expect((waiting.error as Error).message).toContain('["task","t1"]');
   });
 
-  it("lets a publication overwrite an entry the timeout left rejected", async () => {
+  it("names `refresh` in the timeout, since that is what would have asked", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
+
+    await vi.advanceTimersByTimeAsync(EXTERNAL_TIMEOUT);
+    await flushMicrotasks();
+
+    const message = (waiting.error as Error).message;
+
+    expect(message).toContain("invalidated or collected");
+    expect(message).toContain("refresh");
+  });
+
+  it("keeps no rejection: the next read is a fresh wait", async () => {
     vi.useFakeTimers();
 
     const lane = createLane();
@@ -173,53 +196,146 @@ describe("the external wait", () => {
     await flushMicrotasks();
     expect(waiting.status).toBe("rejected");
 
-    // The failure is as sticky as any other failed first load — reused until
-    // something replaces it, which for an external key means the publication
-    // that was late rather than absent.
+    // A rejection an external key kept would be sticky in the one place it must
+    // not be: an error boundary's retry, and a reveal, are both re-reads, and
+    // both need to end in a new ask rather than in the failure already reported.
     const retried = track(readOrCreate<string>(lane, ["task", "t1"], external));
     await flushMicrotasks();
-    expect(retried.status).toBe("rejected");
+    expect(retried.status).toBe("pending");
 
     hydrateMany(lane, {
       entries: [{ key: ["task", "t1"], data: "late" }],
     });
+    await flushMicrotasks();
 
-    await expect(
-      readOrCreate<string>(lane, ["task", "t1"], external),
-    ).resolves.toEqual({ revision: expect.any(Number), data: "late" });
+    expect(retried.status).toBe("fulfilled");
+    expect(retried.value).toEqual({ revision: expect.any(Number), data: "late" });
   });
 });
 
-describe("ownership of an external entry", () => {
-  it("refuses every client mutation on a key read as external", async () => {
-    vi.useFakeTimers();
-
-    const lane = createLane();
-    void readOrCreate<string>(lane, ["task", "t1"], external);
-
-    expect(() => lane.set(["task", "t1"], "client")).toThrow(LaneOwnershipError);
-    expect(() => lane.update<string>(["task", "t1"], (task) => task)).toThrow(
-      LaneOwnershipError,
-    );
-    expect(() => lane.invalidate(["task", "t1"])).toThrow(LaneOwnershipError);
-    expect(() => lane.remove(["task", "t1"])).toThrow(LaneOwnershipError);
-  });
-
-  it("refuses the scoped variants that match an external entry", () => {
+describe("the client mutation surface on an external entry", () => {
+  it("writes a value the client has, in place", async () => {
     const lane = createLane();
 
     hydrateMany(lane, {
       entries: [{ key: ["task", "t1"], data: "published" }],
     });
 
-    expect(() => lane.invalidateAll(["task"])).toThrow(LaneOwnershipError);
-    expect(() => lane.updateAll<string>(["task"], (task) => task)).toThrow(
-      LaneOwnershipError,
-    );
-    expect(() => lane.removeAll(["task"])).toThrow(LaneOwnershipError);
+    const written = lane.set(["task", "t1"], "client");
+
+    // A `set` on a published key is an ordinary write: the client had the value
+    // (a mutation's own response), so the promise is fulfilled with no
+    // microtask in between and every reader converges without a fallback.
+    expect(stamps(written).status).toBe("fulfilled");
+    await expect(written).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "client",
+    });
+    await expect(
+      readOrCreate<string>(lane, ["task", "t1"], external),
+    ).resolves.toEqual({ revision: expect.any(Number), data: "client" });
   });
 
-  it("refuses a scoped write without half-applying it", async () => {
+  it("notifies readers of a client write through the transition channel", () => {
+    const lane = createLane();
+    const notified = vi.fn();
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    subscribeLane(lane, ["task", "t1"], { onInvalidate: notified });
+
+    lane.set(["task", "t1"], "client");
+
+    expect(notified).toHaveBeenCalledTimes(1);
+    expect(notified.mock.calls[0]?.[1]).toBe("transition");
+  });
+
+  it("keeps a written entry external, so retention stays the owner's", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const refs = controllableRefs();
+    setExternalRefFactory(refs.factory);
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.set(["task", "t1"], "client");
+
+    // PR 3: nothing tethers a client write to the payload it overwrote, so a
+    // write no committed reader holds can go. The recovery is the same as for a
+    // collected publication — the next read waits and asks.
+    refs.collect();
+
+    const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
+    await flushMicrotasks();
+
+    expect(waiting.status).toBe("pending");
+  });
+
+  it("updates a published value from what it holds", async () => {
+    const lane = createLane();
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+
+    await expect(
+      lane.update<string>(["task", "t1"], (task) => `${task}+edited`),
+    ).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "published+edited",
+    });
+  });
+
+  it("invalidates a published key: the value goes, the shell does not", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+
+    lane.invalidate(["task", "t1"]);
+
+    // Marking it stale discards the value and asks nothing of the client: the
+    // next read is a wait for the owner's answer.
+    const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
+    await flushMicrotasks();
+    expect(waiting.status).toBe("pending");
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "republished" }],
+    });
+    await flushMicrotasks();
+
+    expect(waiting.value).toEqual({
+      revision: expect.any(Number),
+      data: "republished",
+    });
+  });
+
+  it("removes a published key", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.remove(["task", "t1"]);
+
+    const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
+    await flushMicrotasks();
+
+    expect(waiting.status).toBe("pending");
+  });
+
+  it("applies the scoped variants across published and client-owned alike", async () => {
+    vi.useFakeTimers();
+
     const lane = createLane();
 
     lane.set(["task", "t1"], "client");
@@ -227,30 +343,20 @@ describe("ownership of an external entry", () => {
       entries: [{ key: ["task", "t2"], data: "published" }],
     });
 
-    expect(() => lane.updateAll<string>(["task"], () => "edited")).toThrow(
-      LaneOwnershipError,
-    );
+    const updated = lane.updateAll<string>(["task"], () => "edited");
 
-    // The client-owned member of the scope is untouched: the whole operation was
-    // refused, not the tail of it.
-    await expect(
-      readOrCreate<string>(lane, ["task", "t1"], async () => "reloaded"),
-    ).resolves.toEqual({ revision: expect.any(Number), data: "client" });
+    expect(updated).toHaveLength(2);
+    await expect(Promise.all(updated)).resolves.toEqual([
+      { revision: expect.any(Number), data: "edited" },
+      { revision: expect.any(Number), data: "edited" },
+    ]);
+
+    expect(() => lane.invalidateAll(["task"])).not.toThrow();
+    expect(() => lane.removeAll(["task"])).not.toThrow();
+    expect(() => lane.startInvalidationTransition(["task"])).not.toThrow();
   });
 
-  it("names the key and the operation", () => {
-    const lane = createLane();
-
-    hydrateMany(lane, {
-      entries: [{ key: ["task", "t1"], data: "published" }],
-    });
-
-    expect(() => lane.set(["task", "t1"], "client")).toThrow(
-      /\["task","t1"\][\s\S]*`set`/,
-    );
-  });
-
-  it("refuses to prefetch an external read", () => {
+  it("refuses to prefetch an external read, and says why", () => {
     const lane = createLane();
     // Rejected by `prefetch`'s parameter type as well (see the type
     // expectations below); this is the cast that gets past it.
@@ -259,19 +365,11 @@ describe("ownership of an external entry", () => {
     expect(() =>
       lane.prefetch(spec as unknown as LaneReadSpec<string>),
     ).toThrow(LaneOwnershipError);
-  });
-
-  it("leaves client-owned keys alone", () => {
-    const lane = createLane();
-
-    lane.set(["task", "t1"], "client");
-    hydrateMany(lane, {
-      entries: [{ key: ["task", "t2"], data: "published" }],
-    });
-
-    expect(() => lane.set(["task", "t1"], "edited")).not.toThrow();
-    expect(() => lane.invalidate(["task", "t1"])).not.toThrow();
-    expect(() => lane.remove(["task", "t1"])).not.toThrow();
+    // The one refusal left, and it is about running a loader — not about who
+    // may write.
+    expect(() =>
+      lane.prefetch(spec as unknown as LaneReadSpec<string>),
+    ).toThrow(/\["task","t1"\][\s\S]*`prefetch`[\s\S]*no loader to run/);
   });
 
   // Seeding is a claim of ownership, so a key that is seeded and *also* read
@@ -331,6 +429,409 @@ describe("ownership of an external entry", () => {
 
       expect(warn).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * The ask. An external read has no loader of its own to re-run, so what it does
+ * about a value it has not got is ask the owner to render again — `refresh`,
+ * which the app supplies (`() => router.refresh()`,
+ * `() => revalidator.revalidate()`) and Lane calls out of render.
+ */
+describe("the owner-ask", () => {
+  it("asks when a reader needs a value the owner has not supplied", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.invalidate(["task", "t1"]);
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+
+    // Not from the read itself: reads run during render, and `router.refresh()`
+    // dispatches a React update.
+    expect(refresh).not.toHaveBeenCalled();
+
+    await flushMicrotasks();
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes the ask from the provider that holds the lane", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane();
+    const container = mount();
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "server-1" }],
+    };
+
+    await act(async () => {
+      container.root.render(
+        hydratedExternalApp(lane, snapshots, "visible", refresh),
+      );
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("server-1");
+
+    await act(async () => {
+      lane.invalidate(["task", "t1"]);
+      await settlePromiseHandlers();
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent before anything has published the key", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    // A first mount: streaming SSR, or a reader outside every hydration
+    // boundary. The payload is already on its way, so there is nothing to ask
+    // for — this read waits in silence, exactly as it did before `refresh`.
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("asks again when a reader re-reads a wait nobody has filled", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.invalidate(["task", "t1"]);
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // Why the ask hangs off the read and not off the wait: a navigation
+    // discards a pending `router.refresh()` ("Navigations take priority over
+    // any pending actions"), so the wait made before it would never be filled.
+    // The reveal's re-read finds the same unsettled wait and asks again.
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("never asks for a value that is already there", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("never asks while a write of the client's own is in flight", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+    const arriving = deferred<string>();
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+
+    // An unsettled entry is not by itself a reason to ask: this one is a client
+    // write waiting on its own promise, and it will answer for itself.
+    const written = lane.set(["task", "t1"], arriving.promise);
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+    expect(refresh).not.toHaveBeenCalled();
+
+    arriving.resolve("client");
+    await expect(written).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "client",
+    });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("asks once for everything one run invalidated", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [
+        { key: ["task", "t1"], data: "one" },
+        { key: ["task", "t2"], data: "two" },
+        { key: ["task", "t3"], data: "three" },
+      ],
+    });
+    lane.invalidateAll(["task"]);
+
+    for (const id of ["t1", "t2", "t3"]) {
+      void readOrCreate<string>(lane, ["task", id], external);
+    }
+
+    await flushMicrotasks();
+
+    // One `router.refresh()` re-renders the route that owns all three, so N
+    // keys and N readers in one run are one thing to ask for.
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks once per tick, not once per lifetime", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.invalidate(["task", "t1"]);
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+
+    // Nothing is tracked across ticks: `refresh` returns `void`, so there is no
+    // completion to observe, and guessing one from the next publication is
+    // wrong — a navigation's payload need not carry this key at all.
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits out the timeout when the lane has no ask", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.invalidate(["task", "t1"]);
+
+    const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
+
+    await vi.advanceTimersByTimeAsync(EXTERNAL_TIMEOUT);
+    await flushMicrotasks();
+
+    expect(waiting.status).toBe("rejected");
+    expect(waiting.error).toBeInstanceOf(LaneExternalTimeoutError);
+  });
+
+  it("asks again after a timeout, on the read that follows it", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.invalidate(["task", "t1"]);
+
+    const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
+    await vi.advanceTimersByTimeAsync(EXTERNAL_TIMEOUT);
+    await flushMicrotasks();
+    expect(waiting.status).toBe("rejected");
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // The rejection was reported and dropped, so the retry (an error boundary's,
+    // a reveal's) is a fresh wait with a fresh ask rather than the same failure
+    // handed back.
+    const retried = track(readOrCreate<string>(lane, ["task", "t1"], external));
+    await flushMicrotasks();
+
+    expect(retried.status).toBe("pending");
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks after an invalidation nobody was subscribed for", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+
+    // No reader, so nothing is notified and nothing re-reads — the shell has to
+    // survive on its own and keep the fact that an owner fills this key, or the
+    // read at the next reveal would look like a first mount and wait in silence.
+    lane.invalidate(["task", "t1"]);
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks after a remove, which drops the value and not the fact", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.remove(["task", "t1"]);
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks when the value was collected rather than discarded", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+    const refs = controllableRefs();
+    setExternalRefFactory(refs.factory);
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    refs.collect();
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("converging on the answer", () => {
+  it("keeps a visible reader on the old value until the publication lands", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+    const container = mount();
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "server-1" }],
+    };
+
+    await act(async () => {
+      container.root.render(hydratedExternalApp(lane, snapshots, "visible"));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("server-1");
+
+    await act(async () => {
+      lane.invalidate(["task", "t1"]);
+      await settlePromiseHandlers();
+    });
+
+    // The reader re-read in its own transition, so the committed frame is still
+    // what it had — the boundary never falls back — while the ask goes out.
+    // (React does *render* the fallback in a transition it will not commit, so
+    // the committed DOM, not the render counter, is what says this.)
+    expect(container.element.textContent).toBe("server-1");
+    expect(valueElement(container.element).style.display).toBe("");
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // What `refresh` gets the owner to do, done by hand.
+    await act(async () => {
+      hydrateMany(lane, {
+        entries: [{ key: ["task", "t1"], data: "server-2" }],
+      });
+      await settlePromiseHandlers();
+    });
+
+    expect(container.element.textContent).toBe("server-2");
+    // The publication resolved the wait itself, through the abort channel —
+    // no reader was made to `setState` out of a suspended read.
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a hidden reader alone until the reveal asks for it", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+    const container = mount();
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "server-1" }],
+    };
+
+    await act(async () => {
+      container.root.render(hydratedExternalApp(lane, snapshots, "visible"));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("server-1");
+
+    await act(async () => {
+      container.root.render(hydratedExternalApp(lane, snapshots, "hidden"));
+      await settlePromiseHandlers();
+    });
+
+    const fallbacksBeforeHidden = fallbackRenders;
+
+    await act(async () => {
+      lane.invalidate(["task", "t1"]);
+      await settlePromiseHandlers();
+    });
+
+    // A hidden reader is unsubscribed and does not render, so marking its key
+    // stale does nothing at all — no re-read, no ask, no route re-render for a
+    // screen nobody is looking at.
+    expect(refresh).not.toHaveBeenCalled();
+    expect(fallbackRenders).toBe(fallbacksBeforeHidden);
+
+    await act(async () => {
+      container.root.render(hydratedExternalApp(lane, snapshots, "visible"));
+      await settlePromiseHandlers();
+    });
+
+    // The reveal is a new appearance with nothing to show, so it suspends —
+    // and that read is what asks.
+    expect(container.element.textContent).toContain("loading");
+    expect(fallbackRenders).toBeGreaterThan(fallbacksBeforeHidden);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      hydrateMany(lane, {
+        entries: [{ key: ["task", "t1"], data: "server-2" }],
+      });
+      await settlePromiseHandlers();
+    });
+
+    expect(container.element.textContent).toBe("server-2");
   });
 });
 
@@ -680,18 +1181,20 @@ function typeExpectations(lane: Lane, enabled: boolean): void {
   // unchanged — and `T` travels to `useLane` through it.
   expectTypeOf(detail.key).toEqualTypeOf<LaneKeyOf<Task>>();
 
-  // No `invalidate`: an external entry is not the client's to converge. The
-  // resolved value is the ordinary `LaneRead` — `revision` included, though on
-  // an external entry it is the publication's identity rather than the
-  // content's (see the type's docs).
-  expectTypeOf(useLane(detail)).toEqualTypeOf<LaneExternalResult<Task>>();
+  // One return shape for every read: an external one carries `invalidate` and
+  // `startInvalidationTransition` like any other, because it converges like any
+  // other — the client says "stale", Lane asks the owner. The resolved value is
+  // the ordinary `LaneRead` — `revision` included, though on an external entry
+  // it is the publication's identity rather than the content's (see the type's
+  // docs).
+  expectTypeOf(useLane(detail)).toEqualTypeOf<LaneResult<Task>>();
   expectTypeOf(useLanePromise(detail)).toEqualTypeOf<Promise<LaneRead<Task>>>();
 
   const gated = laneRead<Task>({
     key: ["task", "t1"],
     loader: enabled ? external : undefined,
   });
-  expectTypeOf(useLane(gated)).toEqualTypeOf<LaneGatedExternalResult<Task>>();
+  expectTypeOf(useLane(gated)).toEqualTypeOf<LaneGatedResult<Task>>();
   expectTypeOf(gated.key).toEqualTypeOf<LaneKeyOf<Task>>();
 
   // @ts-expect-error — freshness is a loader's business, and there is no loader.
@@ -704,9 +1207,10 @@ function typeExpectations(lane: Lane, enabled: boolean): void {
   // @ts-expect-error — prefetch runs a loader; this read is filled by its owner.
   lane.prefetch(detail);
 
-  // The write side is closed at runtime, not in the key's type — a key literal
-  // would slip past any brand, so there is nothing here to check.
+  // The write side is open and checked exactly as a client-owned key's is.
   lane.set(detail.key, { id: "t1", title: "Write" });
+  // @ts-expect-error — against what the key says it holds.
+  lane.set(detail.key, { id: "t1" });
 }
 
 void typeExpectations;
@@ -716,6 +1220,15 @@ type Tracked<T> = {
   value: T | undefined;
   error: unknown;
 };
+
+/**
+ * The promise cache protocol's fields, read off a promise — how "fulfilled at
+ * creation, no microtask in between" is assertable at all (see
+ * promise-protocol.test.ts).
+ */
+function stamps<T>(promise: Promise<T>): Promise<T> & { status?: string } {
+  return promise as Promise<T> & { status?: string };
+}
 
 /**
  * Observe a promise without awaiting it — a wait that never settles is the
@@ -834,9 +1347,11 @@ function hydratedExternalApp(
   lane: Lane,
   snapshots: LaneHydrationSnapshots,
   mode: Mode,
+  refresh?: () => void,
 ): React.ReactElement {
   return React.createElement(LaneProvider, {
     lane,
+    refresh,
     children: React.createElement(React.Activity, {
       children: React.createElement(
         React.Suspense,

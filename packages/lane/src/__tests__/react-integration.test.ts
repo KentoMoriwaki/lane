@@ -7,7 +7,6 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createLane,
   LaneHydration,
-  LaneOwnershipError,
   LaneProvider,
   useLane,
 } from "../index";
@@ -389,9 +388,8 @@ describe("React integration", () => {
     await waitForText(app.container, "server|background:0|transition:0|refresh:none");
 
     // A publication is announced, so counting the announcements is what says
-    // whether one landed. (This used to publish over the seed with `lane.set`
-    // and watch the value: a hydrated key is external now, so the client cannot
-    // write to it at all — see below.)
+    // whether one landed — and it says so without writing anything, which a
+    // `lane.set` probe would have.
     const unsubscribe = subscribeInvalidate(lane, ["tasks"], published);
 
     // Re-rendering the same instance must not re-publish the server value.
@@ -411,10 +409,11 @@ describe("React integration", () => {
     unsubscribe();
   });
 
-  // The ownership rule this hook of the previous test used to lean on: what a
-  // publication seeds belongs to whoever published it, and stays read-only from
-  // the client for as long as the entry lives.
-  it("refuses a client publication over a hydrated key", async () => {
+  // A client write to a hydrated key is not a fork of the truth: it states what
+  // the client just confirmed (a mutation's own response), and the next
+  // publication states at least as much. So it lands like any other write —
+  // through the notification a mounted reader is already listening on.
+  it("takes a client publication over a hydrated key", async () => {
     vi.useFakeTimers();
 
     const lane = createLane();
@@ -430,14 +429,22 @@ describe("React integration", () => {
     });
     await waitForText(app.container, "server|background:0|transition:0|refresh:none");
 
-    expect(() => lane.set(["tasks"], "client")).toThrow(LaneOwnershipError);
-    expect(() => lane.update<string>(["tasks"], (value) => value)).toThrow(
-      LaneOwnershipError,
-    );
-    expect(() => lane.invalidate(["tasks"])).toThrow(LaneOwnershipError);
-    expect(() => lane.remove(["tasks"])).toThrow(LaneOwnershipError);
+    await act(async () => {
+      lane.set(["tasks"], "client");
+      await settlePromiseHandlers();
+    });
+    await waitForText(app.container, "client|background:0|transition:0|refresh:none");
 
-    await waitForText(app.container, "server|background:0|transition:0|refresh:none");
+    await act(async () => {
+      lane.update<string>(["tasks"], (value) => `${value}+edited`);
+      await settlePromiseHandlers();
+    });
+    await waitForText(
+      app.container,
+      "client+edited|background:0|transition:0|refresh:none",
+    );
+
+    // Nothing about the write ran a loader: the value was in hand both times.
     expect(loader).not.toHaveBeenCalled();
   });
 

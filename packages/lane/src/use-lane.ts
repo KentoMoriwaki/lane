@@ -26,10 +26,8 @@ import { revalidateOptions, toReadOptions } from "./read-options";
 import type {
   Lane,
   LaneExternalReadSpec,
-  LaneExternalResult,
   LaneFallback,
   LaneGatedExternalReadSpec,
-  LaneGatedExternalResult,
   LaneGatedReadSpec,
   LaneGatedResult,
   LaneInvalidateOptions,
@@ -65,25 +63,22 @@ type LaneReaderSubscription = {
 };
 
 /**
- * An external read (`loader: external`) returns a {@link LaneResult} without
- * `invalidate`: the entry is filled by whoever publishes it, so there is no
- * loader to re-run. Everything else behaves identically.
+ * An external read (`loader: external`) returns the same {@link LaneResult} a
+ * client-owned one does. `invalidate` marks the key stale and Lane asks its
+ * owner to publish again through the lane's `refresh`; the read is otherwise
+ * identical, down to the transition it converges in.
  */
-export function useLane<T>(read: LaneExternalReadSpec<T>): LaneExternalResult<T>;
+export function useLane<T>(read: LaneExternalReadSpec<T>): LaneResult<T>;
 export function useLane<T, C = T>(read: LaneReadSpec<T, C>): LaneResult<T>;
 export function useLane<T, C = T>(
   read: LaneGatedReadSpec<T, C>,
 ): LaneGatedResult<T>;
 export function useLane<T>(
   read: LaneGatedExternalReadSpec<T>,
-): LaneGatedExternalResult<T>;
+): LaneGatedResult<T>;
 export function useLane<T, C = T>(
   read: LaneAnyReadSpec<T, C>,
-):
-  | LaneResult<T>
-  | LaneGatedResult<T>
-  | LaneExternalResult<T>
-  | LaneGatedExternalResult<T> {
+): LaneResult<T> | LaneGatedResult<T> {
   // `read` doubles as the options bag — no normalized copy — so every option is
   // read fresh on each render and at each fire time.
   const { key, loader } = read;

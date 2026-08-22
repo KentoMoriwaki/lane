@@ -6,7 +6,6 @@ import { SectionError } from "./feedback";
 import { LaneErrorBoundary } from "./lane-error-boundary";
 import { SignInScreen } from "./sign-in-screen";
 import { Topbar } from "./topbar";
-import { useWorkspaceUrl } from "./use-workspace-url";
 import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
 
 /**
@@ -18,6 +17,13 @@ import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
  * hand-written whole-screen skeleton any more, because the shell *is* this
  * frame with each slot showing its own fallback.
  *
+ * The detail is no longer one of those slots. It is a route of its own now, and
+ * the intercepted form of it lands in the `@modal` slot that `layout.tsx`
+ * renders beside this frame — so what used to be the fifth column here is
+ * literally a sibling of this component, drawn one level up. The frame is the
+ * list's half of that row: `flex-1`, and it gives the panel its width back by
+ * shrinking.
+ *
  * What stays here is the chrome that is genuinely client state: the session
  * gate, the search field, the create dialog, and the retry boundaries.
  */
@@ -26,7 +32,6 @@ export type WorkspaceSlots = {
   insights: React.ReactNode;
   filterBar: React.ReactNode;
   taskList: React.ReactNode;
-  detail: React.ReactNode;
 };
 
 export function Workspace(slots: WorkspaceSlots) {
@@ -44,7 +49,6 @@ function WorkspaceFrame({
   insights,
   filterBar,
   taskList,
-  detail,
 }: WorkspaceSlots) {
   const [createOpen, setCreateOpen] = React.useState(false);
   const { refresh, isRefreshing } = useWorkspaceRefresh();
@@ -60,7 +64,7 @@ function WorkspaceFrame({
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+    <div className="flex min-w-0 flex-1">
       <LaneErrorBoundary
         resetKey="sidebar"
         fallback={(error, retryBoundary) => (
@@ -77,73 +81,57 @@ function WorkspaceFrame({
           isRefreshing={isRefreshing}
         />
 
-        <div className="flex min-h-0 flex-1">
-          <section className="flex min-w-0 flex-1 flex-col">
-            <LaneErrorBoundary
-              resetKey="insights"
-              fallback={(error, retryBoundary) => (
-                <div className="border-b border-border px-4 py-3">
-                  <SectionError
-                    title="Insights unavailable"
-                    message={error instanceof Error ? error.message : undefined}
-                    onRetry={() => retry(retryBoundary)}
-                  />
-                </div>
-              )}
-            >
-              {insights}
-            </LaneErrorBoundary>
-
-            <LaneErrorBoundary
-              resetKey="filters"
-              fallback={(error, retryBoundary) => (
-                <div className="border-b border-border px-4 py-3">
-                  <SectionError
-                    title="Filters unavailable"
-                    message={error instanceof Error ? error.message : undefined}
-                    onRetry={() => retry(retryBoundary)}
-                  />
-                </div>
-              )}
-            >
-              {filterBar}
-            </LaneErrorBoundary>
-
-            <div className="scrollbar-calm min-h-0 flex-1 overflow-y-auto">
-              <LaneErrorBoundary
-                resetKey="tasks"
-                fallback={(error, retryBoundary) => (
-                  <div className="p-4">
-                    <SectionError
-                      title="Couldn't load tasks"
-                      message={
-                        error instanceof Error ? error.message : undefined
-                      }
-                      onRetry={() => retry(retryBoundary)}
-                    />
-                  </div>
-                )}
-              >
-                {taskList}
-              </LaneErrorBoundary>
-            </div>
-          </section>
-
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           <LaneErrorBoundary
-            resetKey="detail"
+            resetKey="insights"
             fallback={(error, retryBoundary) => (
-              <TaskDetailError
-                error={error}
-                onRetry={() => retry(retryBoundary)}
-              />
+              <div className="border-b border-border px-4 py-3">
+                <SectionError
+                  title="Insights unavailable"
+                  message={error instanceof Error ? error.message : undefined}
+                  onRetry={() => retry(retryBoundary)}
+                />
+              </div>
             )}
           >
-            {detail}
+            {insights}
           </LaneErrorBoundary>
-        </div>
+
+          <LaneErrorBoundary
+            resetKey="filters"
+            fallback={(error, retryBoundary) => (
+              <div className="border-b border-border px-4 py-3">
+                <SectionError
+                  title="Filters unavailable"
+                  message={error instanceof Error ? error.message : undefined}
+                  onRetry={() => retry(retryBoundary)}
+                />
+              </div>
+            )}
+          >
+            {filterBar}
+          </LaneErrorBoundary>
+
+          <div className="scrollbar-calm min-h-0 flex-1 overflow-y-auto">
+            <LaneErrorBoundary
+              resetKey="tasks"
+              fallback={(error, retryBoundary) => (
+                <div className="p-4">
+                  <SectionError
+                    title="Couldn't load tasks"
+                    message={error instanceof Error ? error.message : undefined}
+                    onRetry={() => retry(retryBoundary)}
+                  />
+                </div>
+              )}
+            >
+              {taskList}
+            </LaneErrorBoundary>
+          </div>
+        </section>
       </div>
 
-      {/* Mounted on open: it reads the URL to select what it creates, which
+      {/* Mounted on open: it reads the URL to open what it creates, which
           would otherwise make this frame dynamic. */}
       {createOpen ? (
         <CreateTaskDialog closeAction={() => setCreateOpen(false)} />
@@ -166,34 +154,6 @@ function SidebarError({
         message={error instanceof Error ? error.message : undefined}
         onRetry={onRetry}
       />
-    </aside>
-  );
-}
-
-function TaskDetailError({
-  error,
-  onRetry,
-}: {
-  error: unknown;
-  onRetry: () => void;
-}) {
-  const { selectTask } = useWorkspaceUrl();
-  const onClose = () => selectTask(null);
-
-  return (
-    <aside className="scrollbar-calm hidden w-[360px] shrink-0 overflow-y-auto border-l border-border bg-surface p-4 lg:block">
-      <SectionError
-        title="Couldn't load this task"
-        message={error instanceof Error ? error.message : undefined}
-        onRetry={onRetry}
-      />
-      <button
-        type="button"
-        onClick={onClose}
-        className="mt-3 text-sm font-medium text-muted-foreground hover:text-foreground"
-      >
-        Close panel
-      </button>
     </aside>
   );
 }

@@ -131,6 +131,23 @@ export function DetailPanelSkeleton() {
 }
 
 /**
+ * The task route's own shell. Same detail, drawn in the box `TaskDetailPage`
+ * draws it in, so the page does not move when the read lands.
+ */
+export function DetailPageSkeleton() {
+  return (
+    <div className="scrollbar-calm min-w-0 flex-1 overflow-y-auto bg-background">
+      <div className="mx-auto w-full max-w-2xl px-4 py-6">
+        <Skeleton className="h-5 w-28" />
+        <div className="mt-4 overflow-hidden rounded-xl border border-border bg-surface">
+          <DetailSkeleton />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The whole workspace as one fallback: the frame both routes render, with every
  * region in its empty state.
  *

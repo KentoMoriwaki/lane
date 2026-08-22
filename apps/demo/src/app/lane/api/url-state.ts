@@ -3,10 +3,15 @@ import { EMPTY_FILTERS, type TaskFilters } from "./endpoints";
 
 /**
  * The URL is the source of truth for durable workspace view state: active team,
- * filters, search, and the selected task. This module is the single, framework
- * free place that parses and serializes that state, so the Server Component
- * (from `searchParams`) and the client (from `useSearchParams`) always agree —
- * which keeps Lane keys identical across RSC seeding and client reads.
+ * filters, and search. This module is the single, framework free place that
+ * parses and serializes that state, so the Server Component (from
+ * `searchParams`) and the client (from `useSearchParams`) always agree — which
+ * keeps Lane keys identical across RSC seeding and client reads.
+ *
+ * `selectedTaskId` — the `?task=<id>` parameter — belongs to `/app-router`
+ * alone, which shares this module. `/lane` moved its selection out of the query
+ * string and into the route (`/lane/task/[id]`, panel or page), so it never
+ * reads or writes this field; `buildWorkspaceSearch` simply never sees one.
  */
 
 const STATUS_VALUES: TaskStatus[] = [
@@ -35,6 +40,7 @@ export type WorkspaceUrlState = {
   /** `null` when no `team` param is present (the user's default team applies). */
   teamId: string | null;
   filters: TaskFilters;
+  /** `/app-router` only — `/lane`'s selection is a route. */
   selectedTaskId: string | null;
 };
 

@@ -8,7 +8,12 @@ import {
   useState,
   useTransition,
 } from "react";
-import { invalidateEntry, readOrCreate, subscribeLane } from "./core";
+import {
+  instrument,
+  invalidateEntry,
+  readOrCreate,
+  subscribeLane,
+} from "./core";
 import type { LaneReadOptions } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneContext } from "./provider";
@@ -305,6 +310,10 @@ function aggregateOf<T>(ordered: Promise<LaneRead<T>>[]): Promise<LaneRead<T>[]>
   if (node.value === undefined) {
     const value = Promise.all(ordered);
     value.catch(noop);
+    // Stamped like every other promise Lane hands a reader: `Promise.all` needs
+    // a microtask even when every member is already settled, which is exactly
+    // the wait a synchronous reveal cannot take.
+    instrument(value);
     node.value = value;
   }
 

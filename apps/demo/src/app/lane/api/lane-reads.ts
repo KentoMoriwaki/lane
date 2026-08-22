@@ -133,26 +133,23 @@ export const workspaceSnapshots = {
     };
   },
 
+  /**
+   * The detail's keys, published by whichever route is showing it — the task
+   * page or its intercepted twin in the panel slot. Both publish the same
+   * entries, so `useTask(id)` reads one key however the detail was opened.
+   */
   detail(seeds: {
     members: TeamMember[];
     projects: Project[];
     labels: TeamLabel[];
-    selectedTask: Task | null;
+    task: Task;
   }): LaneHydrationSnapshots {
     const entries: LaneSnapshot[] = [
       laneSnapshot(workspaceReads.members(), seeds.members),
       laneSnapshot(workspaceReads.projects(), seeds.projects),
       laneSnapshot(workspaceReads.labels(), seeds.labels),
+      laneSnapshot(workspaceReads.task(seeds.task.id), seeds.task),
     ];
-
-    if (seeds.selectedTask) {
-      entries.push(
-        laneSnapshot(
-          workspaceReads.task(seeds.selectedTask.id),
-          seeds.selectedTask,
-        ),
-      );
-    }
 
     return { entries };
   },

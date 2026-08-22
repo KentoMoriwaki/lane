@@ -26,9 +26,15 @@ import { TaskList } from "@/app/lane/workspace/task-list";
  *
  * Splitting the publication is what `LaneHydration` nesting is for — a reader's
  * seeds may come from any boundary in its lineage, so a region can publish just
- * the keys its leaf reads. Coherence is unchanged: a mutation calls `refresh()`,
- * the route renders again, and every region republishes. It simply arrives in
- * pieces now instead of all at once.
+ * the keys its leaf reads. Coherence is unchanged: whatever asks for a rerender
+ * — a Server Action's `refresh()`, or the `router.refresh()` Lane fires for a
+ * key a mutation marked stale — renders this whole file, and every region
+ * republishes. It simply arrives in pieces instead of all at once.
+ *
+ * What a rerender costs is not the whole file, though. `readProjects`,
+ * `readLabels` and `readMembers` are `"use cache"` (see `api/route-reads.ts`),
+ * so a background rerender for stale insights re-reads the tasks, the selected
+ * task and the insights, and nothing else reaches the API.
  *
  * Each region resolves the session itself rather than receiving it. That is
  * what keeps the frame free of awaits, and `getSession` is `cache`d so the

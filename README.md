@@ -21,7 +21,7 @@ or improving — the same user experience with React transitions.
 | Path | Description |
 | --- | --- |
 | [`packages/lane`](packages/lane) | The `use-lane` library and its unit/React-integration tests. |
-| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, seven implementations grouped by ownership. Primary pairs: `/app-router` versus `/lane` for App Router ownership, and `/react-query` versus `/lane-spa` for browser ownership. `/react-query-rsc` isolates the server-generation-to-QueryClient bridge as an integration lab; `/relay` and `/jotai` are client-store references. It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
+| [`apps/demo`](apps/demo) | The live demo — one team-task workspace, seven implementations grouped by ownership. Primary pairs: `/app-router` versus `/lane` for App Router ownership — the same reads, one re-rendering the route for every mutation and the other converging through the lane and asking for a rerender only for what it cannot compute — and `/react-query` versus `/lane-spa` for browser ownership. `/react-query-rsc` isolates the server-generation-to-QueryClient bridge as an integration lab; `/relay` and `/jotai` are client-store references. It embeds its own team API (Hono + libSQL/Turso) at `/api`. |
 | [`apps/docs`](apps/docs) | The Nextra documentation site (sourced from `docs/*.md`). |
 | [`apps/e2e`](apps/e2e) | Playwright suite for the primary App Router and SPA comparisons, including navigation, mutation convergence, stale refresh, and deterministic request-budget assertions. |
 

@@ -59,52 +59,11 @@ test("the props baseline exposes an instant workspace shell", async ({
   await expect(page.getByTestId("app-router-workspace-shell")).toBeHidden();
 });
 
-test("intent prefetch resolves a filtered props publication before click", async ({
-  page,
-}) => {
-  await gotoWorkspace(page);
-  const completedLink = page
-    .locator("aside")
-    .getByRole("link", { name: /Completed/ });
-  const prefetchResponse = page.waitForResponse((response) => {
-    const headers = response.request().headers();
-    return (
-      response.url().includes("status=done") &&
-      headers["next-router-prefetch"] === "2"
-    );
-  });
-  await completedLink.hover();
-  await prefetchResponse;
-
-  const navigationRequests: string[] = [];
-  page.on("request", (request) => {
-    const headers = request.headers();
-    if (
-      request.url().includes("status=done") &&
-      headers.rsc === "1" &&
-      !headers["next-router-prefetch"]
-    ) {
-      navigationRequests.push(request.url());
-    }
-  });
-  await completedLink.click();
-  await expect(taskRow(page, ACME_COMPLETED_TASK)).toBeVisible();
-  await expect(taskRow(page, ACME_TASK)).toBeHidden();
-  expect(navigationRequests).toEqual([]);
-});
-
 test("a search commit merges onto the current view", async ({ page }) => {
   await gotoWorkspace(page);
   const completedLink = page
     .locator("aside")
     .getByRole("link", { name: /Completed/ });
-  const prefetchResponse = page.waitForResponse(
-    (response) =>
-      response.url().includes("status=done") &&
-      response.request().headers()["next-router-prefetch"] === "2",
-  );
-  await completedLink.hover();
-  await prefetchResponse;
   await completedLink.click();
   await expect
     .poll(() => new URL(page.url()).searchParams.get("status"))

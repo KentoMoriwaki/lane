@@ -14,13 +14,18 @@ import {
 } from "./endpoints";
 
 /**
- * Next owns freshness for the server-owned demo; Lane owns publication into
- * the browser. These tags are deliberately coherence domains rather than a
- * mirror of every Lane key.
+ * The tagged server generation this route dehydrates into the browser.
+ *
+ * These reads used to be shared with `/lane`, which is why they lived under
+ * `app/lane/api`. `/lane` reads through to the source now — caching a
+ * derivation is what forces someone to maintain "which mutation invalidates
+ * which derived read" — so the tags belong to the one route that still makes
+ * them its subject. This lab exists to show a tagged generation merging into a
+ * mutable `QueryClient`, and `updateTag` is what produces that generation.
  *
  * Task lists, task details, project counts, and insights have different
  * dependencies. Keeping them separate lets a mutation expire only the reads it
- * can actually change while Lane still publishes one coherent workspace.
+ * can actually change.
  */
 export const workspaceCacheTags = {
   currentUser: () => "lane:current-user",

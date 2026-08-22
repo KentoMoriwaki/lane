@@ -218,10 +218,11 @@ is a runnable Next.js app that builds the same team-task workspace seven ways
 against one backend. Its landing page groups the routes by the owner whose
 freshness policy they follow:
 
-- **App Router-owned:** `/app-router` is the plain-props baseline; `/lane` uses
-  the exact same Cache Component reads, tags, Server Actions, and latency, then
-  publishes that generation for `external` readers. Mutations call `updateTag`,
-  and optimistic UI covers the server round trip.
+- **App Router-owned:** `/app-router` is the plain-props baseline; `/lane` reads
+  the same uncached sources, Server Actions, and latency, then publishes for
+  `external` readers — one publication per region, each behind its own Suspense
+  boundary, so the route streams rather than waiting on its slowest read.
+  Mutations call `refresh()`, and optimistic UI covers the server round trip.
 - **Browser-owned:** `/lane-spa` and `/react-query` ship no workspace data in
   SSR. Browser loaders fetch every key, mutation results patch the entries they
   can determine, and targeted invalidation converges derived data.

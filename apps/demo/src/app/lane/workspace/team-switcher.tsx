@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, ChevronsUpDown, Users } from "lucide-react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as React from "react";
 import { useTeams } from "@/app/lane/api/hooks";
@@ -13,8 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { IntentPrefetchLink } from "./intent-prefetch-link";
-import { useWorkspace } from "./workspace-provider";
+import { useActiveTeamId } from "./workspace-provider";
 
 function teamInitials(name: string) {
   return name
@@ -27,7 +27,7 @@ function teamInitials(name: string) {
 
 export function TeamSwitcher() {
   const pathname = usePathname();
-  const { activeTeamId } = useWorkspace();
+  const activeTeamId = useActiveTeamId();
   const teams = React.use(useTeams().promise).data;
 
   const active = teams.find((team) => team.id === activeTeamId) ?? teams[0];
@@ -68,7 +68,7 @@ export function TeamSwitcher() {
             asChild
             className="gap-2.5"
           >
-            <IntentPrefetchLink
+            <Link
               href={hrefForTeam(team.id)}
               scroll={false}
             >
@@ -87,7 +87,7 @@ export function TeamSwitcher() {
               {team.id === active?.id ? (
                 <Check className="size-4 text-cobalt" />
               ) : null}
-            </IntentPrefetchLink>
+            </Link>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

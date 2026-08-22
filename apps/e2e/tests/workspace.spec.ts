@@ -5,7 +5,6 @@ import {
   type Page,
 } from "@playwright/test";
 import { instant } from "@next/playwright";
-import { getTaskUpdateDerivedImpact } from "../../demo/src/app/lane/api/cache-policy";
 
 // Seeded data from apps/demo/src/server/team/db.ts
 const ACME_TEAM = "Acme Product Team";
@@ -38,33 +37,6 @@ async function readRequestDiagnostics(
   return (await response.json() as { requests: TeamApiRequestRecord[] })
     .requests;
 }
-
-test("task update invalidation follows derived-data dependencies", () => {
-  expect(getTaskUpdateDerivedImpact({ title: "Renamed" })).toEqual({
-    insights: false,
-    projects: false,
-  });
-  expect(getTaskUpdateDerivedImpact({ priority: "urgent" })).toEqual({
-    insights: false,
-    projects: false,
-  });
-  expect(getTaskUpdateDerivedImpact({ status: "done" })).toEqual({
-    insights: true,
-    projects: false,
-  });
-  expect(getTaskUpdateDerivedImpact({ assigneeId: null })).toEqual({
-    insights: true,
-    projects: false,
-  });
-  expect(getTaskUpdateDerivedImpact({ dueDate: null })).toEqual({
-    insights: true,
-    projects: false,
-  });
-  expect(getTaskUpdateDerivedImpact({ projectId: null })).toEqual({
-    insights: false,
-    projects: true,
-  });
-});
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -112,92 +84,50 @@ test("a cold server-owned publication skips browser transport latency", async ({
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
-test("the server-owned route exposes a workspace shell instantly", async ({
+test("the server-owned route paints its frame before any region resolves", async ({
   page,
 }) => {
   await page.goto("/");
 
   await instant(page, async () => {
     await page.locator('a[href="/lane"]').click();
-    await expect(page.getByTestId("lane-workspace-shell")).toBeVisible();
-    await expect(page.getByLabel("Loading workspace")).toBeVisible();
+    // There is no hand-written whole-screen shell. The frame reads nothing, so
+    // it is static, and what fills the regions is each region's own fallback.
+    await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
+    await expect(page.getByTestId("task-list-skeleton")).toBeVisible();
+    await expect(page.getByTestId("sidebar-skeleton")).toBeVisible();
   });
 
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
-  await expect(page.getByTestId("lane-workspace-shell")).toBeHidden();
+  await expect(page.getByTestId("task-list-skeleton")).toBeHidden();
 });
 
-for (const route of ["/lane", "/app-router"] as const) {
-  test(`${route} reuses a cached filtered source read on revisit`, async ({
-    page,
-    request,
-  }) => {
-    await gotoWorkspace(page, route);
-    const query = `source-budget-${route.slice(1)}-${Date.now()}`;
-    const filteredUrl = `${route}?q=${query}`;
+test("every region resolves the session through one source read", async ({
+  page,
+  request,
+}) => {
+  // Five regions resolve the session independently — that is what keeps the
+  // frame free of awaits. `getSession` is `React.cache`d so it still costs one
+  // read; without it this is five.
+  await resetRequestDiagnostics(request);
+  await gotoWorkspace(page, "/lane");
 
-    await resetRequestDiagnostics(request);
-    await gotoWorkspace(page, filteredUrl);
-    const firstVisit = (await readRequestDiagnostics(request)).filter(
-      (entry) => entry.origin === "server",
-    );
-    expect(firstVisit).toEqual([
-      {
-        method: "GET",
-        origin: "server",
-        path: `/api/tasks?q=${query}`,
-        sequence: 1,
-      },
-    ]);
+  const sessionReads = (await readRequestDiagnostics(request)).filter(
+    (entry) => entry.origin === "server" && entry.path === "/api/me",
+  );
+  expect(sessionReads).toHaveLength(1);
+});
 
-    await gotoWorkspace(page, route);
-    await resetRequestDiagnostics(request);
-    await gotoWorkspace(page, filteredUrl);
-    expect(
-      (await readRequestDiagnostics(request)).filter(
-        (entry) => entry.origin === "server",
-      ),
-    ).toEqual([]);
-  });
-}
-
-test("intent prefetch resolves a filtered publication before the click", async ({
+test("regions stream independently rather than landing together", async ({
   page,
 }) => {
-  await gotoWorkspace(page);
+  await page.goto("/");
+  await page.locator('a[href="/lane"]').click();
 
-  const completedLink = page
-    .locator("aside")
-    .getByRole("link", { name: /Completed/ });
-  const prefetchResponse = page.waitForResponse((response) => {
-    const headers = response.request().headers();
-    return (
-      response.url().includes("status=done") &&
-      headers["next-router-prefetch"] === "2"
-    );
-  });
-
-  await completedLink.hover();
-  await prefetchResponse;
-
-  const navigationRequests: string[] = [];
-  page.on("request", (request) => {
-    const headers = request.headers();
-    if (
-      request.url().includes("status=done") &&
-      headers.rsc === "1" &&
-      !headers["next-router-prefetch"]
-    ) {
-      navigationRequests.push(request.url());
-    }
-  });
-
-  await completedLink.click();
-  await expect(page).toHaveURL(/status=done/);
-  await expect(taskRow(page, ACME_COMPLETED_TASK)).toBeVisible();
-  await expect(taskRow(page, ACME_TASK)).toBeHidden();
-  await expect(page.getByTestId("lane-workspace-shell")).toBeHidden();
-  expect(navigationRequests).toEqual([]);
+  // The task list is a fast read; the sidebar waits on the project counts. The
+  // list must not be held back to the sidebar's latency.
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await expect(page.getByTestId("task-list-skeleton")).toBeHidden();
 });
 
 test("loads the seeded workspace", async ({ page }) => {

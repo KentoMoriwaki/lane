@@ -2,16 +2,14 @@
 
 import { createLane, LaneProvider } from "use-lane";
 import type { CurrentUser } from "@/server/api";
-import { useSearchParams } from "next/navigation";
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import type { WorkspaceCtx } from "@/app/lane/api/client";
 import { refreshWorkspaceAction } from "@/app/lane/api/actions";
 
 type WorkspaceContextValue = {
-  ctx: WorkspaceCtx;
-  userId: string;
-  sessionUser: CurrentUser;
-  activeTeamId: string;
+  /** Unresolved on purpose — see `WorkspaceProvider`. */
+  session: Promise<CurrentUser>;
   isSignedIn: boolean;
   signOut: () => void;
   signIn: () => void;
@@ -25,12 +23,23 @@ type WorkspaceContextValue = {
 const WorkspaceContext = React.createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({
-  initialUser,
-  initialTeamId,
+  session,
   children,
 }: {
-  initialUser: CurrentUser;
-  initialTeamId: string;
+  /**
+   * The session, unresolved.
+   *
+   * A promise rather than a value because this provider sits above the frame —
+   * one store has to serve every region — and anything it awaits, the frame
+   * awaits with it, which would push the whole screen behind one boundary and
+   * bring back the hand-written whole-screen fallback. Nothing here needs the
+   * session at render: `loaderMeta` is only consumed when a loader runs, and
+   * every workspace read is `external`, so none do. The consumers that need a
+   * resolved session — the mutation hooks, the team switcher, the row
+   * highlighting — all sit inside a region and `use()` it there, where the
+   * suspension is covered by that region's own boundary.
+   */
+  session: Promise<CurrentUser>;
   children: React.ReactNode;
 }) {
   // The lane is created here rather than above, because this component owns the
@@ -40,12 +49,9 @@ export function WorkspaceProvider({
   // ask nothing of it; the meta stays because the session is still what decides
   // which workspace the *server* publishes.)
   const [lane, setLane] = React.useState(createLane);
-  const searchParams = useSearchParams();
-  const [userId] = React.useState(initialUser.id);
   const [isSignedIn, setIsSignedIn] = React.useState(true);
   const [isRefreshing, startRefresh] = React.useTransition();
   const [error, setError] = React.useState<unknown>(undefined);
-  const activeTeamId = searchParams.get("team")?.trim() || initialTeamId;
 
   const signOut = React.useCallback(() => {
     // Not `lane.removeAll` — these entries are published, and a client may not
@@ -67,9 +73,14 @@ export function WorkspaceProvider({
     setIsSignedIn(true);
   }, []);
 
+  // Empty ids are the API's signal to resolve its own defaults. Nothing reads
+  // this: every workspace read is `external`, so no loader ever runs and no
+  // loader ever asks for its meta. Reading the URL to fill it in would make
+  // this provider — and the frame under it — request-dependent, which is the
+  // one thing it must not be.
   const ctx = React.useMemo<WorkspaceCtx>(
-    () => ({ userId, teamId: activeTeamId }),
-    [userId, activeTeamId],
+    () => ({ userId: "", teamId: "" }),
+    [],
   );
 
   // The manual refresh, and the only shape it can take here: ask the server to
@@ -80,39 +91,35 @@ export function WorkspaceProvider({
   const refresh = React.useCallback(() => {
     startRefresh(async () => {
       try {
-        await refreshWorkspaceAction(ctx);
+        // Resolved here rather than at render: a callback can await the session
+        // without suspending anything.
+        const user = await session;
+        // Read at call time, not at render: a callback may look at the URL
+        // without making its component depend on it.
+        const urlTeamId =
+          new URLSearchParams(window.location.search).get("team")?.trim() ?? "";
+        await refreshWorkspaceAction({
+          userId: user.id,
+          teamId: urlTeamId || user.defaultTeamId,
+        });
         setError(undefined);
       } catch (error) {
         setError(error);
       }
     });
-  }, [ctx]);
+  }, [session]);
 
   const value = React.useMemo<WorkspaceContextValue>(
     () => ({
-      activeTeamId,
-      ctx,
       isRefreshing,
       isSignedIn,
       refresh,
       error,
-      sessionUser: initialUser,
+      session,
       signIn,
       signOut,
-      userId,
     }),
-    [
-      activeTeamId,
-      ctx,
-      initialUser,
-      isRefreshing,
-      isSignedIn,
-      refresh,
-      error,
-      signIn,
-      signOut,
-      userId,
-    ],
+    [error, isRefreshing, isSignedIn, refresh, session, signIn, signOut],
   );
 
   return (
@@ -132,8 +139,32 @@ export function useWorkspace(): WorkspaceContextValue {
   return value;
 }
 
+/**
+ * The session, resolved. Suspends its caller, which is why every caller lives
+ * inside a region — the region's boundary covers it.
+ */
+export function useSessionUser(): CurrentUser {
+  return React.use(useWorkspace().session);
+}
+
+/**
+ * The context a mutation sends. Reads the URL, so every caller sits inside a
+ * region and suspends under that region's boundary — never above one.
+ */
 export function useWorkspaceCtx(): WorkspaceCtx {
-  return useWorkspace().ctx;
+  const searchParams = useSearchParams();
+  const urlTeamId = searchParams.get("team")?.trim() ?? "";
+  const user = useSessionUser();
+
+  return React.useMemo(
+    () => ({ userId: user.id, teamId: urlTeamId || user.defaultTeamId }),
+    [urlTeamId, user.defaultTeamId, user.id],
+  );
+}
+
+/** The active team id, resolved through the session when the URL names none. */
+export function useActiveTeamId(): string {
+  return useWorkspaceCtx().teamId;
 }
 
 /**

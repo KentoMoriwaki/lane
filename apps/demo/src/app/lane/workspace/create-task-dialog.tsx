@@ -3,6 +3,7 @@
 import type { TaskPriority, TaskStatus, TeamLabel } from "@/server/api";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import * as React from "react";
+import { useWorkspaceUrl } from "./use-workspace-url";
 import { toast } from "sonner";
 import { useCreateTask } from "@/app/lane/api/hooks";
 import { Button } from "@/components/ui/button";
@@ -47,15 +48,19 @@ const emptyDraft: Draft = {
   labels: [],
 };
 
-export function CreateTaskDialog({
-  open,
-  onOpenChange,
-  createAction,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  createAction: (taskId: string) => void;
-}) {
+/**
+ * Mounted only while open. It reads the URL to select the task it creates, and
+ * the frame that hosts it must stay free of request data, so its lifetime is
+ * the open state rather than the frame's.
+ */
+export function CreateTaskDialog({ closeAction }: { closeAction: () => void }) {
+  const { selectTask } = useWorkspaceUrl();
+  const open = true;
+  const onOpenChange = (next: boolean) => {
+    if (!next) closeAction();
+  };
+  const createAction = selectTask;
+
   const createTask = useCreateTask();
   const [isCreating, startCreateTransition] = React.useTransition();
   const [draft, setDraft] = React.useState<Draft>(emptyDraft);

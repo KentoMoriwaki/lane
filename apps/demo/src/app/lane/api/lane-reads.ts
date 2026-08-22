@@ -73,47 +73,84 @@ export const workspaceReads = {
   insights: () => laneRead<Insights>({ key: ["insights"], loader: external }),
 };
 
-export type WorkspaceSeeds = {
-  currentUser: CurrentUser;
-  teams: TeamSummary[];
-  tasks: {
+/**
+ * The seeds each region publishes.
+ *
+ * There is no whole-workspace bundle any more. A region publishes exactly the
+ * keys its leaf reads, and `<LaneHydration>` boundaries nest, so a leaf still
+ * sees every key seeded anywhere in its lineage. `laneSnapshot` takes the read
+ * itself, so the entry a snapshot names cannot drift from the entry that loads
+ * it, and `data` is checked against what that read loads.
+ */
+export const workspaceSnapshots = {
+  sidebar(seeds: {
+    currentUser: CurrentUser;
+    teams: TeamSummary[];
+    insights: Insights;
+    projects: Project[];
+    labels: TeamLabel[];
+  }): LaneHydrationSnapshots {
+    return {
+      entries: [
+        laneSnapshot(workspaceReads.currentUser(), seeds.currentUser),
+        laneSnapshot(workspaceReads.teams(), seeds.teams),
+        laneSnapshot(workspaceReads.insights(), seeds.insights),
+        laneSnapshot(workspaceReads.projects(), seeds.projects),
+        laneSnapshot(workspaceReads.labels(), seeds.labels),
+      ],
+    };
+  },
+
+  insights(insights: Insights): LaneHydrationSnapshots {
+    return { entries: [laneSnapshot(workspaceReads.insights(), insights)] };
+  },
+
+  tasks(seeds: {
     filters: TaskFilters;
     data: Task[];
-  };
-  selectedTask: Task | null;
-  projects: Project[];
-  labels: TeamLabel[];
-  members: TeamMember[];
-  insights: Insights;
+  }): LaneHydrationSnapshots {
+    return {
+      entries: [
+        laneSnapshot(workspaceReads.tasks(seeds.filters), seeds.data),
+      ],
+    };
+  },
+
+  filterBar(seeds: {
+    projects: Project[];
+    labels: TeamLabel[];
+    tasks: { filters: TaskFilters; data: Task[] };
+  }): LaneHydrationSnapshots {
+    return {
+      entries: [
+        laneSnapshot(workspaceReads.projects(), seeds.projects),
+        laneSnapshot(workspaceReads.labels(), seeds.labels),
+        laneSnapshot(workspaceReads.tasks(seeds.tasks.filters), seeds.tasks.data),
+      ],
+    };
+  },
+
+  detail(seeds: {
+    members: TeamMember[];
+    projects: Project[];
+    labels: TeamLabel[];
+    selectedTask: Task | null;
+  }): LaneHydrationSnapshots {
+    const entries: LaneSnapshot[] = [
+      laneSnapshot(workspaceReads.members(), seeds.members),
+      laneSnapshot(workspaceReads.projects(), seeds.projects),
+      laneSnapshot(workspaceReads.labels(), seeds.labels),
+    ];
+
+    if (seeds.selectedTask) {
+      entries.push(
+        laneSnapshot(
+          workspaceReads.task(seeds.selectedTask.id),
+          seeds.selectedTask,
+        ),
+      );
+    }
+
+    return { entries };
+  },
 };
-
-/**
- * The per-request seed the RSC route hands to `<LaneHydration>`, built from the
- * reads the browser will read with — `laneSnapshot` takes the read itself, so
- * the entry a snapshot names cannot drift from the entry that loads it, and
- * `data` is checked against what that read loads.
- */
-export function workspaceSnapshots(
-  seeds: WorkspaceSeeds,
-): LaneHydrationSnapshots {
-  const entries: LaneSnapshot[] = [
-    laneSnapshot(workspaceReads.currentUser(), seeds.currentUser),
-    laneSnapshot(workspaceReads.teams(), seeds.teams),
-    laneSnapshot(workspaceReads.tasks(seeds.tasks.filters), seeds.tasks.data),
-    laneSnapshot(workspaceReads.projects(), seeds.projects),
-    laneSnapshot(workspaceReads.labels(), seeds.labels),
-    laneSnapshot(workspaceReads.members(), seeds.members),
-    laneSnapshot(workspaceReads.insights(), seeds.insights),
-  ];
-
-  if (seeds.selectedTask) {
-    entries.push(
-      laneSnapshot(
-        workspaceReads.task(seeds.selectedTask.id),
-        seeds.selectedTask,
-      ),
-    );
-  }
-
-  return { entries };
-}

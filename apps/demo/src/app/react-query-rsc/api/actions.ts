@@ -10,8 +10,8 @@ import type {
   TeamLabel,
   UpdateTaskInput,
 } from "@/server/api";
-import { getTaskUpdateDerivedImpact } from "@/app/lane/api/cache-policy";
-import { workspaceCacheTags } from "@/app/lane/api/cached-endpoints";
+import { getTaskUpdateDerivedImpact } from "./cache-policy";
+import { workspaceCacheTags } from "./cached-endpoints";
 import type { WorkspaceCtx } from "./client";
 import {
   addTaskLabel,

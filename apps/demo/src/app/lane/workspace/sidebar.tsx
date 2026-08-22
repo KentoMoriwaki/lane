@@ -11,7 +11,9 @@ import {
   UserCircle2,
   UserX,
 } from "lucide-react";
-import { useLinkStatus } from "next/link";
+import Link, { useLinkStatus } from "next/link";
+import { WorkspaceBrand } from "./brand";
+import { useWorkspaceHrefs } from "./use-workspace-hrefs";
 import * as React from "react";
 import type { TaskFilters } from "@/app/lane/api/endpoints";
 import {
@@ -31,7 +33,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { accent } from "@/lib/accent";
 import { cn } from "@/lib/utils";
-import { IntentPrefetchLink } from "./intent-prefetch-link";
 import { TeamSwitcher } from "./team-switcher";
 import { useWorkspace } from "./workspace-provider";
 
@@ -55,13 +56,8 @@ function activeKey(f: TaskFilters): string {
   return "";
 }
 
-export function Sidebar({
-  filters,
-  viewHref,
-}: {
-  filters: TaskFilters;
-  viewHref: (view: Partial<TaskFilters>) => string;
-}) {
+export function Sidebar() {
+  const { filters, viewHref } = useWorkspaceHrefs();
   const active = activeKey(filters);
   const user = React.use(useCurrentUser().promise).data;
   const insights = React.use(useInsights().promise).data;
@@ -72,12 +68,7 @@ export function Sidebar({
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
       <div className="flex h-14 items-center gap-2 px-4">
-        <span className="flex size-6 items-center justify-center rounded-md bg-sage text-sm font-bold text-primary-foreground">
-          L
-        </span>
-        <span className="text-sm font-semibold tracking-tight text-foreground">
-          Lane
-        </span>
+        <WorkspaceBrand />
       </div>
 
       <div className="px-3 pb-2">
@@ -238,7 +229,7 @@ function NavItem({
   href: string;
 }) {
   return (
-    <IntentPrefetchLink
+    <Link
       href={href}
       scroll={false}
       className="block w-full rounded-md"
@@ -251,7 +242,7 @@ function NavItem({
         tone={tone}
         isActive={isActive}
       />
-    </IntentPrefetchLink>
+    </Link>
   );
 }
 

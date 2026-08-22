@@ -33,7 +33,7 @@ import {
   getCachedTask,
   getCachedTasks,
   getCachedTeams,
-} from "@/app/lane/api/cached-endpoints";
+} from "@/app/react-query-rsc/api/cached-endpoints";
 
 // Match the Lane route's navigation contract: a reusable workspace shell is
 // available immediately while the server prepares the hydration payload.

@@ -5,28 +5,26 @@ import { Inbox, ListTodo } from "lucide-react";
 import * as React from "react";
 import { useTasks } from "@/app/lane/api/hooks";
 import type { TaskFilters } from "@/app/lane/api/endpoints";
-import { Skeleton } from "@/components/ui/skeleton";
 import { PRIORITY_GROUP_ORDER, PRIORITY_META } from "@/lib/task-meta";
-import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
+import { useSessionUser, useWorkspaceRefresh } from "./workspace-provider";
 import { EmptyState, ErrorChip } from "./feedback";
 import { TaskRow } from "./task-row";
+import { hasActiveFilters } from "./use-workspace-hrefs";
+import { useWorkspaceUrl } from "./use-workspace-url";
 
-export function TaskList({
-  filters,
-  hasActiveFilters,
-  selectedTaskId,
-  onSelectTask,
-  onClearSelection,
-  onResetFilters,
-}: {
-  filters: TaskFilters;
-  hasActiveFilters: boolean;
-  selectedTaskId: string | null;
-  onSelectTask: (taskId: string) => void;
-  onClearSelection: (taskId: string) => void;
-  onResetFilters: () => void;
-}) {
-  const { userId } = useWorkspace();
+export function TaskList() {
+  const { filters, selectedTaskId, selectTask, resetFilters } =
+    useWorkspaceUrl();
+  const activeFilters = hasActiveFilters(filters);
+  const onSelectTask = selectTask;
+  const onResetFilters = resetFilters;
+  const onClearSelection = React.useCallback(
+    (taskId: string) => {
+      if (selectedTaskId === taskId) selectTask(null);
+    },
+    [selectedTaskId, selectTask],
+  );
+  const { id: userId } = useSessionUser();
   const { refresh, isRefreshing, error } = useWorkspaceRefresh();
   const { promise, isInvalidationPending } = useTasks(filters);
   const { data: tasks } = React.use(promise);
@@ -49,7 +47,7 @@ export function TaskList({
     return (
       <>
         {refreshNotice}
-        {hasActiveFilters ? (
+        {activeFilters ? (
           <EmptyState
             icon={ListTodo}
             title="No tasks match these filters"
@@ -139,27 +137,5 @@ function PriorityGroup({
         ))}
       </div>
     </section>
-  );
-}
-
-export function TaskListSkeleton() {
-  return (
-    <div className="px-4 py-3">
-      <Skeleton className="mb-3 h-3 w-24 bg-muted-foreground/20" />
-      <div className="space-y-3">
-        {Array.from({ length: 7 }).map((_, index) => (
-          <div key={index} className="flex items-center gap-3">
-            <Skeleton className="size-4 rounded-full bg-muted-foreground/20" />
-            <Skeleton className="size-4 rounded-full bg-muted-foreground/20" />
-            <Skeleton
-              className="h-4 flex-1 bg-muted-foreground/20"
-              style={{ maxWidth: `${60 - index * 4}%` }}
-            />
-            <Skeleton className="h-4 w-12 bg-muted-foreground/20" />
-            <Skeleton className="size-6 rounded-full bg-muted-foreground/20" />
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }

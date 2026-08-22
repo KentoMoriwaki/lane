@@ -1,11 +1,10 @@
 "use client";
 
 import type { Insights } from "@/server/api";
-import { useLinkStatus } from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { accent, type AccentToken } from "@/lib/accent";
 import { cn } from "@/lib/utils";
-import { IntentPrefetchLink } from "./intent-prefetch-link";
 
 type InsightCard = {
   key: string;
@@ -73,7 +72,7 @@ export function InsightStrip({
     <div className="border-b border-border">
       <div className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3">
         {cards.map((card) => (
-          <IntentPrefetchLink
+          <Link
             key={card.key}
             href={viewHref(card.view)}
             scroll={false}
@@ -83,7 +82,7 @@ export function InsightStrip({
               card={card}
               isActive={isInsightViewActive(filters, card.view)}
             />
-          </IntentPrefetchLink>
+          </Link>
         ))}
         <OpenTrend
           open={insights.open}

@@ -1,4 +1,4 @@
-import type { UpdateTaskInput } from "../../../server/team/schema";
+import type { UpdateTaskInput } from "@/server/team/schema";
 
 export type TaskUpdateDerivedImpact = {
   insights: boolean;

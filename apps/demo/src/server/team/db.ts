@@ -952,10 +952,13 @@ export async function createLabel(
     [teamId, input.name],
   );
 
-  if (existing) {
-    return toLabel(existing);
-  }
+  return toLabel(existing ?? (await insertLabel(teamId, input)));
+}
 
+async function insertLabel(
+  teamId: string,
+  input: CreateLabelInput,
+): Promise<LabelRow> {
   const id = `l_${nanoid(8)}`;
   const color = input.color ?? (await pickLabelColor(teamId));
 
@@ -964,12 +967,9 @@ export async function createLabel(
     [id, teamId, input.name, color, new Date().toISOString()],
   );
 
-  return toLabel(
-    (await oneRow<LabelRow>(
-      "select * from labels where id = ?",
-      [id],
-    )) as LabelRow,
-  );
+  return (await oneRow<LabelRow>("select * from labels where id = ?", [
+    id,
+  ])) as LabelRow;
 }
 
 const labelPalette = ["sage", "cobalt", "rose", "amber", "slate"];

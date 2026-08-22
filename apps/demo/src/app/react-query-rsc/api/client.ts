@@ -6,7 +6,7 @@ import { COLOCATED_SERVER_REQUEST_HEADER } from "@/lib/team-api";
  * Browser query functions and React Query's Server Actions go through the typed
  * Hono RPC wrappers in `endpoints.ts`; components never call `fetch` directly.
  * The RSC hydration pass uses the shared tagged reads in
- * `lane/api/cached-endpoints.ts` so Next owns its server generation.
+ * `./cached-endpoints.ts` so Next owns its server generation.
  */
 /**
  * The team API is embedded in this app (`app/api/[[...route]]/route.ts`), so the

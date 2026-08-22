@@ -368,6 +368,26 @@ client makes is a write of *confirmed* data: the mutation it came from has
 already happened at the source, so the next publication states at least what the
 write anticipated. Last publication wins, and the publication agrees.
 
+**And a client write lives exactly as long as the publication it overwrote.** A
+published value is held weakly; what keeps it alive is the payload it arrived in,
+which the framework holds. A write onto that key has no payload of its own, so it
+takes the place of the value it replaced among that payload's references — one
+promise per key per payload, so a key written a thousand times retains one, not a
+thousand. That is what a mutation converging behind a hidden `<Activity>` needs:
+nothing has read the write yet, and it still has to be there at the reveal. And
+when the framework drops the payload, the client's version of the value goes with
+the server's version of it in one collection, and the next read asks the owner —
+which is what the owner is doing about that data anyway, having dropped it.
+
+Each alternative is a second rule. Holding the write for `gcTime` puts a client
+lifetime policy on a key whose freshness is the owner's. Pinning it grows without
+bound with the keys a session visits. Holding it by its readers alone is the
+honest one, and it is exactly what the edge does: a write that lands when the
+payload is already gone has nothing to take the place of, so it lives as long as
+the readers that take it and no longer. A read that finds it gone asks the owner,
+the same recovery as for a collected publication, and consistent because the
+owner has dropped that data too.
+
 What the client does not have is the rest of the answer. A change it made has
 consequences it is not holding — a count, a re-sorted list, an insight derived
 from three tables — and for those it says `invalidate`, which is a request, not a

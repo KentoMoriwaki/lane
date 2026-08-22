@@ -3,7 +3,7 @@
 import { createLane, LaneProvider } from "use-lane";
 import type { CurrentUser } from "@/server/api";
 import * as React from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkspaceCtx } from "@/app/lane/api/client";
 import { refreshWorkspaceAction } from "@/app/lane/api/actions";
 
@@ -52,11 +52,22 @@ export function WorkspaceProvider({
   const [isSignedIn, setIsSignedIn] = React.useState(true);
   const [isRefreshing, startRefresh] = React.useTransition();
   const [error, setError] = React.useState<unknown>(undefined);
+  const router = useRouter();
+
+  // The owner-ask. Lane calls this when a reader needs an external key that has
+  // been marked stale — `invalidate(insights())` after a task mutation is the
+  // one that fires here — and `router.refresh()` is what "publish again" means
+  // in this router. Out of render and coalesced to one call per tick by Lane,
+  // so three invalidated keys are still one rerender.
+  const askOwnerToPublish = React.useCallback(() => {
+    router.refresh();
+  }, [router]);
 
   const signOut = React.useCallback(() => {
-    // Not `lane.removeAll` — these entries are published, and a client may not
-    // remove what it does not own. Dropping the *lane* is the honest way to end
-    // a session's copy of someone else's data: the store goes with it, and the
+    // Not `lane.removeAll`: removing the keys would leave a store full of
+    // published shells whose owner is still willing to fill them, and the next
+    // reader would ask for exactly the data being signed out of. Dropping the
+    // *lane* ends the session's copy outright — the store goes with it, and the
     // boundary above re-seeds whatever lane it finds next (it reads the lane
     // from context, so a swap re-runs its publish).
     //
@@ -124,7 +135,7 @@ export function WorkspaceProvider({
 
   return (
     <WorkspaceContext.Provider value={value}>
-      <LaneProvider lane={lane} loaderMeta={ctx}>
+      <LaneProvider lane={lane} loaderMeta={ctx} refresh={askOwnerToPublish}>
         {children}
       </LaneProvider>
     </WorkspaceContext.Provider>

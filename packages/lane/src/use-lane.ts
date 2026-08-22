@@ -17,7 +17,11 @@ import {
   readOrCreate,
   subscribeLane,
 } from "./core";
-import type { LaneInvalidationSource, LaneReadOptions } from "./core";
+import type {
+  LaneInvalidationSource,
+  LaneMergePublication,
+  LaneReadOptions,
+} from "./core";
 import { LaneHydrationSourceContext } from "./hydration";
 import { serializeKey } from "./keys";
 import { isExternalLoader } from "./ownership";
@@ -48,6 +52,12 @@ type LaneAnyReadSpec<T, C> = LaneUseOptions & {
   key: LaneKey;
   loader: LaneLoader<T, C> | undefined;
   fallback?: LaneFallback<T>;
+  /**
+   * Not part of any public read shape: `useInfiniteLane` puts one on the spec
+   * it hands here, and it rides through to the store like the pagination
+   * fields do. See {@link LaneMergePublication}.
+   */
+  merge?: LaneMergePublication;
 };
 
 /**

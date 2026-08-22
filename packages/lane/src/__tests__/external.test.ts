@@ -263,9 +263,9 @@ describe("the client mutation surface on an external entry", () => {
     });
     lane.set(["task", "t1"], "client");
 
-    // PR 3: nothing tethers a client write to the payload it overwrote, so a
-    // write no committed reader holds can go. The recovery is the same as for a
-    // collected publication — the next read waits and asks.
+    // The write sits in the publication's bucket, so the payload's collection
+    // takes both — one rule for the value and for what overwrote it. The
+    // recovery is the collected publication's: the next read waits and asks.
     refs.collect();
 
     const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
@@ -940,6 +940,191 @@ describe("retention of an external entry", () => {
     expect(tethered?.[0]).toBe(
       readOrCreate<string>(lane, ["task", "t1"], external),
     );
+  });
+
+  it("hangs a second lane's copies off the same payload", async () => {
+    const lane = createLane();
+    const other = createLane();
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    };
+
+    hydrateMany(lane, snapshots);
+    hydrateMany(other, snapshots);
+
+    // One payload, two stores: each lane's copy has its own seat in the one
+    // bucket, and a write to one lane's key leaves the other's alone.
+    const tethered = publishedBy(snapshots);
+
+    expect(tethered).toHaveLength(2);
+    expect(tethered?.[0]).toBe(
+      readOrCreate<string>(lane, ["task", "t1"], external),
+    );
+
+    const written = other.set(["task", "t1"], "client");
+
+    expect(publishedBy(snapshots)).toHaveLength(2);
+    expect(publishedBy(snapshots)?.[1]).toBe(written);
+    await expect(
+      readOrCreate<string>(lane, ["task", "t1"], external),
+    ).resolves.toEqual({ revision: expect.any(Number), data: "published" });
+  });
+
+  it("seats a client `set` where the value it overwrote sat", async () => {
+    const lane = createLane();
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    };
+
+    hydrateMany(lane, snapshots);
+    const written = lane.set(["task", "t1"], "client");
+
+    // A write has no payload of its own behind it. It gets the one it
+    // overwrote: the promise the entry now holds is the promise the payload
+    // holds, so the write lives exactly as long as the value it replaced would
+    // have.
+    expect(publishedBy(snapshots)).toHaveLength(1);
+    expect(publishedBy(snapshots)?.[0]).toBe(written);
+    expect(readOrCreate<string>(lane, ["task", "t1"], external)).toBe(written);
+    await expect(written).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "client",
+    });
+  });
+
+  it("seats an `update` the same way", async () => {
+    const lane = createLane();
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    };
+
+    hydrateMany(lane, snapshots);
+    const updated = lane.update<string>(
+      ["task", "t1"],
+      (task) => `${task}+edited`,
+    );
+
+    expect(publishedBy(snapshots)).toHaveLength(1);
+    expect(publishedBy(snapshots)?.[0]).toBe(updated);
+    await expect(updated).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "published+edited",
+    });
+  });
+
+  it("keeps one seat per key, so appends do not pile up behind the payload", async () => {
+    const lane = createLane();
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["tasks"], data: ["page-1"] }],
+    };
+
+    hydrateMany(lane, snapshots);
+
+    // What `useInfiniteLane` does to a published first page: appends are
+    // `update` calls. The payload ends up holding the entry's current value,
+    // not the history of everything that stood there.
+    lane.update<string[]>(["tasks"], (pages) => [...pages, "page-2"]);
+    const appended = lane.update<string[]>(["tasks"], (pages) => [
+      ...pages,
+      "page-3",
+    ]);
+
+    expect(publishedBy(snapshots)).toHaveLength(1);
+    expect(publishedBy(snapshots)?.[0]).toBe(appended);
+    expect(readOrCreate<string[]>(lane, ["tasks"], external)).toBe(appended);
+    await expect(appended).resolves.toEqual({
+      revision: expect.any(Number),
+      data: ["page-1", "page-2", "page-3"],
+    });
+  });
+
+  it("loses a client write with the payload it overwrote", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+    const refs = controllableRefs();
+    setExternalRefFactory(refs.factory);
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    };
+
+    hydrateMany(lane, snapshots);
+    lane.set(["task", "t1"], "client");
+
+    // The framework drops the payload: the bucket goes, and the seat the write
+    // was sitting in goes with it. Nothing here distinguishes the write from
+    // the publication — that is the rule.
+    refs.collect();
+
+    const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
+    await flushMicrotasks();
+
+    expect(waiting.status).toBe("pending");
+    // The shell still says an owner fills this key, so the read asks for it —
+    // and the owner is re-fetching this data anyway, having dropped the payload.
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves to the new payload when the key is published again", async () => {
+    const lane = createLane();
+    const first: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "server-1" }],
+    };
+    const second: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "server-2" }],
+    };
+
+    hydrateMany(lane, first);
+    hydrateMany(lane, second);
+
+    const republished = readOrCreate<string>(lane, ["task", "t1"], external);
+
+    expect(publishedBy(second)?.[0]).toBe(republished);
+    expect(publishedBy(first)?.[0]).not.toBe(republished);
+
+    const written = lane.set(["task", "t1"], "client");
+
+    // A write goes where the value it overwrote came from. The superseded
+    // payload keeps holding only what it published, and dies with the
+    // navigation that dropped it — the write is not tied to it any more.
+    expect(publishedBy(second)?.[0]).toBe(written);
+    expect(publishedBy(first)).toHaveLength(1);
+    expect(publishedBy(first)?.[0]).not.toBe(written);
+    await expect(Promise.all(publishedBy(first) ?? [])).resolves.toEqual([
+      { revision: expect.any(Number), data: "server-1" },
+    ]);
+  });
+
+  it("holds a write that arrives after the payload is gone by its readers alone", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const refs = controllableRefs();
+    setExternalRefFactory(refs.factory);
+    const snapshots: LaneHydrationSnapshots = {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    };
+
+    hydrateMany(lane, snapshots);
+    refs.collect();
+
+    // The edge of the rule: there is no seat left to take, so the write is
+    // reachable from the slot and from whoever reads it, and from nothing else.
+    const written = lane.set(["task", "t1"], "client");
+
+    expect(readOrCreate<string>(lane, ["task", "t1"], external)).toBe(written);
+    expect(publishedBy(snapshots)).toHaveLength(1);
+    expect(publishedBy(snapshots)?.[0]).not.toBe(written);
+
+    // When the readers go, so does it — and the read that finds it gone asks
+    // the owner, which is where a dropped payload leaves this key anyway.
+    refs.collect();
+
+    const waiting = track(readOrCreate<string>(lane, ["task", "t1"], external));
+    await flushMicrotasks();
+
+    expect(waiting.status).toBe("pending");
   });
 });
 

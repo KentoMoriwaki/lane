@@ -178,13 +178,19 @@ export const taskLanes = {
 - **Client-only** surfaces (no publication) just call `useLane` with their own
   loader and fetch on first read — that is `/lane-spa`, and a single route can
   mix the two as long as no key is in both.
+- **An infinite list is one key too.** The route publishes page 1 with
+  [`infiniteLaneSnapshot`](./api-reference.md#infinitelanesnapshotread-firstpage-initialcursor)
+  and `useInfiniteLane`'s `loadMore` fetches the rest from the browser; a
+  republication of the same page 1 keeps the depth the user scrolled to — see
+  [the first page from the route](./api-reference.md#the-first-page-from-the-route).
 - **"the same keys" can be the same module.** `use-lane` marks only its React
   modules `"use client"`, so
-  [`laneKey`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds) and
-  [`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation) are
-  callable in the Server Component above. The key factory your hooks import serves
-  the seed too — no server-safe copy of the literals, and the same `"use-lane"`
-  import path in both graphs. `/lane` does exactly this.
+  [`laneKey`](./api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds),
+  [`laneRead`](./api-reference.md#lanereadspec--key--loader-colocation), and the
+  snapshot builders are callable in the Server Component above. The key factory
+  your hooks import serves the seed too — no server-safe copy of the literals,
+  and the same `"use-lane"` import path in both graphs. `/lane` does exactly
+  this.
 
 You do not add React Router here — Next already owns navigation, route data, and the
 back/forward cache.

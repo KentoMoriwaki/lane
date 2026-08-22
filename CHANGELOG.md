@@ -8,6 +8,44 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **`useInfiniteLane` takes its first page from the route.** `loader: external`
+  on an infinite read builds no first-page loader: page 1 arrives by
+  publication, `loadMore` fetches pages 2..n from the browser, and both live on
+  one key.
+
+  ```ts
+  const feed = infiniteLaneRead<Post, Cursor>({
+    key: ["feed", filters],
+    loader: external,        // the route publishes page 1
+    fetchPage,               // `loadMore` only
+    nextCursor,
+  });
+
+  // page.tsx — a Server Component
+  infiniteLaneSnapshot(feed, firstPage, initialCursor);
+  ```
+
+  No `initialCursor` (the published value carries it) and no `staleTime` /
+  `refetchOn*` (freshness is the owner's), exactly as on `laneRead`'s external
+  form. **`infiniteLaneSnapshot` is the only place a page becomes the
+  `{ pages, params, hasNext }` the key holds** — it is exported from the same
+  Server-Component-safe module as `laneSnapshot`, and derives `hasNext` from the
+  read's own `nextCursor`.
+
+  **A republication of the same page 1 keeps the depth the browser added.** If
+  the entry holds a settled list whose page 1 is deep-equal to the published
+  one, the key ends up holding the published page 1 followed by the pages behind
+  it, with `params` / `hasNext` from the list that was there; a different page 1,
+  or an entry holding nothing, resets to one page — so an explicit `invalidate`
+  always resets, which is right, because pages 2..n may be stale too.
+
+  The comparison is the read's, but it runs **in the store, as the publication
+  lands**: a reader would have to commit the shallow list on its way to the deep
+  one, and a reader hidden in an `<Activity>` is not there to be told at all.
+  The limit that follows: "the entry holds a list" is read off the promise cache
+  protocol's stamps, so a depth appended with `lane.update` that no reader ever
+  rendered is not preserved.
+
 - **`refresh`: how Lane asks the owner of a published key to publish it again.**
   A callback on `createLane` and `<LaneProvider>`, supplied by the app because
   only the app knows what "render again" means:

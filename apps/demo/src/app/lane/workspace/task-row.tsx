@@ -81,6 +81,9 @@ export function TaskRow({
     <div
       role="button"
       tabIndex={0}
+      // The row's identity, in the DOM: what the list's order policy decided,
+      // readable without matching on a title that an edit can change.
+      data-task-id={task.id}
       onClick={onSelect}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {

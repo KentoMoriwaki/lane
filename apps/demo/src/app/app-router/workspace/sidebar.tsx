@@ -16,11 +16,15 @@ import { WorkspaceBrand } from "./brand";
 import type {
   CurrentUser,
   Insights,
-  Project,
   TeamLabel,
   TeamSummary,
 } from "@/server/api";
-import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
+import type { ProjectRef } from "@/app/lane/api/route-reads";
+import {
+  EMPTY_FILTERS,
+  type ProjectTaskCounts,
+  type TaskFilters,
+} from "@/app/lane/api/endpoints";
 import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -40,6 +44,7 @@ export function Sidebar({
   filters,
   insights,
   projects,
+  projectCounts,
   labels,
   viewHref,
   onSignOut,
@@ -49,7 +54,8 @@ export function Sidebar({
   activeTeamId: string;
   filters: TaskFilters;
   insights: Insights;
-  projects: Project[];
+  projects: ProjectRef[];
+  projectCounts: ProjectTaskCounts;
   labels: TeamLabel[];
   viewHref: (view: Partial<TaskFilters>) => string;
   onSignOut: () => void;
@@ -123,7 +129,7 @@ export function Sidebar({
                 key={project.id}
                 dotClass={accent(project.color).dot}
                 label={project.name}
-                count={project.taskCount}
+                count={projectCounts[project.id] ?? 0}
                 isActive={active === `project:${project.id}`}
                 href={viewHref({ projectId: project.id })}
               />

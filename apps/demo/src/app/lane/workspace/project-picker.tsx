@@ -1,10 +1,14 @@
 "use client";
 
-import type { Project } from "@/server/api";
 import { Check, ChevronsUpDown, FolderPlus, Hash } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { useCreateProject, useProjects } from "@/app/lane/api/hooks";
+import type { ProjectRef } from "@/app/lane/api/route-reads";
+import {
+  useCreateProject,
+  useProjectCounts,
+  useProjects,
+} from "@/app/lane/api/hooks";
 import { ApiError } from "@/app/lane/api/client";
 import {
   Command,
@@ -39,10 +43,11 @@ export function ProjectPicker({
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const projects = React.use(useProjects().promise).data;
+  const projectCounts = React.use(useProjectCounts().promise).data;
   const createProject = useCreateProject();
   const [isCreating, startCreateTransition] = React.useTransition();
 
-  const selected: Project | null =
+  const selected: ProjectRef | null =
     projects.find((project) => project.id === value) ?? null;
 
   const trimmed = search.trim();
@@ -145,7 +150,7 @@ export function ProjectPicker({
                   />
                   <span className="flex-1 truncate">{project.name}</span>
                   <span className="text-xs text-muted-foreground">
-                    {project.taskCount}
+                    {projectCounts[project.id] ?? 0}
                   </span>
                   {value === project.id ? (
                     <Check className="size-4 text-cobalt" />

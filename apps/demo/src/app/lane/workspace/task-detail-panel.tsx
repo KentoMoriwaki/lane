@@ -1,12 +1,12 @@
 "use client";
 
 import type {
-  Project,
   Task,
   TeamLabel,
   TeamMember,
   UpdateTaskInput,
 } from "@/server/api";
+import type { ProjectRef } from "@/app/lane/api/route-reads";
 import { ArrowLeft, Check, FileQuestion, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -554,7 +554,7 @@ function useSavedNotice(): [boolean, () => void] {
 function applyOptimisticTaskChange(
   task: Task,
   change: OptimisticTaskChange,
-  refs: { members: TeamMember[]; projects: Project[] },
+  refs: { members: TeamMember[]; projects: ProjectRef[] },
 ): Task {
   const updatedAt = new Date().toISOString();
 
@@ -613,9 +613,18 @@ function applyOptimisticTaskChange(
   }
 
   if ("projectId" in input) {
+    const moved = input.projectId
+      ? refs.projects.find((project) => project.id === input.projectId)
+      : null;
+    // The roster this picks from no longer carries a task count, and the copy
+    // of the project hanging off a task still has the field. Nothing renders it
+    // — the header shows a name and a dot — and the confirmed task from the
+    // round trip replaces this within the same transition, so the placeholder
+    // never outlives the overlay.
     next.project = input.projectId
-      ? refs.projects.find((project) => project.id === input.projectId) ??
-        task.project
+      ? moved
+        ? { ...moved, taskCount: 0 }
+        : task.project
       : null;
   }
 

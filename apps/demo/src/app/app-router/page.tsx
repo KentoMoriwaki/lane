@@ -5,6 +5,7 @@ import {
   readInsights,
   readLabels,
   readMembers,
+  readProjectTaskCounts,
   readProjects,
   readTask,
   readTasks,
@@ -62,18 +63,31 @@ async function WorkspaceContent({ searchParams }: PageProps) {
 
   const activeTeamId = requested.teamId ?? currentUser.defaultTeamId;
   const ctx = { userId: currentUser.id, teamId: activeTeamId };
-  const [teams, tasks, insights, projects, labels, members, selectedTask] =
-    await Promise.all([
-      teamsRead,
-      readTasks(ctx, requested.filters),
-      readInsights(ctx),
-      readProjects(ctx),
-      readLabels(ctx),
-      readMembers(ctx),
-      requested.selectedTaskId
-        ? readTask(ctx, requested.selectedTaskId)
-        : Promise.resolve(null),
-    ]);
+  const [
+    teams,
+    tasks,
+    insights,
+    projects,
+    projectCounts,
+    labels,
+    members,
+    selectedTask,
+  ] = await Promise.all([
+    teamsRead,
+    readTasks(ctx, requested.filters),
+    readInsights(ctx),
+    readProjects(ctx),
+    // The counts are their own read now, here as well: this route shares
+    // `route-reads.ts`, and the roster it caches no longer carries a number
+    // that a task can move (see that file). One extra line, and the baseline
+    // keeps showing exactly what it showed.
+    readProjectTaskCounts(ctx),
+    readLabels(ctx),
+    readMembers(ctx),
+    requested.selectedTaskId
+      ? readTask(ctx, requested.selectedTaskId)
+      : Promise.resolve(null),
+  ]);
 
   return (
     <Workspace
@@ -83,6 +97,7 @@ async function WorkspaceContent({ searchParams }: PageProps) {
       tasks={tasks}
       insights={insights}
       projects={projects}
+      projectCounts={projectCounts}
       labels={labels}
       members={members}
       selectedTask={selectedTask}

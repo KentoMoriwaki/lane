@@ -59,12 +59,10 @@ export async function createTaskAction(
   input: CreateTaskInput,
 ): Promise<Task> {
   const task = await createTask(ctx, input);
-  // The list is dynamic, so re-rendering the route is the whole ask. The
-  // project counts are not: they ride inside a cached read, and a new task
-  // changes the count of the project it landed in.
-  if (input.projectId) {
-    updateTag(workspaceCacheTags.projects(ctx.teamId));
-  }
+  // Re-rendering the route is the whole ask. Everything a new task changes —
+  // the list, the insights, the project counts — is read dynamically
+  // (`api/route-reads.ts`); the cached reads hold reference data a task cannot
+  // touch, so there is no tag to expire here.
   refresh();
 
   return task;
@@ -105,10 +103,9 @@ export async function createProjectAction(
  * `/lane` calls none of them. Its task edits go from the browser to the API and
  * into the lane in place (`api/hooks.ts`).
  *
- * They expire the projects tag where a task can change a project's task count,
- * because that count is read through a cached function now — the browser
- * channel has no way to say this, and saying it here is what keeps the baseline
- * exactly as read-again as it was.
+ * None of them expires a tag: `refresh()` alone is the ask, because no cached
+ * read holds anything a task can change. The project task counts used to be the
+ * exception, and `route-reads.ts` says why they are their own dynamic read now.
  */
 
 export async function updateTaskAction(
@@ -117,9 +114,6 @@ export async function updateTaskAction(
   input: UpdateTaskInput,
 ): Promise<Task> {
   const task = await updateTask(ctx, taskId, input);
-  if (input.projectId !== undefined) {
-    updateTag(workspaceCacheTags.projects(ctx.teamId));
-  }
   refresh();
 
   return task;
@@ -130,7 +124,6 @@ export async function deleteTaskAction(
   taskId: string,
 ): Promise<void> {
   await deleteTask(ctx, taskId);
-  updateTag(workspaceCacheTags.projects(ctx.teamId));
   refresh();
 }
 

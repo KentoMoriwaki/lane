@@ -3,13 +3,13 @@ import type { LaneHydrationSnapshots, LaneSnapshot } from "use-lane";
 import type {
   CurrentUser,
   Insights,
-  Project,
   Task,
   TeamLabel,
   TeamMember,
   TeamSummary,
 } from "@/server/api";
-import type { TaskFilters } from "./endpoints";
+import type { ProjectTaskCounts, TaskFilters } from "./endpoints";
+import type { ProjectRef } from "./route-reads";
 
 /**
  * Every read this workspace performs, defined once — and every one of them is
@@ -70,7 +70,13 @@ export const workspaceReads = {
     laneRead<Task[]>({ key: ["tasks", filters], loader: external }),
   task: (taskId: string) =>
     laneRead<Task>({ key: ["task", taskId], loader: external }),
-  projects: () => laneRead<Project[]>({ key: ["projects"], loader: external }),
+  projects: () =>
+    laneRead<ProjectRef[]>({ key: ["projects"], loader: external }),
+  // Its own key because it has its own freshness: the roster of projects is
+  // cached for hours, the number of tasks in each is read through on every
+  // render. One key, one lifetime — see `api/route-reads.ts`.
+  projectCounts: () =>
+    laneRead<ProjectTaskCounts>({ key: ["project-counts"], loader: external }),
   labels: () => laneRead<TeamLabel[]>({ key: ["labels"], loader: external }),
   members: () => laneRead<TeamMember[]>({ key: ["members"], loader: external }),
   insights: () => laneRead<Insights>({ key: ["insights"], loader: external }),
@@ -90,7 +96,8 @@ export const workspaceSnapshots = {
     currentUser: CurrentUser;
     teams: TeamSummary[];
     insights: Insights;
-    projects: Project[];
+    projects: ProjectRef[];
+    projectCounts: ProjectTaskCounts;
     labels: TeamLabel[];
   }): LaneHydrationSnapshots {
     return {
@@ -99,6 +106,7 @@ export const workspaceSnapshots = {
         laneSnapshot(workspaceReads.teams(), seeds.teams),
         laneSnapshot(workspaceReads.insights(), seeds.insights),
         laneSnapshot(workspaceReads.projects(), seeds.projects),
+        laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
         laneSnapshot(workspaceReads.labels(), seeds.labels),
       ],
     };
@@ -120,7 +128,7 @@ export const workspaceSnapshots = {
   },
 
   filterBar(seeds: {
-    projects: Project[];
+    projects: ProjectRef[];
     labels: TeamLabel[];
     tasks: { filters: TaskFilters; data: Task[] };
   }): LaneHydrationSnapshots {
@@ -140,13 +148,15 @@ export const workspaceSnapshots = {
    */
   detail(seeds: {
     members: TeamMember[];
-    projects: Project[];
+    projects: ProjectRef[];
+    projectCounts: ProjectTaskCounts;
     labels: TeamLabel[];
     task: Task;
   }): LaneHydrationSnapshots {
     const entries: LaneSnapshot[] = [
       laneSnapshot(workspaceReads.members(), seeds.members),
       laneSnapshot(workspaceReads.projects(), seeds.projects),
+      laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
       laneSnapshot(workspaceReads.labels(), seeds.labels),
       laneSnapshot(workspaceReads.task(seeds.task.id), seeds.task),
     ];

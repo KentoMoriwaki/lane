@@ -902,6 +902,29 @@ export async function listProjects(teamId: string): Promise<Project[]> {
   return Promise.all(rows.map(toProject));
 }
 
+/**
+ * How many tasks are in each of a team's projects, on its own.
+ *
+ * It is the one part of a project that changes whenever a *task* does, which
+ * makes it the wrong thing to serve from beside the project's name and colour.
+ * One grouped query, and projects with no tasks are still listed — a count that
+ * silently omits zero is a count a caller has to remember to default.
+ */
+export async function listProjectTaskCounts(
+  teamId: string,
+): Promise<Record<string, number>> {
+  const rows = await allRows<{ id: string; count: number }>(
+    `select projects.id as id, count(tasks.id) as count
+       from projects
+       left join tasks on tasks.project_id = projects.id
+       where projects.team_id = ?
+       group by projects.id`,
+    [teamId],
+  );
+
+  return Object.fromEntries(rows.map((row) => [row.id, Number(row.count)]));
+}
+
 export async function createProject(
   teamId: string,
   input: CreateProjectInput,

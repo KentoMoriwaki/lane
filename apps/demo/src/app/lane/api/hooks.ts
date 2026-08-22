@@ -61,6 +61,15 @@ export function useProjects() {
   return useLane(workspaceReads.projects());
 }
 
+/**
+ * The task counts, read apart from the projects they belong to. Two reads
+ * because they have two lifetimes — the roster is cached, the counts are
+ * derived from tasks and change whenever one does.
+ */
+export function useProjectCounts() {
+  return useLane(workspaceReads.projectCounts());
+}
+
 export function useLabels() {
   return useLane(workspaceReads.labels());
 }
@@ -95,9 +104,10 @@ export function useInsights() {
  *   at the index it already occupies. Membership is not recomputed here: a task
  *   that no longer matches a filter keeps its place until the next publication
  *   sorts it out, which is the whole reason a row never jumps under the cursor;
- * - `invalidate(insights())` — the counters, which nothing in the response can
- *   compute. Marking them is all this does: the mounted strip re-reads, Lane
- *   asks the owner once, and the route's next publication answers.
+ * - `invalidate(insights())` and `invalidate(projectCounts())` — the two counts
+ *   nothing in the response can compute. Marking them is all this does: the
+ *   mounted strip and sidebar re-read, Lane asks the owner *once* for both, and
+ *   the route's next publication answers.
  *
  * **`"page"` — no list is on screen.** The full task page at
  * `/lane/task/<id>`, which is what a direct visit, a reload, or a shared link
@@ -107,7 +117,7 @@ export function useInsights() {
  * - `invalidateAll(["tasks"])` — every list entry this lane holds is marked
  *   stale rather than rewritten. Patching a row nobody is looking at would only
  *   guess at a sort order the server owns, and there is no jump to avoid;
- * - `invalidate(insights())` — the same.
+ * - the two counts — the same.
  *
  * Nothing is *asked* by the second form while the page is up: a marked key with
  * no reader stays marked. The ask comes when a list is revealed again — the
@@ -166,6 +176,7 @@ export function useDeleteTask(surface: TaskSurface) {
         lane.invalidateAll(["tasks"]);
       }
       lane.invalidate(workspaceReads.insights().key);
+      lane.invalidate(workspaceReads.projectCounts().key);
       // The `task(id)` entry is left where it is rather than removed. The
       // detail showing it is still mounted while the view moves back to the
       // list, and removing a key under its reader would suspend it into a
@@ -262,6 +273,9 @@ function convergeOnTask(lane: Lane, task: Task, surface: TaskSurface) {
   }
 
   lane.invalidate(workspaceReads.insights().key);
+  // Marked in the same tick as the insights, so both are answered by one
+  // `refresh` — Lane coalesces the asks a single run produces.
+  lane.invalidate(workspaceReads.projectCounts().key);
 }
 
 /**

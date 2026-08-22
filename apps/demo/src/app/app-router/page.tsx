@@ -27,11 +27,13 @@ type PageProps = {
 /**
  * Plain App Router baseline for the server-owned Lane demo.
  *
- * Both routes use the exact same reads, mutation actions, latency, URL
- * contract, and static-shell strategy. The difference is only distribution:
- * this route resolves ordinary values and passes them down as props. There is
- * no keyed client store, hydration publication, or external reader hidden
- * behind an adapter.
+ * Both routes use the exact same reads, latency, URL contract, and static-shell
+ * strategy, and this one keeps the mutation shape both started with: every
+ * change is a Server Action that asks for a rerender, and the whole route comes
+ * back as props. There is no keyed client store, hydration publication, or
+ * external reader hidden behind an adapter — and no way to converge one row
+ * without redrawing the workspace around it, which is what `/lane` is now the
+ * comparison for.
  */
 export default function Page({ searchParams }: PageProps) {
   return (

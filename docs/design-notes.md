@@ -198,6 +198,36 @@ So the demand splits, and each half already has somewhere to go:
   `initialData` is bought for. When a partial value genuinely should appear
   first, the caller has it in hand and `set` publishes it.
 
+## A promise Lane hands out says what it holds
+
+Every promise a reader gets carries its own settlement as `status` / `value` /
+`reason` — React's promise cache protocol, written out in the `use` reference
+under
+["How to implement a promise cache"](https://react.dev/reference/react/use#how-to-implement-a-promise-cache).
+So `use()` returns from a settled promise in the render that receives it, rather
+than suspending once to learn what it holds; and where the value is already in
+hand — `set(key, value)`, a `<LaneHydration>` seed — the promise is fulfilled at
+creation, with no microtask in between.
+
+The reason it is Lane's job is the one path that cannot wait a microtask. A
+reveal adopts the store's promise from a layout effect, which is a synchronous
+update: React has nowhere to wait, so it commits the boundary's fallback, and
+the retry runs on a lane where fallbacks are throttled for 300ms. A value that
+had been sitting in the store since before the tree was hidden would spend a
+third of a second announcing itself as loading. React writes the same three
+fields itself on a promise's first `use()`, and skips doing so once `status` is
+a string — which is why writing `"pending"` obliges the writer to write the
+settlement too, and why Lane writes both.
+
+What it costs is cross-reader consistency in one narrow shape, and
+`tearing.test.ts` is where it is pinned down: that first suspend was also what
+kept a render-phase read from committing beside a sibling still holding the
+previous value. A store write landing between two reads of a single render pass
+now commits a frame in which they disagree, corrected by the reader's own layout
+reconciliation in the same task. That is the trade — the same property that lets
+a reveal show a value without a fallback is the one that leaves nothing standing
+between a read and a commit.
+
 ## Optimistic state is local
 
 React Query-style optimistic updates often write speculative data into the shared

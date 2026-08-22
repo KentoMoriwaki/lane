@@ -53,6 +53,32 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
+- **Every promise Lane hands out carries its own settlement.** `status` /
+  `value` / `reason` on the promise, as react.dev's `use` reference describes in
+  ["How to implement a promise cache"](https://react.dev/reference/react/use#how-to-implement-a-promise-cache),
+  so `use()` returns from a settled one in the render that receives it instead
+  of suspending once to learn what it holds. Where the value is already in hand —
+  `set(key, value)`, a `<LaneHydration>` seed — the promise is fulfilled at
+  creation, with no microtask in between.
+
+  This is what an `<Activity>` reveal was missing. A reveal adopts the store's
+  promise from a layout effect, a synchronous update with nowhere to wait, so an
+  unstamped promise committed the boundary's fallback and came back on a retry
+  React throttles fallbacks on for 300ms — a third of a second of "loading" for
+  a value that had been sitting there since before the tree was hidden. A `set`
+  that landed while hidden, and a prefetch nobody read, now reveal without a
+  fallback, so the "have something `use()` it first" workaround and the
+  flash-guard footnote that stood beside it are both gone — see
+  [consistency.md](./docs/consistency.md#activity).
+
+  It costs cross-reader consistency in one narrow shape, pinned down in
+  `tearing.test.ts`: that first suspend was also what kept a render-phase read
+  from committing beside a sibling still holding the previous value, so a store
+  write landing between two reads of one render pass now commits a frame in
+  which they disagree — corrected by the reader's own layout reconciliation in
+  the same task. Budgets move 2.73 → 2.79 kB, 4.08 → 4.13 kB, and the ceiling
+  5.71 → 5.77 kB.
+
 - **Breaking: `LaneRead.refreshError` is now `error`.** The old name was accurate
   while the field could only appear over a previous value — a *refresh* had
   failed. With `fallback` a first load can serve something too, so the name

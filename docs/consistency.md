@@ -153,7 +153,7 @@ rather than by what happened while hidden:
 | Store state at the reveal | What the first revealed frame shows |
 | --- | --- |
 | the same promise the reader holds | that value, immediately — no work, no request |
-| a settled replacement (a publication, a sibling's finished read) | the replacement, adopted synchronously |
+| a settled replacement (a publication, a `set`, a finished read, a warmed prefetch) | the replacement, adopted synchronously — no fallback |
 | invalidated or absent (removed, collected) | the boundary's fallback, with the re-read starting *at* the reveal |
 
 The last row is the guarantee worth stating plainly: **an invalidated value is
@@ -161,8 +161,8 @@ never painted.** The correction happens in the same task as the unhide, and the
 browser does not paint mid-task, so there is no frame in which the old value is
 on screen.
 
-**A reveal that carries a publication skips even the fallback.** When the reveal
-re-renders the tree under a new publication — an App Router navigation that
+**A reveal that carries a publication converges in the render itself.** When the
+reveal re-renders the tree under a new publication — an App Router navigation that
 re-streams the payload — readers adopt the new seed during that render, inside the
 navigation's transition, and the whole thing commits once. That is what keeps a
 framework's "fetch, then reveal" intact instead of converting resolved data into a
@@ -180,32 +180,31 @@ Per ownership, in one line each:
   is `gcTime`: if the entry was collected while the tree was hidden, the reveal
   re-reads through the loader and falls back until it lands.
 
-#### Flash-free reveals: the promise has to have been `use()`d
+#### Flash-free reveals: a settled promise is readable on the spot
 
-React tags a promise's status the first time `use()` sees it. Until then it has
-to suspend once, even if the promise is already resolved, before it can replay
-with the value. So an adoption at a reveal repaints without a fallback **only if
-the promise being adopted has been through `use()` at least once** — which is
-true of anything a reader has already rendered, and of anything a sibling reader
-resolved while the tree was hidden.
+Every promise Lane hands out carries its own settlement — `status` and `value`,
+[React's promise cache protocol](https://react.dev/reference/react/use#how-to-implement-a-promise-cache)
+— so `use()` returns from a settled one in the render that receives it, without
+suspending first to find out what it holds. That is what makes the middle row of
+the table above unconditional: **a reveal that adopts a settled replacement
+commits without a fallback**, whoever settled it and whether or not anything has
+ever read it.
 
-The practical corollary is about warming: `lane.prefetch` runs outside React, so
-a prefetched-and-never-read promise is untagged, and the first `use()` of it
-suspends for one retry. Warming still saves the request; it does not by itself
-buy a flash-free first frame. If a surface must appear complete on reveal, have
-something read the key (even a hidden `<Activity>` reader) rather than only
-prefetching it.
+Warming is where that matters most. `lane.prefetch` runs outside React, so
+nothing has ever `use()`d the promise it produces, and a reveal adopts from a
+layout effect — a synchronous update with no microtask to wait in. The stamps
+are what carry the value across that gap, which makes warming a key enough on
+its own to have the surface appear complete on reveal: there is no second reader
+to arrange.
 
-In measurement, that one retry has been transient enough not to reach the
-screen. Do not lean on that: it is a race that a slower reveal commit can lose,
-whereas a promise that has already been read cannot suspend at all.
+The same holds for a `set` that landed while the tree was hidden, for an
+`update` chained onto one, and for a publication seeding a key nobody has read —
+`set(key, value)` and a `<LaneHydration>` seed are fulfilled the moment they are
+created, with no microtask in between.
 
-> **Footnote — holding a frame during adoption.** If a specific surface must not
-> risk even that retry, the userland pattern is to keep the outgoing content
-> mounted for one commit while the adopted promise is instrumented (a "flash
-> guard" wrapper around the boundary). Lane ships nothing for this and the lab
-> has not measured a form of it; it is named here so the option is known, not
-> recommended as a default.
+What this does *not* buy is a promise that is still loading. A pending
+replacement suspends, as it should: it has nothing to show, and the boundary's
+fallback is the specified presentation for a new appearance.
 
 ### Announce pending at the start of a mutation, not the end
 

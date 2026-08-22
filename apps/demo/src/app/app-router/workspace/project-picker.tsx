@@ -1,6 +1,7 @@
 "use client";
 
-import type { Project } from "@/server/api";
+import type { ProjectRef } from "@/app/lane/api/route-reads";
+import type { ProjectTaskCounts } from "@/app/lane/api/endpoints";
 import { Check, ChevronsUpDown, FolderPlus, Hash } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -28,13 +29,15 @@ const PROJECT_COLORS = ["cobalt", "sage", "amber", "rose", "slate"];
 export function ProjectPicker({
   ctx,
   projects,
+  projectCounts,
   value,
   changeAction,
   pending,
   disabled,
 }: {
   ctx: WorkspaceContext;
-  projects: Project[];
+  projects: ProjectRef[];
+  projectCounts: ProjectTaskCounts;
   value: string | null;
   changeAction: (projectId: string | null) => void;
   pending?: boolean;
@@ -142,7 +145,7 @@ export function ProjectPicker({
                   />
                   <span className="flex-1 truncate">{project.name}</span>
                   <span className="text-xs text-muted-foreground">
-                    {project.taskCount}
+                    {projectCounts[project.id] ?? 0}
                   </span>
                   {value === project.id ? (
                     <Check className="size-4 text-cobalt" />

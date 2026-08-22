@@ -14,6 +14,7 @@ import {
   getUserById,
   listLabels,
   listMembers,
+  listProjectTaskCounts,
   listProjects,
   listTasks,
   listTeamsForUser,
@@ -238,6 +239,16 @@ export const teamRoutes = team
   .get("/projects", async (context) => {
     await delay(DERIVED_DATA_DELAY_MS);
     return context.json(await listProjects(context.get("teamId")), 200);
+  })
+  // The counts, separately from the projects. They are derived from tasks, so
+  // whoever reads them cannot cache them the way the roster of projects is
+  // cached — see `app/lane/api/route-reads.ts`.
+  .get("/projects/counts", async (context) => {
+    await delay(DERIVED_DATA_DELAY_MS);
+    return context.json(
+      await listProjectTaskCounts(context.get("teamId")),
+      200,
+    );
   })
   .post(
     "/projects",

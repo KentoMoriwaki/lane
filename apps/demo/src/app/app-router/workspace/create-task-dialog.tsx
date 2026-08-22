@@ -1,12 +1,13 @@
 "use client";
 
 import type {
-  Project,
   TaskPriority,
   TaskStatus,
   TeamLabel,
   TeamMember,
 } from "@/server/api";
+import type { ProjectRef } from "@/app/lane/api/route-reads";
+import type { ProjectTaskCounts } from "@/app/lane/api/endpoints";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -59,6 +60,7 @@ export function CreateTaskDialog({
   open,
   members,
   projects,
+  projectCounts,
   labels,
   onOpenChange,
   createAction,
@@ -66,7 +68,8 @@ export function CreateTaskDialog({
   ctx: WorkspaceContext;
   open: boolean;
   members: TeamMember[];
-  projects: Project[];
+  projects: ProjectRef[];
+  projectCounts: ProjectTaskCounts;
   labels: TeamLabel[];
   onOpenChange: (open: boolean) => void;
   createAction: (taskId: string) => void;
@@ -166,6 +169,7 @@ export function CreateTaskDialog({
               <ProjectPicker
                 ctx={ctx}
                 projects={projects}
+                projectCounts={projectCounts}
                 value={draft.projectId}
                 changeAction={(projectId) => patch({ projectId })}
               />

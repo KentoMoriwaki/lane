@@ -1,11 +1,11 @@
 "use client";
 
 import type {
-  Project,
   TaskPriority,
   TaskStatus,
   TeamLabel,
 } from "@/server/api";
+import type { ProjectRef } from "@/app/lane/api/route-reads";
 import { Check, ChevronDown, ListFilter, RotateCw, X } from "lucide-react";
 import Link, { useLinkStatus } from "next/link";
 import * as React from "react";
@@ -38,7 +38,7 @@ export function FilterBar({
   resetHref,
 }: {
   filters: TaskFilters;
-  projects: Project[];
+  projects: ProjectRef[];
   labels: TeamLabel[];
   taskCount: number;
   isPending: boolean;

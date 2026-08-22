@@ -1,4 +1,5 @@
 import { cacheLife, cacheTag } from "next/cache";
+import type { Project } from "@/server/api";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
 import { ApiError } from "./client";
 import {
@@ -6,10 +7,12 @@ import {
   fetchInsights,
   fetchLabels,
   fetchMembers,
+  fetchProjectTaskCounts,
   fetchProjects,
   fetchTask,
   fetchTasks,
   fetchTeams,
+  type ProjectTaskCounts,
   type TaskFilters,
 } from "./endpoints";
 
@@ -40,18 +43,27 @@ import {
  * by the Server Actions in `api/actions.ts`, which name the tag. They are the
  * three reads a background republication does not have to repeat.
  *
- * One derivation rides along inside a cached read, and it is worth naming
- * rather than hiding: a project carries the number of tasks in it. Creating a
- * task expires the projects tag, so that count follows the create. Deleting a
- * task or moving it between projects goes through the browser channel and
- * cannot expire anything, so those counts converge on the profile's
- * `revalidate` instead — which is why the profile here is `minutes` and not
- * `max`.
+ * **A derivation does not get to ride along.** A project used to carry the
+ * number of tasks in it, inside the cached read — a value the browser channel
+ * changes on every status change and every delete, and cannot expire a tag for.
+ * The compromise was a shorter `cacheLife`, which is to say a window in which
+ * the server answered with a number it knew to be wrong. The rule above already
+ * says what to do instead, so the count is split off into `readProjectTaskCounts`
+ * and read dynamically, and `readProjects` is the roster alone: id, name, key,
+ * colour — reference data, cached for hours, with no field in it that a task
+ * can move. What the browser changes is marked (`lane.invalidate` in
+ * `api/hooks.ts`) and read again on the next publication.
  *
  * `cacheComponents` stays on either way. It is what extracts each route's
  * reusable shell; it does not require these reads to be cached, only that they
  * resolve below a Suspense boundary, which is where the regions put them.
  */
+
+/**
+ * A project without its task count — what a cached read of the roster can
+ * honestly return. The count comes from {@link readProjectTaskCounts}.
+ */
+export type ProjectRef = Omit<Project, "taskCount">;
 
 /**
  * The tags the cached reads below declare, and the only names `api/actions.ts`
@@ -106,15 +118,27 @@ export async function readTask(ctx: WorkspaceCtx, taskId: string) {
   }
 }
 
-export async function readProjects(ctx: WorkspaceCtx) {
+export async function readProjects(ctx: WorkspaceCtx): Promise<ProjectRef[]> {
   "use cache";
-  // Shorter than the other two because of the task count a project carries:
-  // the mutations that can change it without expiring the tag are the ones the
-  // browser channel owns.
-  cacheLife("minutes");
+  cacheLife("hours");
   cacheTag(workspaceCacheTags.projects(ctx.teamId));
 
-  return fetchProjects(ctx);
+  // The count is dropped here rather than left unread. A cached read that
+  // carries a field the browser channel changes is a stale value waiting for
+  // someone to render it; not returning it is what makes that impossible.
+  return (await fetchProjects(ctx)).map(
+    ({ taskCount: _count, ...project }) => project,
+  );
+}
+
+/**
+ * The task counts, read through on every render like the tasks they are
+ * counted from. Cheap, one query, and always the number the list would give.
+ */
+export async function readProjectTaskCounts(
+  ctx: WorkspaceCtx,
+): Promise<ProjectTaskCounts> {
+  return fetchProjectTaskCounts(ctx);
 }
 
 export async function readInsights(ctx: WorkspaceCtx) {

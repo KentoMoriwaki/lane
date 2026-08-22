@@ -4,14 +4,18 @@ import * as React from "react";
 import type {
   CurrentUser,
   Insights,
-  Project,
   Task,
   TeamLabel,
   TeamMember,
   TeamSummary,
 } from "@/server/api";
+import type { ProjectRef } from "@/app/lane/api/route-reads";
 import { refreshWorkspaceAction } from "@/app/lane/api/actions";
-import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
+import {
+  EMPTY_FILTERS,
+  type ProjectTaskCounts,
+  type TaskFilters,
+} from "@/app/lane/api/endpoints";
 import { buildWorkspaceHref } from "@/app/lane/api/url-state";
 import { Button } from "@/components/ui/button";
 import { CreateTaskDialog } from "./create-task-dialog";
@@ -35,7 +39,8 @@ export type WorkspaceProps = {
   activeTeamId: string;
   tasks: Task[];
   insights: Insights;
-  projects: Project[];
+  projects: ProjectRef[];
+  projectCounts: ProjectTaskCounts;
   labels: TeamLabel[];
   members: TeamMember[];
   selectedTask: Task | null;
@@ -66,6 +71,7 @@ function WorkspaceScreen({
   tasks,
   insights,
   projects,
+  projectCounts,
   labels,
   members,
   selectedTask,
@@ -144,6 +150,7 @@ function WorkspaceScreen({
         filters={filters}
         insights={insights}
         projects={projects}
+        projectCounts={projectCounts}
         labels={labels}
         viewHref={viewHref}
         onSignOut={onSignOut}
@@ -194,6 +201,7 @@ function WorkspaceScreen({
             task={selectedTask}
             members={members}
             projects={projects}
+            projectCounts={projectCounts}
             labels={labels}
             onClose={() => selectTask(null)}
           />
@@ -204,6 +212,7 @@ function WorkspaceScreen({
         open={createOpen}
         members={members}
         projects={projects}
+        projectCounts={projectCounts}
         labels={labels}
         onOpenChange={setCreateOpen}
         createAction={selectTask}

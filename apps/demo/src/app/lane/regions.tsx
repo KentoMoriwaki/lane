@@ -4,6 +4,7 @@ import {
   readInsights,
   readLabels,
   readMembers,
+  readProjectTaskCounts,
   readProjects,
   readTask,
   readTasks,
@@ -63,13 +64,15 @@ async function requested(searchParams: RegionProps["searchParams"]) {
 export async function SidebarRegion({ searchParams }: RegionProps) {
   const state = await requested(searchParams);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const [currentUser, teams, insights, projects, labels] = await Promise.all([
-    getSession(),
-    getTeams(),
-    readInsights(ctx),
-    readProjects(ctx),
-    readLabels(ctx),
-  ]);
+  const [currentUser, teams, insights, projects, projectCounts, labels] =
+    await Promise.all([
+      getSession(),
+      getTeams(),
+      readInsights(ctx),
+      readProjects(ctx),
+      readProjectTaskCounts(ctx),
+      readLabels(ctx),
+    ]);
 
   return (
     <LaneHydration
@@ -78,6 +81,7 @@ export async function SidebarRegion({ searchParams }: RegionProps) {
         teams,
         insights,
         projects,
+        projectCounts,
         labels,
       })}
     >
@@ -152,9 +156,10 @@ export async function TaskDetailRegion({
 }: TaskRegionProps) {
   const [{ id }, state] = await Promise.all([params, requested(searchParams)]);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const [members, projects, labels, task] = await Promise.all([
+  const [members, projects, projectCounts, labels, task] = await Promise.all([
     readMembers(ctx),
     readProjects(ctx),
+    readProjectTaskCounts(ctx),
     readLabels(ctx),
     readTask(ctx, id),
   ]);
@@ -171,6 +176,7 @@ export async function TaskDetailRegion({
       snapshots={workspaceSnapshots.detail({
         members,
         projects,
+        projectCounts,
         labels,
         task,
       })}

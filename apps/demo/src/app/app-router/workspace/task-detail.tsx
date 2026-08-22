@@ -1,12 +1,13 @@
 "use client";
 
 import type {
-  Project,
   Task,
   TeamLabel,
   TeamMember,
   UpdateTaskInput,
 } from "@/server/api";
+import type { ProjectRef } from "@/app/lane/api/route-reads";
+import type { ProjectTaskCounts } from "@/app/lane/api/endpoints";
 import { Check, MousePointerClick, Trash2, X } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -42,6 +43,7 @@ export function TaskDetail({
   task,
   members,
   projects,
+  projectCounts,
   labels,
   onClose,
 }: {
@@ -49,7 +51,8 @@ export function TaskDetail({
   taskId: string | null;
   task: Task | null;
   members: TeamMember[];
-  projects: Project[];
+  projects: ProjectRef[];
+  projectCounts: ProjectTaskCounts;
   labels: TeamLabel[];
   onClose: () => void;
 }) {
@@ -92,6 +95,7 @@ export function TaskDetail({
         task={task}
         members={members}
         projects={projects}
+        projectCounts={projectCounts}
         labels={labels}
         onClose={onClose}
       />
@@ -112,13 +116,15 @@ function TaskDetailContent({
   task,
   members,
   projects,
+  projectCounts,
   labels,
   onClose,
 }: {
   ctx: WorkspaceContext;
   task: Task;
   members: TeamMember[];
-  projects: Project[];
+  projects: ProjectRef[];
+  projectCounts: ProjectTaskCounts;
   labels: TeamLabel[];
   onClose: () => void;
 }) {
@@ -286,6 +292,7 @@ function TaskDetailContent({
             <ProjectPicker
               ctx={ctx}
               projects={projects}
+              projectCounts={projectCounts}
               value={optimisticTask.project?.id ?? null}
               changeAction={(projectId) =>
                 updateOptimistically({ projectId }, "Couldn't move task")
@@ -367,7 +374,7 @@ type SaveAction = {
 function applyOptimisticTaskChange(
   task: Task,
   change: OptimisticTaskChange,
-  refs: { members: TeamMember[]; projects: Project[] },
+  refs: { members: TeamMember[]; projects: ProjectRef[] },
 ): Task {
   const updatedAt = new Date().toISOString();
   if (change.type === "addLabel") {
@@ -396,9 +403,16 @@ function applyOptimisticTaskChange(
       : null;
   }
   if ("projectId" in input) {
+    // The roster no longer carries a task count (`route-reads.ts`); nothing
+    // renders the one on a task's own copy of its project, and the action's
+    // response replaces this overlay in the same transition.
+    const moved = input.projectId
+      ? refs.projects.find((project) => project.id === input.projectId)
+      : undefined;
     next.project = input.projectId
-      ? (refs.projects.find((project) => project.id === input.projectId) ??
-        task.project)
+      ? moved
+        ? { ...moved, taskCount: 0 }
+        : task.project
       : null;
   }
   return next;

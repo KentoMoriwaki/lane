@@ -174,6 +174,20 @@ export async function fetchProjects(ctx: WorkspaceCtx): Promise<Project[]> {
   return (await response.json()) as Project[];
 }
 
+/** How many tasks are in each project, keyed by project id. */
+export type ProjectTaskCounts = Record<string, number>;
+
+export async function fetchProjectTaskCounts(
+  ctx: WorkspaceCtx,
+): Promise<ProjectTaskCounts> {
+  const response = await client.api.projects.counts.$get(
+    undefined,
+    requestOptions(ctx),
+  );
+  await assertOk(response);
+  return (await response.json()) as ProjectTaskCounts;
+}
+
 export async function createProject(
   ctx: WorkspaceCtx,
   input: CreateProjectInput,

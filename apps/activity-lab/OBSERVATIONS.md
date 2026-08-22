@@ -734,8 +734,10 @@ loader はデフォルト auto/200ms(パネルで manual + resolve next に切�
 - 値の出自は文字列に刻まれる: `name vN (rsc)` = RSC seed、`name vN (loader)` = client loader
   (`/bfcache/api` 経由なので同じ版数列)、`name set#N (hud)` = HUD の set。
 - HUD(layout、ルート subtree の外なので hidden にならない)からキーを選んで
-  invalidate / remove / set。published キーを選ぶと store が拒否し、Timeline に
-  `REFUSED — published key` が残る(これも観測項目)。実際に書けるのは client-owned 側だけ。
+  invalidate / remove / set。published キーにも同じ操作が通る。違うのは
+  invalidate の答え方で、published なら reader が次に必要としたときに lane の
+  `refresh`(= `router.refresh()`)で owner に頼み、client-owned なら reader 自身の
+  loader が走る(これも観測項目)。
   Timeline(channel prefix `bfcache`)と、ルート subtree 全体の textContent を録る
   FrameStrip(赤 = `(hud)` 値が DOM にあるフレーム)。
 - probe の passive-cleanup が hide の証跡、hidden 中の render ログが offscreen render の証跡。
@@ -747,7 +749,7 @@ loader はデフォルト auto/200ms(パネルで manual + resolve next に切�
 | BF3 | BF1–BF2 を `LAB_PARTIAL_PREFETCH=0` で(`LAB_PARTIAL_PREFETCH=0 pnpm --filter @lane/activity-lab dev`) | | | | prefetch 内容の差が復帰時の payload に効くか |
 | BF4 | 4 ルート(list + detail/1..3)を回って LRU 追い出しを起こしてから追い出されたルートへ復帰: keep-alive された場合との差 | | | | 追い出し = probe の layout-cleanup 後に一から remount するはず、の確認込み。追い出しは published 値を繋いでいた payload も落とすので、published probe が待ちに入るか(= 回収された)も見る |
 | BF5 | 同一の復帰で published / client-owned を並べて比較: published は loader 無しで何を出すか(seed の残存 or 再 publish or 待ち)、隣の client-owned は loader を発火するか | | | | 1 回の復帰で両所有権が読める。Timeline の loader-call は client probe のものだけ |
-| BF6 | HUD で published キーに set / invalidate / remove: `REFUSED — published key` が出ること、および同操作が client-owned キーには通ること | | | | 所有権の境界が実機で効いているかの確認 |
+| BF6 | HUD で published キーに set / invalidate / remove: どれも通ること、set した値が reader に届くこと、invalidate 後に `refresh` が 1 回だけ出て publication で収束すること(同操作が client-owned キーでは loader を発火すること) | | | | 書き込み口が開いたあとの境界確認。3 キー同時 invalidate → refresh 1 回も同じ HUD で読む |
 
 ## /outside-reader
 

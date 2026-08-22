@@ -1,7 +1,7 @@
 const checklist = [
   "On returning to a cached route, does Next only reveal the hidden tree, or does it stream a new RSC payload (new snapshot props -> LaneHydration re-seeds)? Read: seed-fallback / (rsc) version bumps in the Timeline vs. a bare reveal.",
   "Compare the two ownerships on the same return. The published probes have no loader, so what they show is whatever the seed left reachable (or a wait, if it was collected and nothing republished); the client-owned probe beside them is the only one that can log a loader-call.",
-  "Remove (or invalidate / set) a client-owned key from the HUD while on another route, then navigate back. Read the return frame by frame in the FrameStrip and the probe render / passive-mount order in the Timeline. The same buttons on a published target log REFUSED instead — the store does not let a client write a key the server owns.",
+  "Remove (or invalidate / set) a client-owned key from the HUD while on another route, then navigate back. Read the return frame by frame in the FrameStrip and the probe render / passive-mount order in the Timeline. The same buttons work on a published target too — there an invalidate empties the entry and the reveal asks the route to render again through the lane's `refresh`.",
   "Repeat 1-3 with partial prefetching off: LAB_PARTIAL_PREFETCH=0 pnpm --filter @lane/activity-lab dev.",
   "Visit all four routes so the LRU evicts the oldest tree, then navigate back to the evicted route. Compare against the kept-alive case (probes remount from scratch vs. reveal) — and note that evicting a tree also drops the payload tethering its published values.",
 ];

@@ -8,6 +8,45 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Added
 
+- **`refresh`: how Lane asks the owner of a published key to publish it again.**
+  A callback on `createLane` and `<LaneProvider>`, supplied by the app because
+  only the app knows what "render again" means:
+
+  ```tsx
+  <LaneProvider refresh={() => router.refresh()}>          // Next App Router
+  <LaneProvider refresh={useRevalidator().revalidate}>     // React Router, data mode
+  ```
+
+  An external read has no loader of its own to re-run, which used to mean it had
+  nothing to do about a value that was gone — it waited, and if nobody happened
+  to publish, it timed out. Now the read asks. Lane calls `refresh` when a reader
+  reads an external key that has held a value before and has none now: after
+  `invalidate`, after `remove`, after the payload was collected.
+
+  **Out of render, once per tick per lane.** Reads run during render and
+  `router.refresh()` dispatches a React update, so the call is deferred to a
+  microtask; three keys invalidated in one run are one ask, because one route
+  render answers all three.
+
+  **On the read, not on the wait.** Next's router discards a pending
+  `router.refresh()` when a navigation starts, so a wait created before one would
+  never be filled. Every read of an unfilled wait asks again, which is how a
+  reveal after a navigation repairs itself — and why nothing tracks the ask
+  across ticks: `refresh` returns `void`, so there is no completion to observe,
+  and inferring one from the next publication is wrong when the payload need not
+  carry the key at all. Repeated asks cost round trips, not correctness.
+
+  **Never before the first publication.** A reader mounting under streaming SSR,
+  or outside every `<LaneHydration>` boundary, is waiting for a payload already
+  on its way; it waits in silence, exactly as before. The distinction is a
+  `published` mark the entry's shell carries — and the shell now survives
+  `invalidate`, `remove`, and every sweep, because losing it would make the next
+  read look like a first mount.
+
+  Without a `refresh`, behaviour is what it was: a silent wait, then
+  `LaneExternalTimeoutError` — whose development message now names this option
+  and the case it covers.
+
 - **`fallback`: a read's own policy for what a failed load serves.** A function
   on the read spec, run on every failed load, returning what to render in the
   loader's place.
@@ -80,6 +119,56 @@ All notable changes to `use-lane` are documented here. The format is based on
 
   The store budget moves 2.73 → 2.75 kB (+22 B); the other two limits are
   unchanged.
+
+- **Breaking: the client mutation surface is open on published keys.** `set`,
+  `update`, `updateAll`, `invalidate`, `invalidateAll`, `remove`, `removeAll`,
+  and `startInvalidationTransition` work on an entry seeded by `<LaneHydration>`
+  or read with `loader: external` exactly as on a client-owned one. They used to
+  throw `LaneOwnershipError`.
+
+  The rule that replaces the refusal is one line: **an external read is an
+  ordinary read whose loader the owner holds — the value arrives by publication,
+  and a re-read asks the owner to publish again.** A client write to such a key
+  is not a fork of the truth: it states what the client has just confirmed (a
+  mutation's own response), and the next publication states at least as much. An
+  `invalidate` is not a write at all but a request, and `refresh` is how it
+  reaches the owner.
+
+  What the client still does not get is a *freshness policy* on the key.
+  `staleTime` and the `refetchOn*` triggers remain absent from an external read
+  spec, and are still rejected by excess-property checking: freshness is the
+  owner's, and a second authority over when a key goes stale is the shape this
+  design exists to avoid. The client says "this is stale **now**", explicitly.
+
+  A mutation that returns the new value therefore lands with no round trip —
+  `lane.set(key, value)`, `lane.update(key, fn)` — and only what *derives* from
+  it needs `invalidate` and the owner's answer.
+
+  Retention of a client write to an external entry is unchanged for now: it goes
+  in the same weak slot the publication used, so a write no committed reader
+  holds may be collected. The next read of it asks the owner, which is the same
+  recovery as for a collected publication.
+
+- **Breaking: `LaneOwnershipError` is `prefetch`'s alone.** It still throws — in
+  production too — for `lane.prefetch` of an external read, and its message now
+  says why: prefetching runs a loader, and the only loader here is the owner's
+  whole route, so warming one key that way is a route re-render for something
+  nothing is reading yet. Let the read ask instead.
+
+- **Breaking: `LaneExternalResult` and `LaneGatedExternalResult` are removed.**
+  `useLane` of an external read returns `LaneResult<T>`, and of a gated external
+  read `LaneGatedResult<T>` — `invalidate` and `startInvalidationTransition`
+  included, because both now do something. Replace the type references; the
+  read specs (`LaneExternalReadSpec`, `LaneGatedExternalReadSpec`) are unchanged.
+
+- **An external read's timeout keeps no rejection.** `LaneExternalTimeoutError`
+  still rejects the readers holding the wait, unwrapped. Afterwards the entry
+  holds no cache, so the next read — an error boundary's retry, a reveal — starts
+  a fresh wait and a fresh ask instead of being handed back a failure that has
+  already been reported.
+
+  Budgets move 2.75 → 2.81 kB, 4.08 → 4.18 kB, and the ceiling 5.71 → 5.79 kB:
+  the ask costs a little more than the ownership assertions it replaces.
 
 - **Breaking: `LaneRead.refreshError` is now `error`.** The old name was accurate
   while the field could only appear over a previous value — a *refresh* had

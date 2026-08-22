@@ -26,26 +26,27 @@ and that is the expected shape — not a compromise.
 | The key… | Put it | Reads with | Changes through |
 | --- | --- | --- | --- |
 | is not read reactively by any client component | **not in the lane** — pass it as RSC props | — | a new render |
-| is read by the client, but its truth lives outside (RSC payload, router loader) | **in the lane, published** — [`LaneHydration`](./api-reference.md#lanehydration) | [`loader: external`](./api-reference.md#external--a-read-the-owner-publishes) | mutate the source → revalidate → republish |
+| is read by the client, but its truth lives outside (RSC payload, router loader) | **in the lane, published** — [`LaneHydration`](./api-reference.md#lanehydration) | [`loader: external`](./api-reference.md#external--a-read-the-owner-publishes) | the owner republishes; or the client writes confirmed data with `set` / `update`, or marks it stale with `invalidate` and Lane asks the owner via [`refresh`](./api-reference.md#refresh--the-owner-ask) |
 | is one the client controls (freshness, contents, when it loads) | **in the lane, client-owned** — never seeded | a normal loader | `invalidate` / `set` / `update` / `remove` |
 
 The middle and bottom rows are the two architectures. The top row is worth
 stating because it is the most common wrong answer: data a client component only
 *renders* does not belong in a data layer at all. A prop is cheaper than a key.
 
-> **The one configuration Lane rejects: seeding a key the client then mutates.**
-> A key that arrives from a publication *and* is written to locally has two
-> sources of truth and no way to reconcile them — the next payload silently
-> overwrites the local write, or it never comes and the local write outlives the
-> truth. A seeded key is external, and `lane.set` / `update` /
-> `invalidate` / `remove` on one **throw**
-> ([`LaneOwnershipError`](./api-reference.md#laneownershiperror)) in development
-> and production alike. Pick a row; the runtime holds you to it.
+> **An external read is an ordinary read whose loader the owner holds: the
+> value arrives by publication, and a re-read asks the owner to publish again.**
+> Everything else about the entry is what it is for a client-owned key. The
+> client writes what it has confirmed (`set` / `update` — a mutation's own
+> response), and says "this is stale" for what it has not (`invalidate`), which
+> Lane turns into an ask on the lane's
+> [`refresh`](./api-reference.md#refresh--the-owner-ask). What the client never
+> gets is a *freshness policy* on the key: `staleTime` and the `refetchOn*`
+> triggers are instructions to a loader, and the loader here is the owner's.
 
 Ownership also decides how a key behaves when a router keeps its tree alive in a
-hidden `<Activity>` — a published key converges on the next publication and is
-retained by reachability, a client-owned one converges through notification and
-the reveal reconciliation. See [under `<Activity>` and router
+hidden `<Activity>` — a published key converges on the next publication, is
+retained by reachability, and asks its owner at the reveal if its value is gone;
+a client-owned one converges through notification and the reveal reconciliation. See [under `<Activity>` and router
 keep-alive](./consistency.md#activity).
 
 ## RSC-first ownership — the key stays out of the lane
@@ -91,6 +92,8 @@ URL / initial request
 -> LaneHydration publishes it into the lane
 -> client reads it with `loader: external` — no fetch, it waits for the publication
 -> mutation: Server Action -> revalidate -> the payload re-streams -> republish
+-> or: mutation via a Route Handler -> `set` what came back, `invalidate` what derives
+-> an invalidated key, when a reader next needs it, asks the owner through `refresh`
 ```
 
 The Server Component layer resolves the session and active workspace, loads
@@ -112,9 +115,13 @@ counts derived from it — because one server render produced them all. The
 client-owned variant has to reconstruct that agreement with per-key invalidation
 after each mutation.
 
-What it costs is the round trip. Cover it with `useOptimistic` over the read
-value, which is a display concern and never a write; see
-[mutating a server-owned key](./api-reference.md#mutating-a-server-owned-key).
+What it costs is the round trip — for the mutations that take one. A mutation
+whose response carries the new value does not: `lane.set(key, updated)` lands it
+without a re-render of the route, and only the data that *derives* from it
+(counts, insights, a sorted list) needs `invalidate` and the owner's answer. See
+[writing to a published key](./api-reference.md#writing-to-a-published-key).
+`useOptimistic` over the read value still covers whatever round trip is left,
+and is a display concern rather than a write.
 
 ## Client-owned reads
 
@@ -164,7 +171,7 @@ differs:
 | Read pending | `Suspense` |
 | Read errors | Error Boundaries |
 | Convergence, client-owned | Lane invalidation / replacement of affected promises |
-| Convergence, server-owned | mutate the source, revalidate, and let the republication land |
+| Convergence, server-owned | `set` / `update` what the mutation returned; `invalidate` what derives from it and let Lane ask the owner — or revalidate the source and let the republication land |
 
 Lane intentionally has no `useMutation`. The mutation call, local failure
 recovery, toast, form error, and optimistic reducer are application concerns.

@@ -38,13 +38,13 @@ type PageProps = {
  * navigation paints it immediately and each region streams in as its own read
  * lands — the task list at its own latency, not the slowest read's.
  *
- * Mutations do not change shape: a Server Action mutates and calls `refresh()`,
- * this route renders again, and every region republishes. One coherent
- * workspace, delivered in pieces.
- *
- * The discipline that buys it: the client never writes to these keys. Where the
- * round trip is too slow to feel right, `useOptimistic` covers it over the read
- * value, which is a display concern and never a write.
+ * Mutations arrive by two channels, and both end here. Creating something calls
+ * a Server Action, whose response *is* this route rendered again — the new task
+ * comes back already in its sorted place. Editing a task calls the API from the
+ * browser and lands the answer in the lane directly, marking only the counters
+ * it could not compute; the rerender that follows is a background one, and it
+ * republishes every region just the same. Neither channel needs the other to
+ * know what it did (see `api/hooks.ts`).
  *
  * `/lane-spa` is the same workspace with the opposite answer: no seeding,
  * client loaders, and the cache maintenance that comes with owning your data.

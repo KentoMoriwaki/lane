@@ -17,11 +17,12 @@ import {
  * The tagged server generation this route dehydrates into the browser.
  *
  * These reads used to be shared with `/lane`, which is why they lived under
- * `app/lane/api`. `/lane` reads through to the source now — caching a
- * derivation is what forces someone to maintain "which mutation invalidates
- * which derived read" — so the tags belong to the one route that still makes
- * them its subject. This lab exists to show a tagged generation merging into a
- * mutable `QueryClient`, and `updateTag` is what produces that generation.
+ * `app/lane/api`. `/lane` tags only its three reference reads now and reads the
+ * rest through to the source, because caching a derivation is what forces
+ * someone to maintain "which mutation invalidates which derived read". Tagging
+ * *everything* is this lab's subject rather than a shared default: it exists to
+ * show a tagged generation merging into a mutable `QueryClient`, and
+ * `updateTag` is what produces that generation.
  *
  * Task lists, task details, project counts, and insights have different
  * dependencies. Keeping them separate lets a mutation expire only the reads it

@@ -19,21 +19,21 @@ const PRIMARY_GROUPS: VariantGroup[] = [
     eyebrow: "App Router integration",
     title: "The route owns each data generation",
     description:
-      "Next resolves tagged Cache Component reads and converges mutations through the Server Action payload. Plain App Router ↔ use-lane is the controlled comparison; the TanStack Query lab shows what changes when that generation is merged into a browser cache.",
+      "Next resolves the reads and owns every generation of the data. What differs is how a mutation converges: through a re-rendered route, or through the client for what the response already answered. Plain App Router ↔ use-lane is the controlled comparison; the TanStack Query lab shows what changes when that generation is merged into a browser cache.",
     variants: [
       {
         href: "/app-router",
         name: "Plain App Router",
         badge: "Next → props",
         tagline:
-          "The baseline: ordinary server values flow through client components as props. No Lane and no client data cache.",
+          "The baseline: ordinary server values flow through client components as props, and every mutation re-renders the route. No Lane and no client data cache.",
       },
       {
         href: "/lane",
         name: "use-lane",
         badge: "Next → external reads",
         tagline:
-          "The same reads, tags, actions, and latency as the baseline. Lane only distributes the published payload through keyed external reads.",
+          "The same reads and latency as the baseline, distributed through keyed external reads. A task edit lands from the API response in place; only what derives from it asks the route for another publication.",
       },
       {
         href: "/react-query-rsc",

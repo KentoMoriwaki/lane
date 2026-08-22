@@ -39,12 +39,15 @@ import type { TaskFilters } from "./endpoints";
  * ```ts
  * laneSnapshot(workspaceReads.insights(), insights);  // the server publishes
  * useLane(workspaceReads.insights());                 // the client reads
+ * lane.invalidate(workspaceReads.insights().key);     // the client marks stale
  * ```
  *
- * Those are the only two things anyone does with these reads. There is no third
- * line writing to `.key` — `lane.set` / `update` / `invalidate` / `remove` all
- * throw on a key a publication seeded, and the mutations live in `actions.ts`
- * instead, where a change ends in a republication rather than in a local edit.
+ * The third line is a write, and there is nothing special about it: a published
+ * key takes `set` / `update` / `invalidate` like any other. What "server-owned"
+ * means is not that the client may not write — it is that the client has no
+ * freshness policy of its own here. It can say *this value is what came back*
+ * and *this key is stale*; deciding when to load again is the owner's, and the
+ * answer always arrives as a publication (see `api/hooks.ts`).
  *
  * Note there is no `"use client"` on this module, and both graphs import it: the
  * components read in the browser, while `page.tsx` — a Server Component — calls

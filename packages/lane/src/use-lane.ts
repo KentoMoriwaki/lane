@@ -63,13 +63,15 @@ type LaneAnyReadSpec<T, C> = LaneUseOptions & {
 /**
  * A reader's subscription: opened in a layout effect, closed in a passive one
  * (see the two effects below for why the halves are split). The handle carries
- * one half to the other; `lane`/`keyId` let the opening half recognise a
- * subscription it already owns.
+ * one half to the other, and names the source it was opened for — everything
+ * the effects are keyed on — so the opening half recognises a subscription of
+ * its own and nothing else's.
  */
 type LaneReaderSubscription = {
   close: () => void;
   keyId: string;
   lane: Lane;
+  sourceKey: LaneKey;
 };
 
 /**
@@ -337,8 +339,21 @@ export function useLane<T, C = T>(
     const open = subscriptionRef.current;
 
     // A re-suspension re-creates layout effects over a subscription the
-    // passive half never closed — don't open a second one.
-    if (open && open.lane === lane && open.keyId === keyId) {
+    // passive half never closed — don't open a second one. Recognising it
+    // takes the whole source, not just the key: a republication (a new
+    // `<LaneHydration>` payload after a navigation) moves these deps while the
+    // lane and the key stay put, and React runs this effect *before* the
+    // superseded passive cleanup — which then closes exactly the subscription
+    // this instance would have adopted, leaving the reader subscribed to
+    // nothing. Matching on the source instead means the two never overlap in
+    // what they own: this opens the arriving one, that closes the departing
+    // one, and the reader is left holding one live subscription.
+    if (
+      open &&
+      open.lane === lane &&
+      open.keyId === keyId &&
+      open.sourceKey === sourceKey
+    ) {
       return;
     }
 
@@ -360,7 +375,7 @@ export function useLane<T, C = T>(
     });
 
     // oxlint-disable-next-line react/react-compiler
-    subscriptionRef.current = { close, keyId, lane };
+    subscriptionRef.current = { close, keyId, lane, sourceKey };
   }, [enabled, lane, keyId, sourceKey]);
 
   // The *closing* half — deliberately passive. A re-suspension tears down
@@ -375,17 +390,19 @@ export function useLane<T, C = T>(
 
     const subscription = subscriptionRef.current;
 
-    // Always set — the layout half above shares these deps and has just run.
-    // The check is the type's, not a case.
+    // Always set — the layout half above shares these deps, so it has just
+    // run and, since its guard matches on the source, has just opened the
+    // subscription this half will close. The check is the type's, not a case.
     if (!subscription) {
       return;
     }
 
     return () => {
+      // This instance's own subscription, never whatever the ref holds now: an
+      // arriving layout effect — a key switch, a republication — has already
+      // opened the next one and put it there.
       subscription.close();
 
-      // A source switch opens the new key's subscription before this cleanup
-      // runs for the old one — leave the ref alone unless it still names ours.
       if (subscriptionRef.current === subscription) {
         // oxlint-disable-next-line react/react-compiler
         subscriptionRef.current = undefined;

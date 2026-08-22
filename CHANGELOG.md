@@ -571,6 +571,28 @@ All notable changes to `use-lane` are documented here. The format is based on
   match: the store 2.55 → 2.39 kB (2.37 kB actual), typical 4 → 3.82 kB
   (3.79 kB), and the ceiling 5.58 → 5.41 kB (5.4 kB).
 
+### Fixed
+
+- **A reader keeps its subscription across a republication.** A second
+  `<LaneHydration>` payload for the same key — what an App Router navigation
+  delivers — left a visible reader subscribed to nothing, so every later
+  `set` / `update` / `invalidate` / `remove` on that key notified nobody and the
+  owner-ask that follows a re-read never fired: after one in-app navigation, a
+  published key stopped converging through anything but another publication.
+
+  A reader opens its subscription in a layout effect and closes it in the
+  matching passive one, and React runs an arriving layout effect *before* the
+  departing passive cleanup. The opening guard — "a re-suspension re-creates
+  layout effects over a subscription the passive half never closed, don't open a
+  second one" — compared only the lane and the key, which a republication leaves
+  untouched, so the arriving effect adopted the departing one's subscription and
+  the cleanup that came after closed it. The guard now matches on the whole
+  source, so the two halves never claim the same subscription: the arriving
+  effect opens the one it will own, the departing cleanup closes only its own,
+  and the reader comes out of a republication with exactly one live
+  subscription. Costs 16 B on the typical `LaneProvider` + `useLane` pair and
+  15 B on the ceiling; the budgets are unchanged.
+
 ## [0.8.0] - 2026-08-05
 
 ### Added

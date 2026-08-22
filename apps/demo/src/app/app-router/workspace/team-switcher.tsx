@@ -2,6 +2,7 @@
 
 import type { TeamSummary } from "@/server/api";
 import { Check, ChevronsUpDown, Users } from "lucide-react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as React from "react";
 import { buildWorkspaceHref, EMPTY_VIEW_STATE } from "@/app/lane/api/url-state";
@@ -13,7 +14,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { IntentPrefetchLink } from "./intent-prefetch-link";
 
 function teamInitials(name: string) {
   return name
@@ -60,7 +60,7 @@ export function TeamSwitcher({
         <DropdownMenuSeparator />
         {teams.map((team) => (
           <DropdownMenuItem key={team.id} asChild className="gap-2.5">
-            <IntentPrefetchLink href={hrefForTeam(team.id)} scroll={false}>
+            <Link href={hrefForTeam(team.id)} scroll={false}>
               <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-sage/15 text-[11px] font-bold text-sage">
                 {teamInitials(team.name)}
               </span>
@@ -76,7 +76,7 @@ export function TeamSwitcher({
               {team.id === active?.id ? (
                 <Check className="size-4 text-cobalt" />
               ) : null}
-            </IntentPrefetchLink>
+            </Link>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

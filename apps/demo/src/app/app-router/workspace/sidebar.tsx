@@ -11,7 +11,8 @@ import {
   UserCircle2,
   UserX,
 } from "lucide-react";
-import { useLinkStatus } from "next/link";
+import Link, { useLinkStatus } from "next/link";
+import { WorkspaceBrand } from "./brand";
 import type {
   CurrentUser,
   Insights,
@@ -30,7 +31,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { accent } from "@/lib/accent";
 import { cn } from "@/lib/utils";
-import { IntentPrefetchLink } from "./intent-prefetch-link";
 import { TeamSwitcher } from "./team-switcher";
 
 export function Sidebar({
@@ -59,15 +59,7 @@ export function Sidebar({
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
       <div className="flex h-14 items-center gap-2 px-4">
-        <span className="flex size-6 items-center justify-center rounded-md bg-cobalt text-sm font-bold text-primary-foreground">
-          A
-        </span>
-        <span className="text-sm font-semibold tracking-tight text-foreground">
-          App Router
-        </span>
-        <span className="ml-auto rounded-full border px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
-          props
-        </span>
+        <WorkspaceBrand />
       </div>
 
       <div className="px-3 pb-2">
@@ -230,7 +222,7 @@ function NavItem({
   href: string;
 }) {
   return (
-    <IntentPrefetchLink
+    <Link
       href={href}
       scroll={false}
       className="block w-full rounded-md"
@@ -243,7 +235,7 @@ function NavItem({
         tone={tone}
         isActive={isActive}
       />
-    </IntentPrefetchLink>
+    </Link>
   );
 }
 

@@ -1,7 +1,8 @@
 "use client";
 
 import { Check, ChevronDown, ListFilter, RotateCw, X } from "lucide-react";
-import { useLinkStatus } from "next/link";
+import Link, { useLinkStatus } from "next/link";
+import { useWorkspaceHrefs } from "./use-workspace-hrefs";
 import * as React from "react";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { useLabels, useProjects, useTasks } from "@/app/lane/api/hooks";
@@ -22,17 +23,13 @@ import {
   STATUS_ORDER,
 } from "@/lib/task-meta";
 import { cn } from "@/lib/utils";
-import { IntentPrefetchLink } from "./intent-prefetch-link";
 
-export function FilterBar({
-  filters,
-  filterHref,
-  resetHref,
-}: {
-  filters: TaskFilters;
-  filterHref: (filters: TaskFilters) => string;
-  resetHref: string;
-}) {
+export function FilterBar() {
+  const {
+    filters,
+    filterHref,
+    resetFiltersHref: resetHref,
+  } = useWorkspaceHrefs();
   const [optimisticFilters, addOptimisticFilterPatch] = React.useOptimistic(
     filters,
     (current, patch: Partial<TaskFilters>) => ({ ...current, ...patch }),
@@ -185,13 +182,13 @@ export function FilterBar({
           size="xs"
           className="text-muted-foreground"
         >
-          <IntentPrefetchLink
+          <Link
             href={resetHref}
             scroll={false}
             onClick={() => applyPatch(EMPTY_FILTERS)}
           >
             <ClearLabel />
-          </IntentPrefetchLink>
+          </Link>
         </Button>
       ) : null}
 
@@ -233,14 +230,14 @@ function ScopeLink({
   children: React.ReactNode;
 }) {
   return (
-    <IntentPrefetchLink
+    <Link
       href={href}
       scroll={false}
       className="rounded-md"
       onClick={navigateAction}
     >
       <ScopeLinkContent isActive={isActive}>{children}</ScopeLinkContent>
-    </IntentPrefetchLink>
+    </Link>
   );
 }
 
@@ -291,9 +288,9 @@ function FilterOptionLink({
       onSelect={(event) => event.preventDefault()}
       className="gap-2.5"
     >
-      <IntentPrefetchLink href={href} scroll={false} onClick={navigateAction}>
+      <Link href={href} scroll={false} onClick={navigateAction}>
         <FilterOptionContent checked={checked} icon={icon} label={label} />
-      </IntentPrefetchLink>
+      </Link>
     </DropdownMenuItem>
   );
 }
@@ -374,7 +371,7 @@ function Chip({
         <span className={cn("size-2 rounded-full", dotClass)} />
       ) : null}
       {label}
-      <IntentPrefetchLink
+      <Link
         href={removeHref}
         scroll={false}
         onClick={navigateAction}
@@ -382,7 +379,7 @@ function Chip({
         aria-label={`Remove ${label} filter`}
       >
         <ChipRemoveIcon />
-      </IntentPrefetchLink>
+      </Link>
     </span>
   );
 }

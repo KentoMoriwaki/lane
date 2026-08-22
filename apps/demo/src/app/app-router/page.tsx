@@ -1,15 +1,15 @@
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import {
-  getCachedCurrentUser,
-  getCachedInsights,
-  getCachedLabels,
-  getCachedMembers,
-  getCachedProjects,
-  getCachedTask,
-  getCachedTasks,
-  getCachedTeams,
-} from "@/app/lane/api/cached-endpoints";
+  readCurrentUser,
+  readInsights,
+  readLabels,
+  readMembers,
+  readProjects,
+  readTask,
+  readTasks,
+  readTeams,
+} from "@/app/lane/api/route-reads";
 import {
   buildWorkspaceSearch,
   getterFromRecord,
@@ -27,11 +27,11 @@ type PageProps = {
 /**
  * Plain App Router baseline for the server-owned Lane demo.
  *
- * Both routes use the exact same cached functions, cache tags, mutation
- * actions, latency, URL contract, and static-shell strategy. The difference is
- * only distribution: this route resolves ordinary values and passes them down
- * as props. There is no keyed client store, hydration publication, or external
- * reader hidden behind an adapter.
+ * Both routes use the exact same reads, mutation actions, latency, URL
+ * contract, and static-shell strategy. The difference is only distribution:
+ * this route resolves ordinary values and passes them down as props. There is
+ * no keyed client store, hydration publication, or external reader hidden
+ * behind an adapter.
  */
 export default function Page({ searchParams }: PageProps) {
   return (
@@ -43,25 +43,33 @@ export default function Page({ searchParams }: PageProps) {
 
 async function WorkspaceContent({ searchParams }: PageProps) {
   const requested = parseWorkspaceState(getterFromRecord(await searchParams));
-  const currentUser = await getCachedCurrentUser("");
-  const teams = await getCachedTeams(currentUser.id);
+  const currentUser = await readCurrentUser("");
+  // Started before the guard so the common navigation — a filter, which never
+  // names a team — pays one round trip for the whole workspace instead of
+  // waiting on the roster first.
+  const teamsRead = readTeams(currentUser.id);
 
-  if (requested.teamId && !teams.some((team) => team.id === requested.teamId)) {
-    const search = buildWorkspaceSearch({ ...requested, teamId: null });
-    redirect(search ? `/app-router?${search}` : "/app-router");
+  if (requested.teamId) {
+    const roster = await teamsRead;
+
+    if (!roster.some((team) => team.id === requested.teamId)) {
+      const search = buildWorkspaceSearch({ ...requested, teamId: null });
+      redirect(search ? `/app-router?${search}` : "/app-router");
+    }
   }
 
   const activeTeamId = requested.teamId ?? currentUser.defaultTeamId;
   const ctx = { userId: currentUser.id, teamId: activeTeamId };
-  const [tasks, insights, projects, labels, members, selectedTask] =
+  const [teams, tasks, insights, projects, labels, members, selectedTask] =
     await Promise.all([
-      getCachedTasks(ctx, requested.filters),
-      getCachedInsights(ctx),
-      getCachedProjects(ctx),
-      getCachedLabels(ctx),
-      getCachedMembers(ctx),
+      teamsRead,
+      readTasks(ctx, requested.filters),
+      readInsights(ctx),
+      readProjects(ctx),
+      readLabels(ctx),
+      readMembers(ctx),
       requested.selectedTaskId
-        ? getCachedTask(ctx, requested.selectedTaskId)
+        ? readTask(ctx, requested.selectedTaskId)
         : Promise.resolve(null),
     ]);
 

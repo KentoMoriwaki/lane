@@ -44,6 +44,7 @@ export default defineConfig({
       // visibly slower than the co-located server without making the SPA
       // ownership checks spend seconds on each bootstrap wave.
       TEAM_API_READ_DELAY_MS: "0",
+      TEAM_API_SESSION_DELAY_MS: "0",
       TEAM_API_WRITE_DELAY_MS: "0",
       TEAM_API_PICKER_DELAY_MS: "0",
       TEAM_API_LIST_DELAY_MS: "0",

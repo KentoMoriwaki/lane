@@ -3,10 +3,11 @@
 import { ArrowRight } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { useWorkspace } from "./workspace-provider";
+import { useWorkspace, useSessionUser } from "./workspace-provider";
 
 export function SignInScreen() {
-  const { sessionUser, signIn } = useWorkspace();
+  const { signIn } = useWorkspace();
+  const sessionUser = useSessionUser();
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">

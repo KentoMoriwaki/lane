@@ -22,7 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
+import { DetailSkeleton } from "./skeletons";
 import { Textarea } from "@/components/ui/textarea";
 import { accent } from "@/lib/accent";
 import { formatRelative, toDateInputValue, fromDateInputValue } from "@/lib/format";
@@ -35,14 +35,12 @@ import { LabelPicker } from "./label-picker";
 import { PriorityControl } from "./priority-control";
 import { ProjectPicker } from "./project-picker";
 import { StatusControl } from "./status-control";
+import { useWorkspaceUrl } from "./use-workspace-url";
 
-export function TaskDetailPanel({
-  taskId,
-  onClose,
-}: {
-  taskId: string | null;
-  onClose: () => void;
-}) {
+export function TaskDetailPanel() {
+  const { selectedTaskId: taskId, selectTask } = useWorkspaceUrl();
+  const onClose = React.useCallback(() => selectTask(null), [selectTask]);
+
   if (!taskId) {
     return (
       <DetailShell>
@@ -578,18 +576,3 @@ function DescriptionEditor({
   );
 }
 
-function DetailSkeleton() {
-  return (
-    <div className="space-y-5 p-4">
-      <Skeleton className="h-6 w-3/4" />
-      <Skeleton className="h-20 w-full" />
-      <Separator />
-      {Array.from({ length: 5 }).map((_, index) => (
-        <div key={index} className="grid grid-cols-[88px_1fr] items-center gap-3">
-          <Skeleton className="h-3 w-16" />
-          <Skeleton className="h-8 w-full" />
-        </div>
-      ))}
-    </div>
-  );
-}

@@ -2,12 +2,11 @@
 
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { useInsights } from "@/app/lane/api/hooks";
-import { Skeleton } from "@/components/ui/skeleton";
 import { accent, type AccentToken } from "@/lib/accent";
 import { cn } from "@/lib/utils";
-import { useLinkStatus } from "next/link";
+import Link, { useLinkStatus } from "next/link";
+import { useWorkspaceHrefs } from "./use-workspace-hrefs";
 import * as React from "react";
-import { IntentPrefetchLink } from "./intent-prefetch-link";
 
 type InsightCard = {
   key: string;
@@ -17,13 +16,8 @@ type InsightCard = {
   view: Partial<TaskFilters>;
 };
 
-export function InsightStrip({
-  filters,
-  viewHref,
-}: {
-  filters: TaskFilters;
-  viewHref: (view: Partial<TaskFilters>) => string;
-}) {
+export function InsightStrip() {
+  const { filters, viewHref } = useWorkspaceHrefs();
   const { promise } = useInsights();
   const { data } = React.use(promise);
 
@@ -72,13 +66,13 @@ function InsightCardButton({
   isActive: boolean;
 }) {
   return (
-    <IntentPrefetchLink
+    <Link
       href={href}
       scroll={false}
       className="group min-w-[124px] flex-1 rounded-lg"
     >
       <InsightCardContent card={card} isActive={isActive} />
-    </IntentPrefetchLink>
+    </Link>
   );
 }
 
@@ -132,16 +126,6 @@ function sameValues<T>(left: T[], right: T[]): boolean {
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
-  );
-}
-
-export function InsightStripSkeleton() {
-  return (
-    <div className="flex gap-2 overflow-hidden border-b border-border px-4 py-3">
-      {Array.from({ length: 6 }).map((_, index) => (
-        <Skeleton key={index} className="h-[58px] w-32 shrink-0 rounded-lg" />
-      ))}
-    </div>
   );
 }
 

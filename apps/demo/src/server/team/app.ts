@@ -42,6 +42,15 @@ import { teamRoutes } from "./routes";
  * Transport is added separately by the middleware below.
  */
 const readDelayMs = readMilliseconds(process.env.TEAM_API_READ_DELAY_MS, 20);
+// Resolving who is asking gates every other read on a server-owned route, so
+// modelling it as an expensive fetch overstates what a real app pays: a session
+// is a cookie or a token check, not a workspace query. Its own knob keeps it
+// that way even when the generic read delay is turned up to make loading states
+// visible.
+const sessionDelayMs = readMilliseconds(
+  process.env.TEAM_API_SESSION_DELAY_MS,
+  50,
+);
 const writeDelayMs = readMilliseconds(process.env.TEAM_API_WRITE_DELAY_MS, 40);
 // Selectors behind type-ahead pickers stay snappy.
 const pickerDelayMs = readMilliseconds(
@@ -113,6 +122,10 @@ export { app };
 function readRequestDelay(method: string, path: string) {
   if (method !== "GET") {
     return writeDelayMs;
+  }
+
+  if (path === "/api/me") {
+    return sessionDelayMs;
   }
 
   // Selectors that back type-ahead pickers stay snappy.

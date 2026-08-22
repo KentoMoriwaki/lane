@@ -13,7 +13,12 @@ import { parseWorkspaceState, getterFromRecord } from "@/app/lane/api/url-state"
 import { FilterBar } from "@/app/lane/workspace/filter-bar";
 import { InsightStrip } from "@/app/lane/workspace/insight-strip";
 import { Sidebar } from "@/app/lane/workspace/sidebar";
-import { TaskDetailPanel } from "@/app/lane/workspace/task-detail-panel";
+import {
+  TaskDetailPage,
+  TaskDetailPanel,
+  TaskMissingPage,
+  TaskMissingPanel,
+} from "@/app/lane/workspace/task-detail-panel";
 import { TaskList } from "@/app/lane/workspace/task-list";
 
 /**
@@ -33,8 +38,14 @@ import { TaskList } from "@/app/lane/workspace/task-list";
  *
  * What a rerender costs is not the whole file, though. `readProjects`,
  * `readLabels` and `readMembers` are `"use cache"` (see `api/route-reads.ts`),
- * so a background rerender for stale insights re-reads the tasks, the selected
- * task and the insights, and nothing else reaches the API.
+ * so a background rerender for stale insights re-reads the tasks, the project
+ * counts, the open task and the insights, and nothing else reaches the API.
+ *
+ * The last region here belongs to a different route. `TaskDetailRegion` is
+ * rendered by `task/[id]/page.tsx` and by its intercepted twin under
+ * `@modal/(.)task/[id]`, and it publishes the same keys for both — the surface
+ * only decides which shell is drawn around the detail and how an edit made
+ * there converges (`api/hooks.ts`).
  *
  * Each region resolves the session itself rather than receiving it. That is
  * what keeps the frame free of awaits, and `getSession` is `cache`d so the
@@ -126,17 +137,34 @@ export async function TaskListRegion({ searchParams }: RegionProps) {
   );
 }
 
-export async function TaskDetailRegion({ searchParams }: RegionProps) {
-  const state = await requested(searchParams);
+/** Which route is rendering the detail — see `TaskDetailRegion`. */
+export type TaskSurface = "panel" | "page";
+
+export type TaskRegionProps = RegionProps & {
+  params: Promise<{ id: string }>;
+  surface: TaskSurface;
+};
+
+export async function TaskDetailRegion({
+  params,
+  searchParams,
+  surface,
+}: TaskRegionProps) {
+  const [{ id }, state] = await Promise.all([params, requested(searchParams)]);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const [members, projects, labels, selectedTask] = await Promise.all([
+  const [members, projects, labels, task] = await Promise.all([
     readMembers(ctx),
     readProjects(ctx),
     readLabels(ctx),
-    state.selectedTaskId
-      ? readTask(ctx, state.selectedTaskId)
-      : Promise.resolve(null),
+    readTask(ctx, id),
   ]);
+
+  // A task deleted from another tab, or an id someone typed. Nothing is
+  // published for it: an `external` read with no publication would wait for one
+  // that is never coming, so the surface says so instead.
+  if (!task) {
+    return surface === "panel" ? <TaskMissingPanel /> : <TaskMissingPage />;
+  }
 
   return (
     <LaneHydration
@@ -144,10 +172,14 @@ export async function TaskDetailRegion({ searchParams }: RegionProps) {
         members,
         projects,
         labels,
-        selectedTask,
+        task,
       })}
     >
-      <TaskDetailPanel />
+      {surface === "panel" ? (
+        <TaskDetailPanel taskId={task.id} />
+      ) : (
+        <TaskDetailPage taskId={task.id} />
+      )}
     </LaneHydration>
   );
 }

@@ -10,19 +10,28 @@ import { useSessionUser, useWorkspaceRefresh } from "./workspace-provider";
 import { EmptyState, ErrorChip } from "./feedback";
 import { TaskRow } from "./task-row";
 import { hasActiveFilters } from "./use-workspace-hrefs";
-import { useWorkspaceUrl } from "./use-workspace-url";
+import { useSelectedTaskId, useWorkspaceUrl } from "./use-workspace-url";
 
+/**
+ * The list, and what a row now is: a `<Link>` to `/lane/task/<id>`.
+ *
+ * Opening a task is a navigation rather than a state change. Clicked from here
+ * it is intercepted into the `@modal` slot and drawn as the panel beside this
+ * list, which is why this component neither renders the detail nor knows that
+ * it exists — it only says which task each row points at, and reads the current
+ * pathname to know which of them is the open one.
+ */
 export function TaskList() {
-  const { filters, selectedTaskId, selectTask, resetFilters } =
-    useWorkspaceUrl();
+  const { filters, taskHref, closeTask, resetFilters } = useWorkspaceUrl();
+  const selectedTaskId = useSelectedTaskId();
   const activeFilters = hasActiveFilters(filters);
-  const onSelectTask = selectTask;
   const onResetFilters = resetFilters;
-  const onClearSelection = React.useCallback(
+  const onDeleted = React.useCallback(
     (taskId: string) => {
-      if (selectedTaskId === taskId) selectTask(null);
+      // Only the row that is currently open takes the view with it.
+      if (selectedTaskId === taskId) closeTask();
     },
-    [selectedTaskId, selectTask],
+    [closeTask, selectedTaskId],
   );
   const { id: userId } = useSessionUser();
   const { refresh, isRefreshing, error } = useWorkspaceRefresh();
@@ -93,8 +102,8 @@ export function TaskList() {
             items={group.items}
             currentUserId={userId}
             selectedTaskId={selectedTaskId}
-            onSelectTask={onSelectTask}
-            onClearSelection={onClearSelection}
+            taskHref={taskHref}
+            onDeleted={onDeleted}
           />
         ))}
       </div>
@@ -202,15 +211,15 @@ function PriorityGroup({
   items,
   currentUserId,
   selectedTaskId,
-  onSelectTask,
-  onClearSelection,
+  taskHref,
+  onDeleted,
 }: {
   label: string;
   items: Task[];
   currentUserId: string;
   selectedTaskId: string | null;
-  onSelectTask: (taskId: string) => void;
-  onClearSelection: (taskId: string) => void;
+  taskHref: (taskId: string) => string;
+  onDeleted: (taskId: string) => void;
 }) {
   return (
     <section>
@@ -233,8 +242,8 @@ function PriorityGroup({
             task={task}
             isMine={task.assignee?.id === currentUserId}
             isSelected={task.id === selectedTaskId}
-            onSelect={() => onSelectTask(task.id)}
-            deleteAction={onClearSelection}
+            href={taskHref(task.id)}
+            deleteAction={onDeleted}
           />
         ))}
       </div>

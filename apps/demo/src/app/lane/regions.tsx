@@ -64,7 +64,10 @@ async function requested(searchParams: RegionProps["searchParams"]) {
 export async function SidebarRegion({ searchParams }: RegionProps) {
   const state = await requested(searchParams);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const [currentUser, teams, insights, projects, projectCounts, labels] =
+  // More than the sidebar draws: this is where the list route publishes its
+  // reference data, and the create dialog's pickers read it from here (see
+  // `workspaceSnapshots.sidebar`). Three of the five are cached reads.
+  const [currentUser, teams, insights, projects, projectCounts, labels, members] =
     await Promise.all([
       getSession(),
       getTeams(),
@@ -72,6 +75,7 @@ export async function SidebarRegion({ searchParams }: RegionProps) {
       readProjects(ctx),
       readProjectTaskCounts(ctx),
       readLabels(ctx),
+      readMembers(ctx),
     ]);
 
   return (
@@ -83,6 +87,7 @@ export async function SidebarRegion({ searchParams }: RegionProps) {
         projects,
         projectCounts,
         labels,
+        members,
       })}
     >
       <Sidebar />
@@ -156,12 +161,16 @@ export async function TaskDetailRegion({
 }: TaskRegionProps) {
   const [{ id }, state] = await Promise.all([params, requested(searchParams)]);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const [members, projects, projectCounts, labels, task] = await Promise.all([
+  // The counts are read here only for the page, which has no sidebar beside it
+  // to have published them. In the panel the list route already did, and this
+  // region reading them again would cost a second trip to the source for the
+  // same number in the same render.
+  const [members, projects, labels, task, projectCounts] = await Promise.all([
     readMembers(ctx),
     readProjects(ctx),
-    readProjectTaskCounts(ctx),
     readLabels(ctx),
     readTask(ctx, id),
+    surface === "page" ? readProjectTaskCounts(ctx) : Promise.resolve(undefined),
   ]);
 
   // A task deleted from another tab, or an id someone typed. Nothing is

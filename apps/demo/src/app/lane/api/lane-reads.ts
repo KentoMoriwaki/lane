@@ -92,6 +92,17 @@ export const workspaceReads = {
  * it, and `data` is checked against what that read loads.
  */
 export const workspaceSnapshots = {
+  /**
+   * The list route's reference data, published in one place.
+   *
+   * It is more than the sidebar draws, and deliberately so: the create dialog
+   * lives in the frame, which is not a region and publishes nothing, and its
+   * three pickers read members, projects, the counts and labels. The detail
+   * used to publish those as a region of this route; it is its own route now,
+   * so the list route has to carry them itself or the pickers wait for a
+   * publication that never comes. All four are `"use cache"` reads or the one
+   * dynamic count, so saying so here costs the frame nothing.
+   */
   sidebar(seeds: {
     currentUser: CurrentUser;
     teams: TeamSummary[];
@@ -99,6 +110,7 @@ export const workspaceSnapshots = {
     projects: ProjectRef[];
     projectCounts: ProjectTaskCounts;
     labels: TeamLabel[];
+    members: TeamMember[];
   }): LaneHydrationSnapshots {
     return {
       entries: [
@@ -108,6 +120,7 @@ export const workspaceSnapshots = {
         laneSnapshot(workspaceReads.projects(), seeds.projects),
         laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
         laneSnapshot(workspaceReads.labels(), seeds.labels),
+        laneSnapshot(workspaceReads.members(), seeds.members),
       ],
     };
   },
@@ -149,17 +162,28 @@ export const workspaceSnapshots = {
   detail(seeds: {
     members: TeamMember[];
     projects: ProjectRef[];
-    projectCounts: ProjectTaskCounts;
+    /**
+     * Only the page surface passes these. In the panel the sidebar is on
+     * screen and has already published them, and the count is the one
+     * dynamic read of the four — asking for it twice in one render would be
+     * two trips to the source for one number.
+     */
+    projectCounts?: ProjectTaskCounts;
     labels: TeamLabel[];
     task: Task;
   }): LaneHydrationSnapshots {
     const entries: LaneSnapshot[] = [
       laneSnapshot(workspaceReads.members(), seeds.members),
       laneSnapshot(workspaceReads.projects(), seeds.projects),
-      laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
       laneSnapshot(workspaceReads.labels(), seeds.labels),
       laneSnapshot(workspaceReads.task(seeds.task.id), seeds.task),
     ];
+
+    if (seeds.projectCounts) {
+      entries.push(
+        laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
+      );
+    }
 
     return { entries };
   },

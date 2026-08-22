@@ -154,7 +154,10 @@ export function TaskDetailBoundary({
 
 function DetailPanelShell({ children }: { children: React.ReactNode }) {
   return (
-    <aside className="scrollbar-calm hidden w-[360px] shrink-0 overflow-y-auto border-l border-border bg-surface lg:block">
+    <aside
+      data-testid="task-panel"
+      className="scrollbar-calm hidden w-[360px] shrink-0 overflow-y-auto border-l border-border bg-surface lg:block"
+    >
       {children}
     </aside>
   );
@@ -162,7 +165,10 @@ function DetailPanelShell({ children }: { children: React.ReactNode }) {
 
 function DetailPageShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="scrollbar-calm min-w-0 flex-1 overflow-y-auto bg-background">
+    <div
+      data-testid="task-page"
+      className="scrollbar-calm min-w-0 flex-1 overflow-y-auto bg-background"
+    >
       <div className="mx-auto w-full max-w-2xl px-4 py-6">
         <BackToList />
         <div className="mt-4 overflow-hidden rounded-xl border border-border bg-surface">

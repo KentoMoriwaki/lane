@@ -266,9 +266,11 @@ test("an inline status change lands in the row where it already was", async ({
   page,
   request,
 }) => {
-  // Entered by URL rather than by clicking the row: see the `fixme` below for
-  // what an in-app navigation does to this today.
-  await gotoWorkspace(page, `/lane?task=${ACME_TASK_ID}`);
+  // Opened the way a user opens it: a click on the row, which is an in-app
+  // navigation and therefore a republication. The reader has to survive that to
+  // converge at all.
+  await gotoWorkspace(page);
+  await taskRow(page, ACME_TASK).click();
   await expect(detailTitle(page)).toHaveValue(ACME_TASK);
 
   const before = await rowOrder(page);
@@ -308,75 +310,61 @@ test("an inline status change lands in the row where it already was", async ({
 });
 
 /**
- * The half of the convergence that a publication has to have reached a reader
- * for — and the one thing on this route that does not work yet.
+ * The half of the convergence a reader has to outlive a republication for.
  *
- * `use-lane`'s reader subscription is opened in a layout effect and closed in a
- * passive one, and both depend on `sourceKey` — the identity of the publication
- * a reader rendered under. When only `sourceKey` changes, the opening half
- * early-returns (its guard compares the lane and the key, both unchanged) while
- * the closing half still runs, so a reader that has seen one republication ends
- * up subscribed to nothing. `lane.set` / `updateAll` / `invalidate` then reach
- * no reader: the row keeps its old value and the owner is never asked for the
- * counters.
- *
- * Every in-app navigation republishes, so this is the state of any reader after
- * one. Measured with that guard extended to `sourceKey`, both tests below pass:
- * one `/api/insights`, no read of a cached source, and the row takes the new
- * title. Reached by URL instead — the two tests above — the reader is still on
- * its first publication and converges as designed.
+ * Both of these reach the panel through an in-app navigation — a create, which
+ * is a Server Action whose response republishes every key on the route. A
+ * reader that lost its subscription to that publication would keep the old row
+ * and never ask for the counters, which is exactly what these two watch for.
  */
-test.fixme(
-  "an edit after an in-app navigation reaches the list",
-  async ({ page }) => {
-    await gotoWorkspace(page);
+test("an edit after an in-app navigation reaches the list", async ({ page }) => {
+  await gotoWorkspace(page);
 
-    const stamp = Date.now();
-    const original = `E2E rename source ${stamp}`;
-    const renamed = `E2E renamed destination ${stamp}`;
-    await createTask(page, original);
+  const stamp = Date.now();
+  const original = `E2E rename source ${stamp}`;
+  const renamed = `E2E renamed destination ${stamp}`;
+  await createTask(page, original);
 
-    await detailTitle(page).fill(renamed);
-    await detailTitle(page).press("Enter");
+  await detailTitle(page).fill(renamed);
+  await detailTitle(page).press("Enter");
 
-    await expect(page.getByText("Saved")).toBeVisible();
-    await expect(detailTitle(page)).toHaveValue(renamed);
-    await expect(taskRow(page, renamed)).toBeVisible();
-    await expect(taskRow(page, original)).toBeHidden();
-  },
-);
+  await expect(page.getByText("Saved")).toBeVisible();
+  await expect(detailTitle(page)).toHaveValue(renamed);
+  await expect(taskRow(page, renamed)).toBeVisible();
+  await expect(taskRow(page, original)).toBeHidden();
+});
 
-test.fixme(
-  "a task edit asks the owner for the counters exactly once",
-  async ({ page, request }) => {
-    await gotoWorkspace(page);
-    const title = `E2E counter task ${Date.now()}`;
-    await createTask(page, title);
+test("a task edit asks the owner for the counters exactly once", async ({
+  page,
+  request,
+}) => {
+  await gotoWorkspace(page);
+  const title = `E2E counter task ${Date.now()}`;
+  await createTask(page, title);
 
-    const inProgressCard = page.getByRole("link", { name: /In progress/ });
-    const before = Number((await inProgressCard.innerText()).match(/\d+/)?.[0]);
+  const inProgressCard = page.getByRole("link", { name: /In progress/ });
+  const before = Number((await inProgressCard.innerText()).match(/\d+/)?.[0]);
 
-    await resetRequestDiagnostics(request);
-    await chooseAnotherStatus(
-      page,
-      detailPanel(page).getByRole("button", { name: /^Status:/ }),
-    );
-    await expect(page.getByText("Saved")).toBeVisible();
+  await resetRequestDiagnostics(request);
+  await chooseAnotherStatus(
+    page,
+    detailPanel(page).getByRole("button", { name: /^Status:/ }),
+  );
+  await expect(page.getByText("Saved")).toBeVisible();
 
-    await expect(async () => {
-      const text = await inProgressCard.innerText();
-      expect(Number(text.match(/\d+/)?.[0])).toBe(before + 1);
-    }).toPass();
+  await expect(async () => {
+    const text = await inProgressCard.innerText();
+    expect(Number(text.match(/\d+/)?.[0])).toBe(before + 1);
+  }).toPass();
 
-    // One ask, one rerender: the insights are read once and the three cached
-    // sources are not read at all.
-    const records = await readRequestDiagnostics(request);
-    expect(serverReadsOf(records, "/api/insights")).toHaveLength(1);
-    for (const path of CACHED_READ_PATHS) {
-      expect(serverReadsOf(records, path)).toHaveLength(0);
-    }
-  },
-);
+  // One ask, one rerender: the insights are read once and the three cached
+  // sources are not read at all.
+  const records = await readRequestDiagnostics(request);
+  expect(serverReadsOf(records, "/api/insights")).toHaveLength(1);
+  for (const path of CACHED_READ_PATHS) {
+    expect(serverReadsOf(records, path)).toHaveLength(0);
+  }
+});
 
 test("deleting a task drops its row and clears the detail", async ({
   page,

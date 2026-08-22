@@ -11,6 +11,7 @@ import type {
 } from "@/server/api";
 import { useLane, useLaneInstance, type Lane } from "use-lane";
 import * as React from "react";
+import type { TaskSurface } from "@/app/lane/regions";
 import { useWorkspaceCtx } from "@/app/lane/workspace/workspace-provider";
 import {
   createLabelAction,
@@ -83,7 +84,11 @@ export function useInsights() {
  * key that has to change is either that task or something derived from it. So
  * the hook calls the embedded API from the browser — same `endpoints.ts` the
  * route reads through, same typed client, no Server Action in the path — and
- * then converges the lane itself:
+ * then converges the lane itself. What that convergence *is* depends on where
+ * the edit was made, which is the `surface` every one of these hooks takes:
+ *
+ * **`"panel"` — the list is on screen beside the detail.** The intercepted
+ * panel, and the status control on a row.
  *
  * - `set(task(id))` — the entity that came back, in place, no round trip;
  * - `updateAll(["tasks"])` — the same row patched inside every list holding it,
@@ -94,81 +99,110 @@ export function useInsights() {
  *   compute. Marking them is all this does: the mounted strip re-reads, Lane
  *   asks the owner once, and the route's next publication answers.
  *
- * That last line is the only re-render, it happens in the background, and it
- * carries the whole route with it — the sorted list, the counters, the sidebar.
- * The client never has to decide what "derives" means; it only has to say which
- * key it could not compute.
+ * **`"page"` — no list is on screen.** The full task page at
+ * `/lane/task/<id>`, which is what a direct visit, a reload, or a shared link
+ * renders.
+ *
+ * - `set(task(id))` — the same;
+ * - `invalidateAll(["tasks"])` — every list entry this lane holds is marked
+ *   stale rather than rewritten. Patching a row nobody is looking at would only
+ *   guess at a sort order the server owns, and there is no jump to avoid;
+ * - `invalidate(insights())` — the same.
+ *
+ * Nothing is *asked* by the second form while the page is up: a marked key with
+ * no reader stays marked. The ask comes when a list is revealed again — the
+ * reader finds its entry stale, suspends into the list's fallback, Lane asks
+ * the owner once, and the publication that answers is a freshly sorted list
+ * with the edited task in its new place. That is the same shape a
+ * `revalidatePath` and a Back would have produced, arrived at without reading
+ * anything until someone looked.
+ *
+ * Which list entries the page's lane actually holds depends on how it was
+ * reached: a reload lands on a lane with none, and the navigation back to the
+ * list reads it fresh anyway. Marking them is what makes the case where it
+ * *does* hold one — a soft navigation out to the page and back — behave the
+ * same as the case where it does not.
+ *
+ * A note on getting *into* the panel: it opens by `<Link>`, on purpose. Browser
+ * back and forward into an intercepted URL always re-suspend, because the RSC
+ * payload for it varies on `Next-Url` and the router has no cached copy of the
+ * intercepted form (measured in `apps/activity-lab`; Next's behavior, not
+ * Lane's).
  *
  * **Creating anything: yes.** A new task, project, or label has a *position*
  * nobody here can work out — where it sorts, which pickers list it. Those go
  * through `actions.ts`, and the action's response is the re-rendered route.
  *
  * What is left over — the API round trip on an inline edit — is covered by
- * `useOptimistic` over the read value in the detail panel and the row, which is
- * a display concern and never a write.
+ * `useOptimistic` over the read value in the detail and the row, which is a
+ * display concern and never a write.
  */
 
-export function useUpdateTask(taskId: string) {
+export function useUpdateTask(taskId: string, surface: TaskSurface) {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
   return React.useCallback(
     async (input: UpdateTaskInput): Promise<Task> => {
       const task = await updateTask(ctx, taskId, input);
-      convergeOnTask(lane, task);
+      convergeOnTask(lane, task, surface);
 
       return task;
     },
-    [ctx, lane, taskId],
+    [ctx, lane, surface, taskId],
   );
 }
 
-export function useDeleteTask() {
+export function useDeleteTask(surface: TaskSurface) {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
   return React.useCallback(
     async (taskId: string): Promise<void> => {
       await deleteTask(ctx, taskId);
-      lane.updateAll<Task[]>(["tasks"], (tasks) => withoutRow(tasks, taskId));
+      if (surface === "panel") {
+        lane.updateAll<Task[]>(["tasks"], (tasks) => withoutRow(tasks, taskId));
+      } else {
+        lane.invalidateAll(["tasks"]);
+      }
       lane.invalidate(workspaceReads.insights().key);
-      // The `task(id)` entry is left where it is rather than removed. The panel
-      // showing it is still mounted while the selection clears, and removing a
-      // key under its reader would suspend it into a skeleton on the way out.
-      // It is a published value with nothing left to publish it: it expires
-      // with the payload that seeded it.
+      // The `task(id)` entry is left where it is rather than removed. The
+      // detail showing it is still mounted while the view moves back to the
+      // list, and removing a key under its reader would suspend it into a
+      // skeleton on the way out. It is a published value with nothing left to
+      // publish it: it expires with the payload that seeded it.
     },
-    [ctx, lane],
+    [ctx, lane, surface],
   );
 }
 
-export function useAddTaskLabel(taskId: string) {
+export function useAddTaskLabel(taskId: string, surface: TaskSurface) {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
   return React.useCallback(
     async (label: TeamLabel): Promise<Task> => {
       const task = await addTaskLabel(ctx, taskId, label.id);
-      convergeOnTask(lane, task);
+      convergeOnTask(lane, task, surface);
 
       return task;
     },
-    [ctx, lane, taskId],
+    [ctx, lane, surface, taskId],
   );
 }
 
-export function useRemoveTaskLabel(taskId: string) {
+export function useRemoveTaskLabel(taskId: string, surface: TaskSurface) {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
   return React.useCallback(
     async (labelId: string): Promise<Task> => {
       const task = await removeTaskLabel(ctx, taskId, labelId);
-      convergeOnTask(lane, task);
+      convergeOnTask(lane, task, surface);
 
       return task;
     },
-    [ctx, lane, taskId],
+    [ctx, lane, surface, taskId],
   );
 }
 
@@ -209,12 +243,24 @@ export function useCreateProject() {
 
 /**
  * What a confirmed task does to the lane. One entity, three sentences: this is
- * it, it looks like this wherever it is listed, and the numbers computed from
- * it are stale.
+ * it, this is what the lists holding it should do about it, and the numbers
+ * computed from it are stale.
+ *
+ * Only the middle sentence differs by surface, and it is the same distinction
+ * either way — *is anyone looking at a list right now?* With the list beside
+ * the detail, rewriting the row is what keeps it from moving under the cursor.
+ * Without one, marking is strictly better: no order is guessed, and nothing is
+ * read until a list is on screen to read it for.
  */
-function convergeOnTask(lane: Lane, task: Task) {
+function convergeOnTask(lane: Lane, task: Task, surface: TaskSurface) {
   lane.set(workspaceReads.task(task.id).key, task);
-  lane.updateAll<Task[]>(["tasks"], (tasks) => withRowPatched(tasks, task));
+
+  if (surface === "panel") {
+    lane.updateAll<Task[]>(["tasks"], (tasks) => withRowPatched(tasks, task));
+  } else {
+    lane.invalidateAll(["tasks"]);
+  }
+
   lane.invalidate(workspaceReads.insights().key);
 }
 

@@ -37,12 +37,10 @@ import { TaskList } from "@/app/lane/workspace/task-list";
  * key a mutation marked stale — renders this whole file, and every region
  * republishes. It simply arrives in pieces instead of all at once.
  *
- * What a rerender costs is not the whole file, though. `readProjects`,
- * `readLabels` and `readMembers` are `"use cache"` (see `api/route-reads.ts`),
- * so a render re-reads the tasks, the project counts, the open task and the
- * insights, and nothing else reaches the API. Which is a cost worth knowing
- * and mostly worth not paying: an inline edit converges from the write's own
- * response and asks for no render at all (`api/hooks.ts`).
+ * Every region read is dynamic, so a rerender reaches the current source for
+ * every value it republishes. That cost is deliberately visible in this demo;
+ * an inline edit avoids it entirely when the write's response already answers
+ * every key it moved (`api/hooks.ts`).
  *
  * The last region here belongs to a different route. `TaskDetailRegion` is
  * rendered by `task/[id]/page.tsx` and by its intercepted twin under
@@ -68,7 +66,7 @@ export async function SidebarRegion({ searchParams }: RegionProps) {
   const ctx = await getWorkspaceCtx(state.teamId);
   // More than the sidebar draws: this is where the list route publishes its
   // reference data, and the create dialog's pickers read it from here (see
-  // `workspaceSnapshots.sidebar`). Three of the five are cached reads.
+  // `workspaceSnapshots.sidebar`).
   const [currentUser, teams, insights, projects, projectCounts, labels, members] =
     await Promise.all([
       getSession(),

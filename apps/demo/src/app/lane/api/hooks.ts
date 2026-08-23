@@ -87,9 +87,9 @@ export function useProjects() {
 }
 
 /**
- * The task counts, read apart from the projects they belong to. Two reads
- * because they have two lifetimes — the roster is cached, the counts are
- * derived from tasks and change whenever one does.
+ * The task counts, read apart from the project roster. They are separate Lane
+ * keys so a task mutation can publish its confirmed counts without replacing
+ * the project metadata beside them.
  */
 export function useProjectCounts() {
   return useLane(workspaceReads.projectCounts());

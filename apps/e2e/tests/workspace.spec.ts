@@ -36,14 +36,19 @@ const ACME_PAGE_TWO_TASK_ID = "task_empty_states";
 const SEARCH_PLACEHOLDER = "Search tasks, labels…";
 
 /**
- * The three reads `/lane` serves from `"use cache"`. Nothing the browser
- * mutates lives in them, so no rerender this route asks for may re-read one.
+ * The reference reads `/lane` resolves dynamically with the rest of each route
+ * generation. They distinguish a real rerender from a mutation that converged
+ * entirely from its own response.
  */
-const CACHED_READ_PATHS = ["/api/projects", "/api/labels", "/api/members"];
+const DYNAMIC_REFERENCE_READ_PATHS = [
+  "/api/projects",
+  "/api/labels",
+  "/api/members",
+];
 
 /**
- * The counts that used to ride inside the cached roster. They are their own
- * dynamic read now, so a task edit moves them without expiring anything.
+ * The task-derived counts that are separate from the project roster. A task
+ * edit can publish them from its response without replacing the roster.
  */
 const PROJECT_COUNTS_PATH = "/api/projects/counts";
 
@@ -428,14 +433,14 @@ test("search filters the task list", async ({ page }) => {
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
-test("a load reads the dynamic sources and takes the rest from the cache", async ({
+test("a load reads every dynamic source", async ({
   page,
   request,
 }) => {
   // Each read runs once per render pass however many regions ask for it — the
   // task list and the filter bar share one `/api/tasks`, the sidebar and the
-  // strip one `/api/insights`. The three reference reads run no times at all:
-  // some earlier render filled them and nothing has expired their tags.
+  // strip one `/api/insights`. The reference reads are dynamic too, so a warm
+  // load still reaches each of their sources.
   await resetRequestDiagnostics(request);
   await gotoWorkspace(page, "/lane");
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
@@ -443,20 +448,21 @@ test("a load reads the dynamic sources and takes the rest from the cache", async
   const records = await readRequestDiagnostics(request);
   expect(serverReadsOf(records, "/api/tasks")).toHaveLength(1);
   expect(serverReadsOf(records, "/api/insights")).toHaveLength(1);
-  for (const path of CACHED_READ_PATHS) {
-    expect(serverReadsOf(records, path), `${path} on a warm load`).toHaveLength(
-      0,
-    );
+  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
+    expect(
+      serverReadsOf(records, path).length,
+      `${path} on a warm load`,
+    ).toBeGreaterThan(0);
   }
 });
 
-test("a rerender re-reads what the browser can change and nothing else", async ({
+test("a rerender re-reads every published source", async ({
   page,
   request,
 }) => {
   // A filter is a navigation, which renders the whole route — the same work a
-  // create's rerender does. What it may not do is read the three sources
-  // behind `"use cache"`: nothing that changes them has happened.
+  // create's rerender does. Every read is dynamic, including reference data
+  // the filter did not change.
   await gotoWorkspace(page);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
@@ -467,10 +473,11 @@ test("a rerender re-reads what the browser can change and nothing else", async (
 
   const records = await readRequestDiagnostics(request);
   expect(serverReadsOf(records, "/api/tasks").length).toBeGreaterThan(0);
-  for (const path of CACHED_READ_PATHS) {
-    expect(serverReadsOf(records, path), `${path} on a rerender`).toHaveLength(
-      0,
-    );
+  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
+    expect(
+      serverReadsOf(records, path).length,
+      `${path} on a rerender`,
+    ).toBeGreaterThan(0);
   }
 });
 
@@ -516,7 +523,7 @@ test("an inline status change lands in the row where it already was", async ({
   expect(serverReadsOf(records, "/api/tasks")).toHaveLength(0);
   expect(serverReadsOf(records, "/api/insights")).toHaveLength(0);
   expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(0);
-  for (const path of CACHED_READ_PATHS) {
+  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
     expect(
       serverReadsOf(records, path),
       `${path} after a task edit`,
@@ -597,7 +604,7 @@ test("a task edit asks the owner for nothing", async ({ page, request }) => {
   expect(serverReadsOf(records, "/api/insights")).toHaveLength(0);
   expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(0);
   expect(serverReadsOf(records, "/api/tasks")).toHaveLength(0);
-  for (const path of CACHED_READ_PATHS) {
+  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
     expect(serverReadsOf(records, path)).toHaveLength(0);
   }
 });
@@ -640,7 +647,7 @@ test("deleting a task drops its row and clears the detail", async ({
     .toHaveLength(0);
   expect(serverReadsOf(records, "/api/insights"), "insights after a delete")
     .toHaveLength(0);
-  for (const path of CACHED_READ_PATHS) {
+  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
     expect(serverReadsOf(records, path), `${path} after a delete`).toHaveLength(
       0,
     );
@@ -671,16 +678,17 @@ test("creating a task reads the list again and opens the new task", async ({
   ).toHaveLength(1);
   expect(serverReadsOf(records, "/api/tasks").length).toBeGreaterThan(0);
   expect(serverReadsOf(records, "/api/insights").length).toBeGreaterThan(0);
-  // The task was created without a project, so no project count moved and the
-  // cached reads stay cached.
-  for (const path of CACHED_READ_PATHS) {
-    expect(serverReadsOf(records, path), `${path} after a create`).toHaveLength(
-      0,
-    );
+  // The action rerendered the dynamic route, so reference data is read again
+  // even though the new task did not change it.
+  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
+    expect(
+      serverReadsOf(records, path).length,
+      `${path} after a create`,
+    ).toBeGreaterThan(0);
   }
 });
 
-test("creating a label expires the cached read that lists them", async ({
+test("creating a label rerenders the dynamic route", async ({
   page,
   request,
 }) => {
@@ -706,12 +714,15 @@ test("creating a label expires the cached read that lists them", async ({
   ).toBeVisible();
 
   const records = await readRequestDiagnostics(request);
-  // `updateTag` expired the labels entry and re-rendered the route in the same
-  // response, so the labels are read again — exactly once — while the other two
-  // cached reads are untouched.
-  expect(serverReadsOf(records, "/api/labels")).toHaveLength(1);
-  expect(serverReadsOf(records, "/api/projects")).toHaveLength(0);
-  expect(serverReadsOf(records, "/api/members")).toHaveLength(0);
+  // The action calls `refresh()`, and every source published by the route is
+  // dynamic. The new label arrives with that generation; unrelated reference
+  // reads are deliberately repeated as well.
+  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
+    expect(
+      serverReadsOf(records, path).length,
+      `${path} after creating a label`,
+    ).toBeGreaterThan(0);
+  }
 });
 
 test("a title-only update lands in the panel and the row", async ({ page }) => {
@@ -834,20 +845,18 @@ test("an edit on the task page is read again only when the list is", async ({
   const afterBack = await readRequestDiagnostics(request);
   expect(serverReadsOf(afterBack, "/api/tasks")).toHaveLength(1);
   expect(serverReadsOf(afterBack, "/api/insights")).toHaveLength(1);
-  for (const path of CACHED_READ_PATHS) {
-    expect(serverReadsOf(afterBack, path), `${path} after a back`).toHaveLength(
-      0,
-    );
+  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
+    expect(
+      serverReadsOf(afterBack, path).length,
+      `${path} after a back`,
+    ).toBeGreaterThan(0);
   }
 });
 
 /**
- * The count that used to ride inside the cached roster.
- *
- * A project's task count is changed by the browser channel — a move, a delete —
- * which cannot expire a tag. It is its own dynamic read now, and the write that
- * moves it answers with it, so the number follows the edit without the roster
- * beside it being touched and without the count itself being read back.
+ * A project's task count is its own dynamic read and Lane key. The write that
+ * moves it answers with the confirmed value, so the number follows the edit
+ * without a route render or another read of the count.
  */
 test("a project's count follows a task the browser moved", async ({
   page,

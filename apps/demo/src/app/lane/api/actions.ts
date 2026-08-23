@@ -1,6 +1,6 @@
 "use server";
 
-import { refresh, updateTag } from "next/cache";
+import { refresh } from "next/cache";
 import type {
   CreateLabelInput,
   CreateProjectInput,
@@ -21,7 +21,6 @@ import {
   removeTaskLabel,
   updateTask,
 } from "./endpoints";
-import { workspaceCacheTags } from "./route-reads";
 
 /**
  * **The mutations that want the screen read again.**
@@ -38,14 +37,10 @@ import { workspaceCacheTags } from "./route-reads";
  * so the read costs no extra round trip, and `<LaneHydration>` republishes
  * every seeded key from it.
  *
- * Which ask each mutation makes depends on where its data lives:
- *
- * - `refresh()` re-renders the route without expiring anything. It is enough
- *   for tasks and insights, which are read dynamically (`api/route-reads.ts`).
- * - `updateTag(tag)` expires a `"use cache"` entry *and* re-renders the route in
- *   the same response, which is the only way to change cached data honestly:
- *   the client router's copy is bumped with it, so a later navigation cannot
- *   paint the pre-mutation version.
+ * Every route read in `/lane` is dynamic, so each of these mutations makes the
+ * same ask: `refresh()` re-renders the route in the Server Action response and
+ * every region publishes the current source value. There is no data-cache tag
+ * graph beside that route generation.
  *
  * Everything a user edits on an existing task — status, title, priority,
  * assignee, project, due date, labels, deletion — goes the other way in
@@ -60,9 +55,7 @@ export async function createTaskAction(
 ): Promise<Task> {
   const task = await createTask(ctx, input);
   // Re-rendering the route is the whole ask. Everything a new task changes —
-  // the list, the insights, the project counts — is read dynamically
-  // (`api/route-reads.ts`); the cached reads hold reference data a task cannot
-  // touch, so there is no tag to expire here.
+  // the list, the insights and the project counts — is read dynamically.
   refresh();
 
   return task;
@@ -73,10 +66,7 @@ export async function createLabelAction(
   input: CreateLabelInput,
 ): Promise<TeamLabel> {
   const label = await createLabel(ctx, input);
-  // No `refresh()` beside it: expiring a tag re-renders the current route by
-  // itself, and the response carries that render. Asking twice would only mean
-  // rendering the route against a cache entry that is already gone.
-  updateTag(workspaceCacheTags.labels(ctx.teamId));
+  refresh();
 
   return label;
 }
@@ -86,7 +76,7 @@ export async function createProjectAction(
   input: CreateProjectInput,
 ): Promise<Project> {
   const project = await createProject(ctx, input);
-  updateTag(workspaceCacheTags.projects(ctx.teamId));
+  refresh();
 
   return project;
 }
@@ -103,9 +93,8 @@ export async function createProjectAction(
  * `/lane` calls none of them. Its task edits go from the browser to the API and
  * into the lane in place (`api/hooks.ts`).
  *
- * None of them expires a tag: `refresh()` alone is the ask, because no cached
- * read holds anything a task can change. The project task counts used to be the
- * exception, and `route-reads.ts` says why they are their own dynamic read now.
+ * `refresh()` alone is the ask. `/lane` has no persistent data-cache entries to
+ * expire; every route generation reads the source dynamically.
  *
  * The endpoints answer with the task *and* the two derivations that moved with
  * it; these actions keep the task and drop the rest. That is not waste being

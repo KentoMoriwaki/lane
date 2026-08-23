@@ -142,6 +142,17 @@ collected with its payload. The rules:
   `router.refresh()` when a navigation starts, so an ask made once and never
   repeated would leave a wait unfilled. Every read of an unfilled wait asks
   again, which is how a reveal after a navigation repairs itself.
+- **And again while someone is still waiting.** A reader that is already
+  suspended does not read again on its own — it re-renders only when its
+  promise settles — so a read-driven ask cannot repair *that* reader when its
+  ask was aborted (a mutation that invalidates a key and then navigates does
+  exactly this). For as long as a wait that was asked for is unsettled and a
+  committed reader is subscribed to it, Lane looks again every `REASK_INTERVAL`
+  (2 s) and asks once more; a publication ends it, and so does the wait's own
+  timeout. A wait nobody is subscribed to — a hidden tree's — is not re-asked
+  for: its reveal reads and asks for itself. The cost is one render the aborted
+  ask had already paid for; the measurement is in [the two mutation
+  channels](./integrations.md#the-two-mutation-channels).
 - **Never before the first publication.** A reader mounting under streaming SSR,
   or outside every `<LaneHydration>` boundary, is waiting for a payload that is
   already on its way. It waits in silence.
@@ -1975,6 +1986,23 @@ Which to use is not a matter of taste — see
 behavioural differences (one round trip vs. parallelism, and what a revalidating
 Server Action always re-renders).
 
+**`update` needs a current value; `set` and `invalidate` do not.** An updater
+is handed what the key holds, so on an entry that holds nothing — never
+published, invalidated, or collected because its payload and every reader were
+gone ([retention](#external-retention)) — `update` returns `undefined` and the
+updater does not run. That is the ordinary `update` contract, and it is where a
+screen that is *not on display* differs from the one you are looking at: the
+visible screen's readers hold the value, so it is there to update; a screen
+that has left the router's keep-alive may or may not still have it, depending
+on whether the router still holds its payload. So for a key no reader is
+showing, say what you know in a form that does not need a current value —
+`set(key, value)` when you have the value, `invalidate(key)` when you do not
+(the shell it marks is never collected, so the mark is always there for the
+reveal to find) — and treat `update` as best-effort: where it finds nothing,
+the next reveal reads the owner's version, which has the mutation in it anyway.
+The difference is only whether the screen comes back instantly or through one
+fallback.
+
 In a client router the revalidation channel is the router's own — see
 [Data mode](./integrations.md#data-mode--loaders-publish-into-lane).
 
@@ -2072,7 +2100,13 @@ adds an ask for a payload already in flight.
   payload is *already* gone: there is nothing to take the place of, so it is
   held by its readers alone and can be collected with them — the next read waits
   and asks the owner, the same recovery as for a collected publication, and the
-  state the owner is in anyway. The **shell** is what is never collected:
+  state the owner is in anyway. "Its readers" means the readers that have
+  *adopted* it: a reader keeps alive the promise it rendered, and a reader in a
+  hidden `<Activity>` adopts nothing until its reveal, so a write made while a
+  screen is hidden lives with the payload — or, if that is gone, with no one —
+  until the screen comes back. A visible reader adopts in the transition the
+  write opens, so on the screen you are looking at the new value is held the
+  moment it lands. The **shell** is what is never collected:
   `invalidate`, `remove`, and the sweep all leave it standing, so a key that has
   been published stays a key an owner fills. Client-owned entries are untouched
   by any of this.

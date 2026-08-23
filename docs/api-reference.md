@@ -1194,13 +1194,15 @@ is the owner's whole answer for that key, so Lane takes it whole.
 
 **The browser keeps its depth by not having the route render again.** Depth
 survives for exactly as long as nothing republishes the key — a `set` or an
-`update` converging the row a mutation just confirmed, an `invalidate` of some
-*other* key, a navigation that leaves this route standing. That is the lever,
-and it is the one to reach for: on a screen whose list depth matters, converge
-derived data from the mutation's own response with `set` rather than marking it
-stale with `invalidate`. An `invalidate` of anything the route owns is answered
-by [`refresh`](#refresh--the-owner-ask), and a route that renders again
-republishes everything it publishes — this list included, at page 1.
+`update` converging the row a mutation just confirmed, a navigation that leaves
+this route standing, anything at all that does not reach the route.
+
+That is the lever, and it is the one to reach for: on a screen whose list depth
+matters, converge derived data from the mutation's own response with `set`
+rather than marking it stale with `invalidate`. An `invalidate` of *any* key the
+route owns is answered by [`refresh`](#refresh--the-owner-ask), and a route that
+renders again republishes everything it publishes — this list included, at page
+1. The list's depth is not what makes an `invalidate` reach it; the route is.
 
 `invalidate` on the list itself discards the depth by design: saying "this key
 is stale" says it about pages 2..n too, and they cannot be re-derived without

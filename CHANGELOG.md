@@ -144,10 +144,32 @@ All notable changes to `use-lane` are documented here. The format is based on
   `lane.set(key, value)`, `lane.update(key, fn)` — and only what *derives* from
   it needs `invalidate` and the owner's answer.
 
-  Retention of a client write to an external entry is unchanged for now: it goes
-  in the same weak slot the publication used, so a write no committed reader
-  holds may be collected. The next read of it asks the owner, which is the same
-  recovery as for a collected publication.
+  Retention of such a write is the publication's, not the client's — see the
+  entry below.
+
+- **A client write to a published key lives exactly as long as the publication
+  it overwrote.** `set`, `update`, and `useInfiniteLane`'s appended pages take
+  the place of the value they replaced among the payload's own references, so the
+  client's version of a value is retained by the same thing that retained the
+  server's: the RSC payload or router loader data the framework holds. One
+  promise per key per payload — a key written a thousand times retains one, not a
+  thousand.
+
+  This is what a mutation converging behind a hidden `<Activity>` needs. Nothing
+  has read the write yet and it still has to be there at the reveal; the weak
+  slot alone could not promise that. Nothing is pinned to get it: `gcTime` still
+  says nothing about an external key, and when the framework drops the payload
+  the write goes with the value it overwrote, in one collection. The next read
+  waits and asks the owner through `refresh` — which is what the owner is doing
+  about that data anyway, having dropped it.
+
+  The edge: a write that lands when the payload is *already* gone has nothing to
+  take the place of and is held by its readers alone, so it can be collected with
+  them. The read that finds it gone asks the owner, the same recovery as for a
+  collected publication.
+
+  Budgets move 2.81 → 2.87 kB, 4.18 → 4.24 kB, and the ceiling 5.79 → 5.85 kB:
+  the seat an entry keeps in the payload, and the one assignment that takes it.
 
 - **Breaking: `LaneOwnershipError` is `prefetch`'s alone.** It still throws — in
   production too — for `lane.prefetch` of an external read, and its message now

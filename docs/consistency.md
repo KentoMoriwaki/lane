@@ -181,6 +181,10 @@ Per ownership, in one line each:
   read. Retention needs no `gcTime` tuning because it is
   [reachability](./api-reference.md#external-retention): as long as the framework
   holds the payload or a committed reader holds the promise, the value is there.
+  A client write onto the key shares that retention — it takes the place of what
+  it overwrote — so a `set` that converged behind the hidden tree is still there
+  at the reveal, before anything has read it, for exactly as long as the
+  publication it replaced would have been.
 - **Client-owned keys** — converge through notifications while visible, and
   through the reveal reconciliation for everything missed while hidden. Retention
   is `gcTime`: if the entry was collected while the tree was hidden, the reveal

@@ -113,7 +113,7 @@ type LanePromiseCache = {
    * (see {@link cacheSlot}). `entry.external` says how to read the slot;
    * `markExternal` converts an existing slot, so the two cannot disagree.
    */
-  promise: Promise<unknown> | LaneWeakSlot;
+  promise: Promise<unknown> | LaneWeakSlot<Promise<unknown>>;
   settlement: LanePromiseSettlement | undefined;
   startedAt: number;
   controller: AbortController | undefined;
@@ -165,6 +165,13 @@ type LaneEntry = {
    * fills this key is a fact about the key, not about the value.
    */
   published: boolean;
+  /**
+   * Where in the last publication's bucket of promises this entry sits — the
+   * seat a client write takes, so that the write lives exactly as long as the
+   * publication it overwrote. Held weakly, because the bucket is alive exactly
+   * as long as the payload `hydrate.ts` keyed it by. See {@link tetherWrite}.
+   */
+  tether: LaneTether | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -286,21 +293,27 @@ export function setLaneRefresh(
 }
 
 /**
- * `lane.set` addressed by key, as the publication path (`hydrate.ts`) needs;
- * `external` marks the key filled from outside, retained by reachability. Not
+ * `lane.set` addressed by key, as the publication path (`hydrate.ts`) needs.
+ * A `publication` bucket marks the key filled from outside and seats the entry
+ * in that bucket: retention is that payload's, for the value published now and
+ * for whatever the client writes over it (see {@link tetherWrite}). Not
  * exported from the package — `lane.set` is the public way to publish.
  */
 export function publishEntry<T>(
   lane: Lane,
   key: LaneKey,
   valueOrPromise: LaneValue<T>,
-  external = false,
+  publication?: Promise<unknown>[],
 ): Promise<LaneRead<T>> {
   const state = getLaneState(lane);
   const entry = getOrCreateEntry(state, key, serializeKey(key));
 
-  if (external) {
+  if (publication) {
     markExternal(entry);
+    // Taken before the value is written, so the published value is the first
+    // thing to sit in the seat; a new publication moves the entry to its own
+    // bucket, and the superseded one dies with the payload it belongs to.
+    entry.tether = { at: publication.length, bucket: externalRef(publication) };
   }
 
   const promise = publishEntryValue(state, entry, valueOrPromise);
@@ -644,6 +657,7 @@ function updateLaneEntry<T>(
   // stay un-aborted and keeps guarding the chained cache.
   const updated = setEntryCache(state, entry, valueOrPromise, cache.controller, undefined);
 
+  tetherWrite(entry, updated);
   notifyInvalidate(entry, "transition");
 
   return updated;
@@ -661,7 +675,11 @@ function publishEntryValue<T>(
     entry.external ? publicationReason(valueOrPromise) : undefined,
   );
 
-  return setEntryCache(state, entry, valueOrPromise, undefined, undefined);
+  const promise = setEntryCache(state, entry, valueOrPromise, undefined, undefined);
+
+  tetherWrite(entry, promise);
+
+  return promise;
 }
 
 /**
@@ -807,6 +825,7 @@ function createEntry(state: LaneState, key: LaneKey, keyId: string): LaneEntry {
     published: false,
     revision: 0,
     subscribers: new Set(),
+    tether: undefined,
   };
 }
 
@@ -1032,12 +1051,16 @@ function setEntryCache<T>(
  * and committed readers keep it reachable, which also distinguishes a hidden
  * subtree (still holds its promise) from an unmounted one.
  *
- * PR 3: a client `set` / `update` on an external entry lands in this weak slot
- * with nothing but its readers holding it, so a write no committed reader has
- * may be collected before the next read. Tethering such a write to the
- * publication it overwrote is the next change; until then the read that finds
- * it gone asks the owner, which is the same recovery as for a collected
- * publication.
+ * A client write onto an external entry lives as long as the publication it
+ * overwrote: {@link tetherWrite} seats it in that payload's bucket, so the
+ * client's version of the value is reachable for exactly as long as the version
+ * it replaced would have been. Nothing is pinned, and `gcTime` still says
+ * nothing about an external key.
+ *
+ * The edge: a write landing when the payload is already gone has no bucket to
+ * sit in and is held by its readers alone, so it can go with them. The read
+ * that finds it gone asks the owner — the same recovery as for a collected
+ * publication, and the same state the owner is in.
  */
 function cacheSlot(
   entry: LaneEntry,
@@ -1046,18 +1069,45 @@ function cacheSlot(
   return entry.external ? externalRef(promise) : promise;
 }
 
-/** A weakly held read: alive, or collected and so indistinguishable from absent. */
-type LaneWeakSlot = { deref(): Promise<unknown> | undefined };
+/**
+ * Put what an external entry now holds in its seat in the publication's bucket.
+ * One seat per entry per publication: a write replaces the value it overwrote
+ * rather than piling up behind it, so a key written a thousand times retains
+ * one promise, not a thousand. Nothing to do for a client-owned entry (`gcTime`
+ * holds that one) or once the payload — and with it the bucket — is gone.
+ */
+function tetherWrite(entry: LaneEntry, promise: Promise<unknown>): void {
+  const tether = entry.tether;
+  const bucket = tether?.bucket.deref();
 
-type LaneWeakSlotFactory = (promise: Promise<unknown>) => LaneWeakSlot;
+  if (!tether || !bucket) {
+    return;
+  }
 
-const weakSlot: LaneWeakSlotFactory = (promise) => new WeakRef(promise);
+  bucket[tether.at] = promise;
+}
+
+/** A weakly held object: alive, or collected and so indistinguishable from absent. */
+type LaneWeakSlot<T extends object> = { deref(): T | undefined };
+
+/** An external entry's seat in the bucket of the publication that last filled it. */
+type LaneTether = {
+  bucket: LaneWeakSlot<Promise<unknown>[]>;
+  /** The index of the seat — the same one every write to this entry takes. */
+  at: number;
+};
+
+type LaneWeakSlotFactory = <T extends object>(value: T) => LaneWeakSlot<T>;
+
+const weakSlot: LaneWeakSlotFactory = (value) => new WeakRef(value);
 
 let externalRef: LaneWeakSlotFactory = weakSlot;
 
 /**
  * Test seam (not exported from the package): collection is not schedulable, so
- * tests install a killable reference. `undefined` restores the `WeakRef` default.
+ * tests install a killable reference — for the value slots and for the
+ * publication buckets they are tethered to, which go together when a payload
+ * is dropped. `undefined` restores the `WeakRef` default.
  */
 export function setExternalRefFactory(
   factory: LaneWeakSlotFactory | undefined,
@@ -1071,7 +1121,7 @@ function cachedPromise(
   cache: LanePromiseCache,
 ): Promise<unknown> | undefined {
   return entry.external
-    ? (cache.promise as { deref(): Promise<unknown> | undefined }).deref()
+    ? (cache.promise as LaneWeakSlot<Promise<unknown>>).deref()
     : (cache.promise as Promise<unknown>);
 }
 

@@ -1607,10 +1607,11 @@ A plain key carries no type, so the value decides it, exactly as before.
 component-local `useOptimistic`.
 
 On a [published](#external--a-read-the-owner-publishes) key it is the same
-write, and the entry stays external: the value is held weakly, so a `set` no
-committed reader is holding may be collected along with the payload it replaced
-— at which point the next read asks the owner, which is the same recovery as for
-a collected publication.
+write, and the entry stays external — [retention](#external-retention)
+included: the write takes the place of the value it overwrote, so it lives
+exactly as long as that publication would have and goes when the framework drops
+the payload. The next read then asks the owner, the same recovery as for a
+collected publication.
 
 ### `update` / `updateAll`
 
@@ -1809,7 +1810,9 @@ as long as the shell lives. Three things follow, and only three:
   `refetchOn*` — see [`external`](#external--a-read-the-owner-publishes).
 - **Retention follows the payload, not `gcTime`.** The value is held weakly and
   kept alive by the publisher's payload object and by every committed reader,
-  so it lives exactly as long as the framework keeps the payload. The shell —
+  so it lives exactly as long as the framework keeps the payload — and so does a
+  client write onto the key, which takes the place of the value it overwrote
+  (see [retention](#external-retention)). The shell —
   and with it the fact that an owner fills this key — outlives the value, so a
   later read knows to ask rather than to wait in silence.
 - **`prefetch` is refused.** There is no loader here but the owner's route; see
@@ -1952,10 +1955,19 @@ adds an ask for a payload already in flight.
   tuning](./consistency.md#activity). A key whose payload *and* readers are both
   gone reads as absent, and its next read waits — and asks the owner through
   [`refresh`](#refresh--the-owner-ask), because the shell remembers that this
-  key was filled once. The **shell** is what is never collected: `invalidate`,
-  `remove`, and the sweep all leave it standing, so a key that has been
-  published stays a key an owner fills. Client-owned entries are untouched by
-  any of this.
+  key was filled once. A **client write** onto such a key — `set`, `update`, an
+  appended page — shares that retention: it takes the place of the value it
+  overwrote among the payload's references, so it lives exactly as long as the
+  publication it replaced would have. Nothing is pinned and `gcTime` still says
+  nothing about the key; drop the payload and the client's version of the value
+  goes with the server's, together. The edge is a write that lands when the
+  payload is *already* gone: there is nothing to take the place of, so it is
+  held by its readers alone and can be collected with them — the next read waits
+  and asks the owner, the same recovery as for a collected publication, and the
+  state the owner is in anyway. The **shell** is what is never collected:
+  `invalidate`, `remove`, and the sweep all leave it standing, so a key that has
+  been published stays a key an owner fills. Client-owned entries are untouched
+  by any of this.
 
 ## Type exports
 

@@ -53,15 +53,13 @@ type LaneAnyReadSpec<T, C> = LaneUseOptions & {
 /**
  * A reader's subscription: opened in a layout effect, closed in a passive one
  * (see the two effects below for why the halves are split). The handle carries
- * one half to the other, and names the source it was opened for — everything
- * the effects are keyed on — so the opening half recognises a subscription of
- * its own and nothing else's.
+ * one half to the other; `lane`/`keyId` let the opening half recognise a
+ * subscription it already owns.
  */
 type LaneReaderSubscription = {
   close: () => void;
   keyId: string;
   lane: Lane;
-  sourceKey: LaneKey;
 };
 
 /**
@@ -164,11 +162,19 @@ export function useLane<T, C = T>(
         : undefined;
     effectivePromise = nextPromise;
 
-    setPrevSource({ enabled, hydration: hydrationSource, key, keyId, lane });
+    // The key object handed to effects changes identity only when the *key*
+    // does — not when a republication re-runs this branch for the same key.
+    // The subscription is to an entry (by `keyId`), so a republication of the
+    // same key must not churn it; a republication carries its new value to a
+    // subscribed reader by notification, and to a hidden one by the reveal.
+    const nextKey = keyId === prevSource.keyId ? prevSource.key : key;
+
+    setPrevSource({ enabled, hydration: hydrationSource, key: nextKey, keyId, lane });
     setPromise(nextPromise);
   }
 
-  // The reactive form of the key for effects: one object identity per source.
+  // The reactive form of the key for effects: one object identity per key, so
+  // effects re-run when the key changes and stay put across a republication.
   const sourceKey = prevSource.key;
 
   const onInvalidate = useEffectEvent((
@@ -329,21 +335,12 @@ export function useLane<T, C = T>(
     const open = subscriptionRef.current;
 
     // A re-suspension re-creates layout effects over a subscription the
-    // passive half never closed — don't open a second one. Recognising it
-    // takes the whole source, not just the key: a republication (a new
-    // `<LaneHydration>` payload after a navigation) moves these deps while the
-    // lane and the key stay put, and React runs this effect *before* the
-    // superseded passive cleanup — which then closes exactly the subscription
-    // this instance would have adopted, leaving the reader subscribed to
-    // nothing. Matching on the source instead means the two never overlap in
-    // what they own: this opens the arriving one, that closes the departing
-    // one, and the reader is left holding one live subscription.
-    if (
-      open &&
-      open.lane === lane &&
-      open.keyId === keyId &&
-      open.sourceKey === sourceKey
-    ) {
+    // passive half never closed — don't open a second one. `lane`/`keyId` are
+    // enough to recognise it because `sourceKey` (these effects' fourth dep)
+    // now holds one identity per key: a republication of the same key does not
+    // move it, so these effects do not re-run for one, and the subscription —
+    // which is to the entry, by `keyId` — stays put across it.
+    if (open && open.lane === lane && open.keyId === keyId) {
       return;
     }
 
@@ -365,7 +362,7 @@ export function useLane<T, C = T>(
     });
 
     // oxlint-disable-next-line react/react-compiler
-    subscriptionRef.current = { close, keyId, lane, sourceKey };
+    subscriptionRef.current = { close, keyId, lane };
   }, [enabled, lane, keyId, sourceKey]);
 
   // The *closing* half — deliberately passive. A re-suspension tears down
@@ -380,17 +377,15 @@ export function useLane<T, C = T>(
 
     const subscription = subscriptionRef.current;
 
-    // Always set — the layout half above shares these deps, so it has just
-    // run and, since its guard matches on the source, has just opened the
-    // subscription this half will close. The check is the type's, not a case.
+    // Always set — the layout half above shares these deps and has just run.
+    // The check is the type's, not a case.
     if (!subscription) {
       return;
     }
 
     return () => {
-      // This instance's own subscription, never whatever the ref holds now: an
-      // arriving layout effect — a key switch, a republication — has already
-      // opened the next one and put it there.
+      // This instance's own subscription, never whatever the ref holds now: a
+      // key switch opens the next one and puts it there before this cleanup.
       subscription.close();
 
       if (subscriptionRef.current === subscription) {

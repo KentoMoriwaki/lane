@@ -597,18 +597,18 @@ All notable changes to `use-lane` are documented here. The format is based on
   owner-ask that follows a re-read never fired: after one in-app navigation, a
   published key stopped converging through anything but another publication.
 
-  A reader opens its subscription in a layout effect and closes it in the
-  matching passive one, and React runs an arriving layout effect *before* the
-  departing passive cleanup. The opening guard — "a re-suspension re-creates
-  layout effects over a subscription the passive half never closed, don't open a
-  second one" — compared only the lane and the key, which a republication leaves
-  untouched, so the arriving effect adopted the departing one's subscription and
-  the cleanup that came after closed it. The guard now matches on the whole
-  source, so the two halves never claim the same subscription: the arriving
-  effect opens the one it will own, the departing cleanup closes only its own,
-  and the reader comes out of a republication with exactly one live
-  subscription. Costs 16 B on the typical `LaneProvider` + `useLane` pair and
-  15 B on the ceiling; the budgets are unchanged.
+  The subscription effects are keyed on a stable key *object* (`sourceKey`),
+  not the raw key, because a key written inline (`["task", id]`) is a fresh
+  array every render. That object was being replaced whenever the read switched
+  source — and a republication is a source switch — so it changed identity for
+  the *same* key, re-running the effects: the arriving layout effect adopted the
+  departing subscription, and the passive cleanup that ran after closed it. But
+  a subscription is to the entry, addressed by the serialized key, and a
+  republication does not change that; there is nothing to re-subscribe. So
+  `sourceKey` now keeps one identity per key — a republication of the same key
+  no longer moves it — the effects do not re-run for one, and the subscription
+  stays put across it. The value a republication carries still reaches the
+  reader: a subscribed one by notification, a hidden one by the reveal.
 
 ## [0.8.0] - 2026-08-05
 

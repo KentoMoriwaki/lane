@@ -13,15 +13,12 @@ import type {
  * typed by the read's `T`, which `LaneUseOptions` does not carry.
  */
 export function toReadOptions(
-  options: LaneUseOptions & { merge?: LaneReadOptions["merge"] },
+  options: LaneUseOptions,
   loaderMeta: LaneLoaderMeta,
   fallback?: LaneReadOptions["fallback"],
 ): LaneReadOptions {
   return {
     loaderMeta: options.loaderMeta ?? loaderMeta,
-    // Not a public read option: only `useInfiniteLane` sets one, and it sets
-    // it on the spec it builds for `useLane` (see use-infinite-lane.ts).
-    merge: options.merge,
     warmTime: options.warmTime,
     fallback,
   };

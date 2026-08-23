@@ -32,19 +32,16 @@ All notable changes to `use-lane` are documented here. The format is based on
   Server-Component-safe module as `laneSnapshot`, and derives `hasNext` from the
   read's own `nextCursor`.
 
-  **A republication of the same page 1 keeps the depth the browser added.** If
-  the entry holds a settled list whose page 1 is deep-equal to the published
-  one, the key ends up holding the published page 1 followed by the pages behind
-  it, with `params` / `hasNext` from the list that was there; a different page 1,
-  or an entry holding nothing, resets to one page — so an explicit `invalidate`
-  always resets, which is right, because pages 2..n may be stale too.
-
-  The comparison is the read's, but it runs **in the store, as the publication
-  lands**: a reader would have to commit the shallow list on its way to the deep
-  one, and a reader hidden in an `<Activity>` is not there to be told at all.
-  The limit that follows: "the entry holds a list" is read off the promise cache
-  protocol's stamps, so a depth appended with `lane.update` that no reader ever
-  rendered is not preserved.
+  **A publication is authoritative: it replaces the key at page 1, whatever
+  depth stood there.** The store never compares a publication with what it
+  holds, because equality proves nothing — a row can be edited and edited back
+  between two publications, so a deep-equal page 1 is not evidence that nothing
+  happened. The browser keeps its depth by not having the route render again:
+  on a screen whose depth matters, converge derived data from the mutation's own
+  response with `set` rather than marking it stale with `invalidate`, since an
+  `invalidate` answered by `refresh` republishes everything the route publishes.
+  `invalidate` on the list itself discards the depth by design — pages 2..n may
+  be stale too, and cannot be re-derived without walking the cursor chain again.
 
 - **`refresh`: how Lane asks the owner of a published key to publish it again.**
   A callback on `createLane` and `<LaneProvider>`, supplied by the app because
@@ -129,6 +126,21 @@ All notable changes to `use-lane` are documented here. The format is based on
   the one carried by the read that started the load, as with `loaderMeta`.
 
 ### Changed
+
+- **Breaking: a `useInfiniteLane` load reads the first page, not the pages you
+  have.** A load is what fills an entry holding nothing — a first read, a read
+  after `invalidate`, a read after collection — and what an infinite list holds
+  when nothing has been loaded is where it starts. The depth on top of that is
+  `loadMore`'s, and it goes with the value it was appended to.
+
+  It used to walk the cursor chain as deep as the cached value already was,
+  which is one *sequential* request per page on a path `refetchOnFocus` and a
+  poll fire too, and which the external form could never have joined: the owner
+  publishes the first page, and that publication replaces the key. One rule for
+  both ownerships now, with the expensive thing left to the caller who can see
+  what it costs — `invalidate()`, then `loadMore()` for the depth worth buying
+  back. React Query's `useInfiniteQuery` refetches every loaded page; the
+  difference is called out in [migrating](./docs/migrating.md#step-6--infinite-lists).
 
 - **A value handed to the store comes back as a promise that is already
   fulfilled.** `set(key, value)` and a `<LaneHydration>` seed return a promise
@@ -570,6 +582,58 @@ All notable changes to `use-lane` are documented here. The format is based on
   `useLane` pair, and **175 B** on the ceiling. The three budgets tighten to
   match: the store 2.55 → 2.39 kB (2.37 kB actual), typical 4 → 3.82 kB
   (3.79 kB), and the ceiling 5.58 → 5.41 kB (5.4 kB).
+
+### Fixed
+
+- **A reader does not take a notification for the key it just left.** A key
+  switch opens the arriving key's subscription in a layout effect and closes the
+  departing one in the passive cleanup that runs after it, so for the rest of
+  that commit the reader was subscribed to both entries — and a notification for
+  the old key still reached a handler that reads it back, into a reader that is
+  now reading somewhere else. A sibling invalidating the old key from its own
+  layout effect lands exactly there. The switch now releases the old
+  subscription itself, before opening the new one; the cleanup that follows
+  finds it already released and does nothing.
+
+- **`infiniteLaneRead` is callable from a Server Component.** It lived in the
+  hook's module, which carries `"use client"`, so a route building the read it
+  publishes page 1 under (`infiniteLaneSnapshot(read, page, cursor)`) failed
+  with "Attempted to call infiniteLaneRead() from the server". It is identity at
+  runtime, like `laneRead`, and now lives with the other isomorphic builders
+  (`infinite-read.ts`, no directive); the spec types moved with it and are
+  re-exported unchanged. A test pins which modules carry the directive.
+
+- **An ask that was lost is made again while someone is still waiting.** A
+  `router.refresh()` is aborted by a navigation that starts while it is in
+  flight — which is what a mutation that `invalidate`s a published key and then
+  navigates does in one breath. The readers waiting on that key are suspended,
+  a suspended reader does not read again on its own, and nothing else asked: they
+  sat in the boundary's fallback until the wait's 10-second timeout. Now, for
+  as long as a wait that was asked for is unsettled and a committed reader is
+  subscribed to it, Lane asks again every 2 seconds (`REASK_INTERVAL`), one ask
+  per lane per look, until the wait settles or times out. A wait nobody is
+  subscribed to — a hidden tree's — is still asked for by its reveal, not on a
+  timer.
+
+- **A reader keeps its subscription across a republication.** A second
+  `<LaneHydration>` payload for the same key — what an App Router navigation
+  delivers — left a visible reader subscribed to nothing, so every later
+  `set` / `update` / `invalidate` / `remove` on that key notified nobody and the
+  owner-ask that follows a re-read never fired: after one in-app navigation, a
+  published key stopped converging through anything but another publication.
+
+  The subscription effects are keyed on a stable key *object* (`sourceKey`),
+  not the raw key, because a key written inline (`["task", id]`) is a fresh
+  array every render. That object was being replaced whenever the read switched
+  source — and a republication is a source switch — so it changed identity for
+  the *same* key, re-running the effects: the arriving layout effect adopted the
+  departing subscription, and the passive cleanup that ran after closed it. But
+  a subscription is to the entry, addressed by the serialized key, and a
+  republication does not change that; there is nothing to re-subscribe. So
+  `sourceKey` now keeps one identity per key — a republication of the same key
+  no longer moves it — the effects do not re-run for one, and the subscription
+  stays put across it. The value a republication carries still reaches the
+  reader: a subscribed one by notification, a hidden one by the reveal.
 
 ## [0.8.0] - 2026-08-05
 

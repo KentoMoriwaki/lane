@@ -17,11 +17,7 @@ import {
   readOrCreate,
   subscribeLane,
 } from "./core";
-import type {
-  LaneInvalidationSource,
-  LaneMergePublication,
-  LaneReadOptions,
-} from "./core";
+import type { LaneInvalidationSource, LaneReadOptions } from "./core";
 import { LaneHydrationSourceContext } from "./hydration";
 import { serializeKey } from "./keys";
 import { isExternalLoader } from "./ownership";
@@ -52,25 +48,31 @@ type LaneAnyReadSpec<T, C> = LaneUseOptions & {
   key: LaneKey;
   loader: LaneLoader<T, C> | undefined;
   fallback?: LaneFallback<T>;
-  /**
-   * Not part of any public read shape: `useInfiniteLane` puts one on the spec
-   * it hands here, and it rides through to the store like the pagination
-   * fields do. See {@link LaneMergePublication}.
-   */
-  merge?: LaneMergePublication;
 };
 
 /**
  * A reader's subscription: opened in a layout effect, closed in a passive one
  * (see the two effects below for why the halves are split). The handle carries
  * one half to the other; `lane`/`keyId` let the opening half recognise a
- * subscription it already owns.
+ * subscription it already owns. `closed` makes releasing it idempotent, since
+ * a key switch closes it early and the passive cleanup still runs after.
  */
 type LaneReaderSubscription = {
   close: () => void;
+  closed: boolean;
   keyId: string;
   lane: Lane;
 };
+
+/** Release a subscription once, whichever half of the pair gets there first. */
+function releaseSubscription(subscription: LaneReaderSubscription): void {
+  if (subscription.closed) {
+    return;
+  }
+
+  subscription.closed = true;
+  subscription.close();
+}
 
 /**
  * An external read (`loader: external`) returns the same {@link LaneResult} a
@@ -172,11 +174,19 @@ export function useLane<T, C = T>(
         : undefined;
     effectivePromise = nextPromise;
 
-    setPrevSource({ enabled, hydration: hydrationSource, key, keyId, lane });
+    // The key object handed to effects changes identity only when the *key*
+    // does — not when a republication re-runs this branch for the same key.
+    // The subscription is to an entry (by `keyId`), so a republication of the
+    // same key must not churn it; a republication carries its new value to a
+    // subscribed reader by notification, and to a hidden one by the reveal.
+    const nextKey = keyId === prevSource.keyId ? prevSource.key : key;
+
+    setPrevSource({ enabled, hydration: hydrationSource, key: nextKey, keyId, lane });
     setPromise(nextPromise);
   }
 
-  // The reactive form of the key for effects: one object identity per source.
+  // The reactive form of the key for effects: one object identity per key, so
+  // effects re-run when the key changes and stay put across a republication.
   const sourceKey = prevSource.key;
 
   const onInvalidate = useEffectEvent((
@@ -337,9 +347,23 @@ export function useLane<T, C = T>(
     const open = subscriptionRef.current;
 
     // A re-suspension re-creates layout effects over a subscription the
-    // passive half never closed — don't open a second one.
+    // passive half never closed — don't open a second one. `lane`/`keyId` are
+    // enough to recognise it because `sourceKey` (these effects' fourth dep)
+    // now holds one identity per key: a republication of the same key does not
+    // move it, so these effects do not re-run for one, and the subscription —
+    // which is to the entry, by `keyId` — stays put across it.
     if (open && open.lane === lane && open.keyId === keyId) {
       return;
+    }
+
+    // A different entry from here on, so the old subscription is released
+    // *now* rather than by its own passive cleanup, which runs after this
+    // effect. In between, a notification for the key this reader has left
+    // would still reach a handler that reads that key back — into this reader,
+    // which is reading somewhere else. The cleanup still runs; it finds the
+    // subscription already released and does nothing.
+    if (open) {
+      releaseSubscription(open);
     }
 
     // Live from here, including for notifications fired from this same
@@ -360,7 +384,7 @@ export function useLane<T, C = T>(
     });
 
     // oxlint-disable-next-line react/react-compiler
-    subscriptionRef.current = { close, keyId, lane };
+    subscriptionRef.current = { close, closed: false, keyId, lane };
   }, [enabled, lane, keyId, sourceKey]);
 
   // The *closing* half — deliberately passive. A re-suspension tears down
@@ -382,10 +406,11 @@ export function useLane<T, C = T>(
     }
 
     return () => {
-      subscription.close();
+      // This instance's own subscription, never whatever the ref holds now: a
+      // key switch opens the next one and puts it there before this cleanup —
+      // and released this one on the way, which is why this is idempotent.
+      releaseSubscription(subscription);
 
-      // A source switch opens the new key's subscription before this cleanup
-      // runs for the old one — leave the ref alone unless it still names ours.
       if (subscriptionRef.current === subscription) {
         // oxlint-disable-next-line react/react-compiler
         subscriptionRef.current = undefined;

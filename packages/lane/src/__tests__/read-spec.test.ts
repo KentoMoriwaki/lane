@@ -453,12 +453,12 @@ describe("infiniteLaneRead", () => {
     await waitForStatus(app.container, "item-0,item-1|more:yes");
 
     // The key travels with the definition, so it addresses the entry on its own
-    // — and the re-read walks the chain as deep as the list already is.
+    // — and the re-read is the list as it starts, one page.
     await act(async () => {
       lane.invalidate(spec.key);
       await settlePromiseHandlers();
     });
-    await waitForStatus(app.container, "item-0,item-1|more:yes");
+    await waitForStatus(app.container, "item-0|more:yes");
   });
 });
 

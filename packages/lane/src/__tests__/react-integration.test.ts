@@ -1303,6 +1303,69 @@ describe("React integration", () => {
     expect(loader).toHaveBeenCalledTimes(4);
   });
 
+  it("does not take the departed key's notification during a key switch", async () => {
+    // The window the test above describes, seen from the other side. Between
+    // the arriving key's layout setup and the departing key's passive cleanup
+    // the reader is subscribed to *two* entries, and a notification for the one
+    // it has left would still reach a handler that reads that key back — into
+    // this reader, which is now reading somewhere else.
+    //
+    // Both keys are settled up front so the switch commits in one pass (a
+    // switch that suspends runs its layout effect a commit later, which is a
+    // different window), and the tree keeps its shape so the reader is the same
+    // instance switching keys rather than a new one replacing it. Layout
+    // effects run in tree order, so the sibling fires exactly inside the gap.
+    const lane = createLane({ gcTime: Infinity });
+    const loader = vi.fn(async (context: LaneLoaderContext) =>
+      serializeKey(context.key) === serializeKey(["a"]) ? "va" : "vb",
+    );
+
+    await lane.set(["a"], "va");
+    await lane.set(["b"], "vb");
+
+    function LayoutInvalidator({ armed }: { armed: boolean }) {
+      React.useLayoutEffect(() => {
+        if (armed) {
+          lane.invalidate(["a"]);
+        }
+      }, [armed]);
+
+      return null;
+    }
+
+    const tree = (cacheKey: LaneKey, armed: boolean) =>
+      React.createElement(LaneProvider, {
+        lane,
+        children: [
+          React.createElement(
+            React.Suspense,
+            { fallback: "loading", key: "probe" },
+            React.createElement(Probe, { cacheKey, loader }),
+          ),
+          React.createElement(LayoutInvalidator, { armed, key: "invalidator" }),
+        ],
+      });
+
+    const app = await render(tree(["a"], false));
+    await waitForText(app.container, "va|background:0|transition:0|refresh:none");
+
+    await act(async () => {
+      app.root.render(tree(["b"], true));
+      await settlePromiseHandlers();
+    });
+
+    for (let i = 0; i < 20; i += 1) {
+      await flushReact();
+    }
+
+    // `["b"]` is what this reader reads, and the invalidation of the key it
+    // left neither re-read that key nor reached this reader.
+    expect(app.container.textContent).toBe(
+      "vb|background:0|transition:0|refresh:none",
+    );
+    expect(loader).not.toHaveBeenCalled();
+  });
+
   it("does not open a second subscription when a fallback returns", async () => {
     // The other side of that asymmetry. Coming back from a re-suspension
     // re-creates the layout effects over a subscription the passive half never

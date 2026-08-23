@@ -2,86 +2,31 @@
 
 import { useCallback } from "react";
 import { updateEntry } from "./core";
-import type { LaneMergePublication } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneContext } from "./provider";
-import { replaceEqualDeep } from "./structural";
 import type {
-  LaneExternalLoader,
   LaneInvalidate,
-  LaneKey,
-  LaneKeyOf,
   LaneLoader,
-  LaneLoaderMeta,
   LaneRead,
   LaneStartInvalidationTransition,
-  LaneUseOptions,
 } from "./types";
 import { useLane } from "./use-lane";
+// The read's shape and its builder live in `infinite-read.ts`, a module with
+// no `"use client"`: a Server Component calls `infiniteLaneRead` to publish a
+// first page, and a client module's function cannot be called from the server.
+import type {
+  InfiniteLaneAnyReadSpec,
+  InfiniteLaneExternalReadSpec,
+  InfiniteLaneReadSpec,
+  InfiniteLaneValue,
+} from "./infinite-read";
 
-/**
- * One key's accumulated infinite list. `hasNext` lives in the value so it can
- * never disagree with `pages` mid-render — they arrive together. `params`
- * records each page's cursor so a re-read is reproducible.
- */
-export type InfiniteLaneValue<P, C> = {
-  pages: P[];
-  params: C[];
-  hasNext: boolean;
-};
-
-export type InfiniteLaneOptions<P, C> = {
-  /** The cursor the first page is fetched with. */
-  initialCursor: C;
-  /**
-   * Fetch one page. `signal` is present on the refresh path (the read's abort
-   * signal) and absent on the `loadMore` path — `lane.update` hands an updater
-   * the current value, not a signal, so an appended page cannot be aborted.
-   */
-  fetchPage: (
-    cursor: C,
-    context: { signal?: AbortSignal; meta: LaneLoaderMeta },
-  ) => Promise<P>;
-  /** The cursor for the page after this one, or `null` at the end of the list. */
-  nextCursor: (page: P, cursor: C) => C | null;
-};
-
-/**
- * `useInfiniteLane`'s colocated read — key, pagination, and read options
- * together; build one with {@link infiniteLaneRead}.
- */
-export type InfiniteLaneReadSpec<P, C> = LaneUseOptions &
-  InfiniteLaneOptions<P, C> & {
-    key: LaneKey;
-  };
-
-/**
- * The list whose **first page belongs to the route**: `loader: external` means
- * no first-page loader is built at all — page 1 arrives by publication, in the
- * accumulated shape (see `infiniteLaneSnapshot`), and `loadMore` fetches pages
- * 2..n from the browser.
- *
- * No `initialCursor`: the published value carries it in `params[0]`, so the
- * cursor page 1 was fetched with is the owner's to state, like the page. And no
- * freshness options, exactly as on {@link LaneExternalReadSpec} — freshness is
- * the owner's. `fetchPage` / `nextCursor` stay required: `loadMore` is the
- * client's half of this list.
- */
-export type InfiniteLaneExternalReadSpec<P, C> = Omit<
-  InfiniteLaneOptions<P, C>,
-  "initialCursor"
-> & {
-  key: LaneKey;
-  loader: LaneExternalLoader;
-};
-
-/** Every shape the hook accepts; the body branches on the loader, once. */
-type InfiniteLaneAnyReadSpec<P, C> = LaneUseOptions &
-  Omit<InfiniteLaneOptions<P, C>, "initialCursor"> & {
-    key: LaneKey;
-    initialCursor?: C;
-    loader?: LaneExternalLoader;
-  };
+export type {
+  InfiniteLaneExternalReadSpec,
+  InfiniteLaneOptions,
+  InfiniteLaneReadSpec,
+  InfiniteLaneValue,
+} from "./infinite-read";
 
 export type InfiniteLaneResult<P, C> = {
   promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
@@ -146,47 +91,42 @@ export function useInfiniteLane<P, C>(
   const keyId = serializeKey(key);
   const loaderMeta = read.loaderMeta ?? laneMeta;
 
-  // The cursor walk, built only when the client owns the first page. `external`
-  // is a real loader whose brand exists to steer the read spec's overloads;
-  // here the choice has already been made, so both are the same thing to make.
+  // The first page, and only ever the first page. `external` is a real loader
+  // whose brand exists to steer the read spec's overloads; here the choice has
+  // already been made, so both are the same thing to make.
+  //
+  // A load is what fills an entry that holds nothing — a first read, a read
+  // after `invalidate`, a read after collection — and this one answers it with
+  // the list as it starts. The depth on top of it belongs to `loadMore`, which
+  // is the browser's alone: nothing but a `loadMore` ever puts a second page
+  // under this key, so nothing but a `loadMore` puts one back.
+  //
+  // Reproducing the depth instead would mean walking the cursor chain, which is
+  // one *sequential* request per page — page N+1's cursor does not exist until
+  // page N is back — on a path that also fires from `refetchOnFocus` and the
+  // rest. An app that wants the pages it is showing read again can say so, in
+  // its own code and at its own cost: `invalidate()`, then `loadMore()` for the
+  // depth it wants back. And the external form could not have joined in either
+  // way: the owner publishes the first page, and that publication replaces the
+  // key. One rule for both, and the expensive thing has a caller.
   const loader: LaneLoader<InfiniteLaneValue<P, C>, InfiniteLaneValue<P, C>> =
     read.loader ??
-    (async ({ current, meta, signal }) => {
-      // A first load is one page deep.
-      const depth = current?.pages.length ?? 1;
-      const pages: P[] = [];
-      const params: C[] = [];
-      // Page 1 re-fetches from its original cursor: a changed `initialCursor`
-      // cannot silently re-anchor an existing list. Absent only on the external
-      // form, which never reaches this loader.
-      let cursor: C = current?.params[0] ?? (initialCursor as C);
-      let next: C | null = null;
+    (async ({ meta, signal }) => {
+      const cursor = initialCursor as C;
+      const page = await fetchPage(cursor, { meta, signal });
 
-      for (let index = 0; index < depth; index += 1) {
-        const page = await fetchPage(cursor, { meta, signal });
-        pages.push(page);
-        params.push(cursor);
-
-        // Only a *derived* cursor can end the walk: `null` is an ordinary
+      return {
+        // Only a *derived* cursor can end the list: `null` is an ordinary
         // initial cursor, so it is never tested before the first fetch.
-        next = nextCursor(page, cursor);
-
-        if (next === null) {
-          break;
-        }
-
-        cursor = next;
-      }
-
-      return { hasNext: next !== null, pages, params };
+        hasNext: nextCursor(page, cursor) !== null,
+        pages: [page],
+        params: [cursor],
+      };
     });
 
-  // The pagination fields ride along inert (`useLane` ignores options it does
-  // not know) and `merge` rides along to the store, which is where a
-  // publication meets the depth this list already has. A value rather than an
-  // inline literal: `merge` is nothing a public read shape names, and an object
-  // literal would be checked for exactly that.
-  const spec = { ...read, loader, merge: mergeFirstPage };
+  // The pagination fields ride along inert: `useLane` ignores options it does
+  // not know.
+  const spec = { ...read, loader };
 
   const {
     invalidate,
@@ -237,77 +177,3 @@ export function useInfiniteLane<P, C>(
   };
 }
 
-/**
- * What a publication does to a list the browser has already deepened — the one
- * merge policy Lane ships, and the reason {@link LaneMergePublication} exists.
- *
- * A route republishes page 1 on every navigation and every `refresh`. If it is
- * the page the list already starts with, the pages the browser fetched after it
- * are still the pages that follow it, so the list keeps its depth: the
- * published page 1, then the pages standing behind it, with the cursors and
- * `hasNext` that describe them. Anything else — a different page 1, or nothing
- * standing there at all (the store answers that one) — is a list the browser's
- * depth no longer describes, and the publication stands alone.
- *
- * Equality is `replaceEqualDeep`'s, the same notion the store shares refetched
- * values by: deep for arrays and plain objects, identity for everything else.
- */
-const mergeFirstPage: LaneMergePublication = ({ held, published }) => {
-  const incoming = asInfiniteValue(published);
-  const standing = asInfiniteValue(held);
-
-  // Nothing to keep: a list one page deep *is* the publication, and a value of
-  // some other shape is not this list at all.
-  if (!incoming || !standing || standing.pages.length < 2) {
-    return published;
-  }
-
-  const first = incoming.pages[0];
-
-  if (replaceEqualDeep(standing.pages[0], first) !== standing.pages[0]) {
-    return published;
-  }
-
-  return {
-    hasNext: standing.hasNext,
-    pages: [first, ...standing.pages.slice(1)],
-    params: standing.params,
-  };
-};
-
-function asInfiniteValue(
-  value: unknown,
-): InfiniteLaneValue<unknown, unknown> | undefined {
-  return typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as InfiniteLaneValue<unknown, unknown>).pages)
-    ? (value as InfiniteLaneValue<unknown, unknown>)
-    : undefined;
-}
-
-/**
- * Colocate an infinite list's key, pagination, and read options — `laneRead`
- * for `useInfiniteLane`. Identity at runtime: `P` and `C` are inferred where
- * the list is defined, and the `key` is tagged with the accumulated
- * `InfiniteLaneValue`, so writes through it are checked against the whole list.
- *
- * The external form — first page from the route — comes first, so a spec that
- * declares `loader: external` lands on it.
- */
-export function infiniteLaneRead<P, C>(
-  spec: InfiniteLaneExternalReadSpec<P, C>,
-): InfiniteLaneExternalReadSpec<P, C> & {
-  key: LaneKeyOf<InfiniteLaneValue<P, C>>;
-};
-export function infiniteLaneRead<P, C>(
-  spec: InfiniteLaneReadSpec<P, C>,
-): InfiniteLaneReadSpec<P, C> & { key: LaneKeyOf<InfiniteLaneValue<P, C>> };
-export function infiniteLaneRead<P, C>(
-  spec: InfiniteLaneAnyReadSpec<P, C>,
-): InfiniteLaneAnyReadSpec<P, C> & {
-  key: LaneKeyOf<InfiniteLaneValue<P, C>>;
-} {
-  return spec as InfiniteLaneAnyReadSpec<P, C> & {
-    key: LaneKeyOf<InfiniteLaneValue<P, C>>;
-  };
-}

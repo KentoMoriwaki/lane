@@ -20,7 +20,7 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
-import { setExternalRefFactory } from "../core";
+import { REASK_INTERVAL, setExternalRefFactory } from "../core";
 import { readOrCreate } from "./test-utils";
 import {
   createLane,
@@ -41,6 +41,7 @@ import type {
   LaneGatedResult,
   LaneHydrationSnapshots,
   LaneKeyOf,
+  LaneLoader,
   LaneRead,
   LaneReadSpec,
   LaneResult,
@@ -725,6 +726,98 @@ describe("the owner-ask", () => {
 
     expect(refresh).toHaveBeenCalledTimes(1);
   });
+
+  it("asks again while a subscribed reader is still waiting", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    const unsubscribe = subscribe(lane, ["task", "t1"]);
+    lane.invalidate(["task", "t1"]);
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // A `router.refresh()` that a navigation aborted leaves the wait unfilled
+    // and the reader suspended — and a suspended reader does not read again on
+    // its own. The lane looks again on an interval for as long as someone is
+    // subscribed to the wait.
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(3);
+
+    // The answer ends it: the publication settles the wait, and the next look
+    // finds nothing waiting.
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published again" }],
+    });
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL * 2);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(3);
+
+    unsubscribe();
+  });
+
+  it("does not ask again for a wait nobody is subscribed to", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.invalidate(["task", "t1"]);
+
+    // A wait with no subscriber is a hidden tree's, or a departed reader's.
+    // Its reveal reads and asks for itself; the lane does not on its behalf.
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL * 3);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops asking again once the wait has timed out", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    const unsubscribe = subscribe(lane, ["task", "t1"]);
+    lane.invalidate(["task", "t1"]);
+
+    readOrCreate<string>(lane, ["task", "t1"], external).catch(() => {});
+    await flushMicrotasks();
+
+    await vi.advanceTimersByTimeAsync(EXTERNAL_TIMEOUT);
+    await flushMicrotasks();
+    const asked = refresh.mock.calls.length;
+    expect(asked).toBeGreaterThan(1);
+    expect(asked).toBeLessThanOrEqual(1 + EXTERNAL_TIMEOUT / REASK_INTERVAL);
+
+    // Rejected and cleared: nothing is waiting, so nothing is asked for until
+    // a read makes a fresh wait.
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL * 2);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(asked);
+
+    unsubscribe();
+  });
 });
 
 describe("converging on the answer", () => {
@@ -1352,6 +1445,244 @@ describe("an external reader", () => {
 });
 
 /**
+ * A republication is a source change that leaves the key and the lane exactly
+ * as they were — the one shape that lands on the seam between the two halves of
+ * a reader's subscription (opened in a layout effect, closed in the matching
+ * passive one, and React runs an arriving layout effect before a departing
+ * passive cleanup). What the reader has to come out of it with is one live
+ * subscription: the channel every client write and every owner-ask travels on
+ * afterwards, and the one thing the render-time source switch cannot supply.
+ */
+describe("a reader across a republication", () => {
+  it("takes a client write after a republication", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const container = mount();
+
+    await act(async () => {
+      container.root.render(republishApp(lane, published("server-1")));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("server-1");
+
+    // The navigation: a new snapshots object for the same key. This much
+    // converges through the render-time source switch, which needs no
+    // subscription at all.
+    await act(async () => {
+      container.root.render(republishApp(lane, published("server-2")));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("server-2");
+
+    // And this is what does need one: a write notifies subscribers and reaches
+    // nobody else. A reader left subscribed to nothing sits on `server-2`.
+    await act(async () => {
+      await lane.set(["task", "t1"], "client-3");
+      await settlePromiseHandlers();
+    });
+
+    expect(container.element.textContent).toBe("client-3");
+  });
+
+  it("asks the owner after a republication, once, and stops when it leaves", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane();
+    const container = mount();
+
+    await act(async () => {
+      container.root.render(
+        republishApp(lane, published("server-1"), { refresh }),
+      );
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      container.root.render(
+        republishApp(lane, published("server-2"), { refresh }),
+      );
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("server-2");
+
+    // The ask hangs off the re-read, and the re-read off the notification: an
+    // invalidation nobody is subscribed for asks nobody for anything.
+    await act(async () => {
+      lane.invalidate(["task", "t1"]);
+      await settlePromiseHandlers();
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // The other end of "exactly one". Unmounting closes every subscription the
+    // reader opened, so nothing answers the next invalidation; a second one
+    // left open would answer it from a tree that is gone.
+    await act(() => {
+      container.root.unmount();
+    });
+    roots.splice(roots.indexOf(container.root), 1);
+
+    await act(async () => {
+      hydrateMany(lane, {
+        entries: [{ key: ["task", "t1"], data: "server-3" }],
+      });
+      lane.invalidate(["task", "t1"]);
+      await settlePromiseHandlers();
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a client-owned reader's subscription alone", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const loader = vi.fn(async () => "client-1");
+    const container = mount();
+
+    // A client-owned read is not a consumer of the publication lineage, so a
+    // republication is not a source change for it — its effects keep the key
+    // object they had and never re-run. Asserted from outside, as a fact about
+    // what still reaches the reader rather than about which deps moved.
+    await act(async () => {
+      container.root.render(
+        republishApp(lane, published("server-1"), { id: "client", loader }),
+      );
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("client-1");
+
+    await act(async () => {
+      container.root.render(
+        republishApp(lane, published("server-2"), { id: "client", loader }),
+      );
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+
+    await act(async () => {
+      await lane.set(["task", "client"], "client-2");
+      await settlePromiseHandlers();
+    });
+
+    expect(container.element.textContent).toBe("client-2");
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens one subscription across a republication under StrictMode", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const container = mount();
+
+    // StrictMode drives the same pair of effects out of step from the other
+    // side — a layout create against a layout destroy that does not exist, with
+    // the passive cleanup in between — so both orderings meet in this reader.
+    await act(async () => {
+      container.root.render(strict(republishApp(lane, published("server-1"))));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      container.root.render(strict(republishApp(lane, published("server-2"))));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("server-2");
+
+    await act(async () => {
+      await lane.set(["task", "t1"], "client-3");
+      await settlePromiseHandlers();
+    });
+
+    expect(container.element.textContent).toBe("client-3");
+  });
+
+  it("re-subscribes at a reveal that follows a republication", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const container = mount();
+    const second = published("server-2");
+
+    await act(async () => {
+      container.root.render(republishApp(lane, published("server-1")));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+    expect(container.element.textContent).toBe("server-1");
+
+    await act(async () => {
+      container.root.render(republishApp(lane, second));
+      await settlePromiseHandlers();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await settlePromiseHandlers();
+    });
+
+    // Hiding tears down both halves; the reveal re-creates the layout half over
+    // a passive half that is gone. The subscription being closed on the way in
+    // is the one the republication opened, which is what makes this the case
+    // the open guard has to read correctly from both directions.
+    await act(async () => {
+      container.root.render(republishApp(lane, second, { mode: "hidden" }));
+      await settlePromiseHandlers();
+    });
+
+    const fallbacksBeforeReveal = fallbackRenders;
+
+    await act(async () => {
+      container.root.render(republishApp(lane, second, { mode: "visible" }));
+      await settlePromiseHandlers();
+    });
+
+    expect(container.element.textContent).toBe("server-2");
+    expect(fallbackRenders).toBe(fallbacksBeforeReveal);
+
+    await act(async () => {
+      await lane.set(["task", "t1"], "client-3");
+      await settlePromiseHandlers();
+    });
+
+    expect(container.element.textContent).toBe("client-3");
+  });
+});
+
+/**
  * Type-level expectations. Never called — `pnpm typecheck` is what enforces
  * them, which is where the external read's shape is meant to fail: it carries no
  * option a loader would answer to, so writing one is an error at the definition.
@@ -1549,6 +1880,71 @@ function hydratedExternalApp(
       mode,
     }),
   });
+}
+
+/** One publication of one key — the payload shape a navigation re-delivers. */
+function published(data: string): LaneHydrationSnapshots {
+  return { entries: [{ key: ["task", "t1"], data }] };
+}
+
+/**
+ * The reader an application writes, with its key built during render. `useLane`
+ * keeps, for its effects, the key object from the render it last switched
+ * source on — so a fresh one per render makes a republication exactly what
+ * replaces it, and the subscription effects see a dep tuple that moved.
+ * (`taskRead` above is the other shape, one key object for the module's
+ * lifetime, whose effects a republication never reaches.)
+ */
+function RepublishProbe({
+  id,
+  loader,
+}: {
+  id: string;
+  loader: LaneLoader<string>;
+}) {
+  const { promise } = useLane({ key: ["task", id], loader });
+
+  return React.createElement(
+    "div",
+    { "data-testid": "value" },
+    React.use(promise).data,
+  );
+}
+
+function republishApp(
+  lane: Lane,
+  snapshots: LaneHydrationSnapshots,
+  {
+    id = "t1",
+    loader = external,
+    mode = "visible",
+    refresh,
+  }: {
+    id?: string;
+    loader?: LaneLoader<string>;
+    mode?: Mode;
+    refresh?: () => void;
+  } = {},
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    refresh,
+    children: React.createElement(React.Activity, {
+      children: React.createElement(
+        React.Suspense,
+        { fallback: React.createElement(Fallback) },
+        React.createElement(LaneHydration, {
+          children: React.createElement(RepublishProbe, { id, loader }),
+          snapshots,
+        }),
+      ),
+      mode,
+    }),
+  });
+}
+
+function strict(element: React.ReactElement): React.ReactElement {
+  return React.createElement(React.StrictMode, null, element);
 }
 
 function mount(): { element: HTMLDivElement; root: Root } {

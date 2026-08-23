@@ -165,8 +165,10 @@ task touches that rule.
   value, not on the hook. A list whose first page the route loaded takes
   `loader: external` and is seeded with `infiniteLaneSnapshot(read, firstPage,
   initialCursor)` — the only place a page becomes the `{ pages, params, hasNext }`
-  the key holds; `loadMore` then adds depth from the browser, and a republication
-  of a deep-equal page 1 keeps that depth (an `invalidate` resets it).
+  the key holds; `loadMore` then adds depth from the browser. A publication is
+  authoritative and replaces the key at page 1 — the depth lasts as long as
+  nothing makes the route render again, so converge with `set` rather than
+  `invalidate` where it matters.
   → `references/common-mistakes.md`, `references/api-reference.md#the-first-page-from-the-route`
 
 ## Migrating React Query / SWR? Five traps

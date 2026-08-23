@@ -302,11 +302,13 @@ const items = data.pages.flatMap((page) => page.items);
 
 Three things to carry across:
 
-- **The refetch cost is identical, and it is not a Lane tax.** Invalidating a
-  five-page list is five sequential requests in both libraries, because each
-  cursor is re-derived from the page before it. What differs is what the user
-  sees: the transition keeps the list on screen throughout, and a failure
-  part-way through leaves it rendered with `error` beside it.
+- **Invalidating does not refetch every page.** `useInfiniteQuery` re-reads all
+  the pages it holds — five sequential requests for a five-page list, since each
+  cursor is re-derived from the page before it. Lane reads the first page and
+  stops: a load fills an entry holding nothing, and that is where the list
+  starts. Buy the depth back where you want it, at a cost you can see:
+  `invalidate()`, then `loadMore()` as many times as it is worth. The transition
+  keeps the old list on screen while the new one loads either way.
 - **`hasNextPage` moves into the data.** Read `data.hasNext` from the same
   `use(promise)` that gives you the rows — actions from the hook, data from the
   promise.

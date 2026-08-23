@@ -142,6 +142,17 @@ collected with its payload. The rules:
   `router.refresh()` when a navigation starts, so an ask made once and never
   repeated would leave a wait unfilled. Every read of an unfilled wait asks
   again, which is how a reveal after a navigation repairs itself.
+- **And again while someone is still waiting.** A reader that is already
+  suspended does not read again on its own — it re-renders only when its
+  promise settles — so a read-driven ask cannot repair *that* reader when its
+  ask was aborted (a mutation that invalidates a key and then navigates does
+  exactly this). For as long as a wait that was asked for is unsettled and a
+  committed reader is subscribed to it, Lane looks again every `REASK_INTERVAL`
+  (2 s) and asks once more; a publication ends it, and so does the wait's own
+  timeout. A wait nobody is subscribed to — a hidden tree's — is not re-asked
+  for: its reveal reads and asks for itself. The cost is one render the aborted
+  ask had already paid for; the measurement is in [the two mutation
+  channels](./integrations.md#the-two-mutation-channels).
 - **Never before the first publication.** A reader mounting under streaming SSR,
   or outside every `<LaneHydration>` boundary, is waiting for a payload that is
   already on its way. It waits in silence.
@@ -987,10 +998,10 @@ row keeps its own Suspense boundary and pending state.
 ### `useInfiniteLane(read)` — a cursor-paginated list
 
 Read an infinite list as **one key holding the whole accumulated list**, with the
-page depth read back out of the cached value rather than kept in the key or in
-component state. It is `useLane` plus a loader that walks the cursor chain as
-deep as [`current`](#uselaneread) already is — no core machinery,
-nothing an ordinary read does not already do.
+page depth in the value rather than in the key or in component state. It is
+`useLane` plus a loader that reads the first page and a `loadMore` that appends
+the rest through `update` — no core machinery, nothing an ordinary read does not
+already do.
 
 ```ts
 function useInfiniteLane<P, C>(read: {
@@ -1085,14 +1096,18 @@ const items = data.pages.flatMap((page) => page.items);
 
 Two things about this hook are easy to guess wrong.
 
-**A re-read costs one request per page already loaded, and they run
-sequentially.** Any refresh of the key — `invalidate`, focus, mount, a poll —
-re-walks the chain from the first page, because page N+1's cursor does not exist
-until page N has come back. A list five pages deep is five round trips. That is
-inherent to cursor pagination, and the same cost the equivalent React Query list
-pays; see [migrating](./migrating.md#step-6--infinite-lists). What Lane's model
-buys is what the user sees while it happens: the transition holds the list on
-screen, and a failure part-way through keeps it there with `error`.
+**A re-read is the first page, not the pages you have.** A load is what fills an
+entry holding nothing — a first read, a read after `invalidate`, a read after
+collection — and what this list holds when nothing has been loaded is where it
+starts. The depth on top of that was `loadMore`'s, and it goes with the value it
+was appended to. Reproducing it would mean walking the cursor chain, one
+*sequential* request per page (page N+1's cursor does not exist until page N is
+back), on a path `refetchOnFocus` and a poll fire too — so it is left to the
+caller, who knows what it costs: `invalidate()`, then `loadMore()` for the depth
+worth buying back. React Query's `useInfiniteQuery` refetches every loaded page
+instead; see [migrating](./migrating.md#step-6--infinite-lists). The transition
+still holds the list on screen while the shorter one loads, and a failure keeps
+it there with `error`.
 
 **`hasNext` is in the resolved value, not on the hook.** The hook returns a
 promise it never resolves, so it cannot know — and keeping the flag next to the
@@ -1109,9 +1124,6 @@ Notes:
   append path.** A refresh runs as a read and gets the read's abort signal; an
   updater is handed the current value and no controller, so a `loadMore` in
   flight cannot be aborted.
-- **A list can come back shorter.** If a re-derived cursor returns `null` before
-  the walk reaches the old depth, the walk stops there — rows were deleted
-  underneath it, and the shorter list is the truth.
 - **`loadMore`'s identity follows `fetchPage` / `nextCursor`** (a `useCallback`
   over those plus the lane and serialized key) — stable exactly when the
   caller's functions are. Driving it from an effect (a scroll sentinel) is the
@@ -1131,10 +1143,10 @@ Notes:
   a button calling `loadMore` again. A caller can also await `loadMore`: it
   hands back the entry's next promise, which *resolves* with `error` set rather
   than rejecting.
-- **Depth is only as durable as the entry.** Remounting reuses the cached value
-  (no request) and the depth comes back with it. An `invalidate` while *nothing*
-  is mounted drops the entry, so the next mount starts from one page — the same
-  asymmetry described under [`current`](#uselaneread).
+- **Depth is as durable as the value.** Remounting reuses the cached value (no
+  request) and the depth comes back with it; anything that clears the value —
+  `invalidate`, `remove`, collection — takes the depth with it, and the next
+  read starts where the list starts.
 
 #### The first page from the route
 
@@ -1180,33 +1192,37 @@ const snapshots = {
 //                       hasNext: read.nextCursor(firstPage, null) !== null })
 ```
 
-**What a republication does to the depth.** A route republishes page 1 on every
-navigation and every `refresh`, and the list on screen is usually deeper than
-that:
+**A publication replaces the key.** A route republishes page 1 on every
+navigation and every `refresh`, and what it publishes is what the key holds —
+one page, however deep the list on screen was a moment before. The store never
+compares a publication with what it is standing on, and there is no depth it
+carries over.
 
-| When the publication lands | The key holds |
-| --- | --- |
-| the entry holds a settled list whose page 1 is deep-equal to the published one | the published page 1 followed by the pages standing behind it — `params` and `hasNext` from the list that was there |
-| page 1 is a different page | the publication, one page deep |
-| the entry holds nothing (it was invalidated, removed, or collected) | the publication, one page deep |
+Not comparing is the rule, not an omission. A page 1 deep-equal to the one
+already there is no evidence that nothing happened to the list: a row can be
+edited and edited back, a page deleted and restored, between two publications.
+Equality would be the store guessing at a history it cannot see. A publication
+is the owner's whole answer for that key, so Lane takes it whole.
 
-So an explicit `invalidate` always resets to one page, and that is the point:
-saying "this key is stale" says it about pages 2..n too, and they cannot be
-re-derived without walking the cursor chain again.
+**The browser keeps its depth by not having the route render again.** Depth
+survives for exactly as long as nothing republishes the key — a `set` or an
+`update` converging the row a mutation just confirmed, a navigation that leaves
+this route standing, anything at all that does not reach the route.
 
-The comparison is this read's, but it runs **in the store, when the publication
-lands** — not in a reader's render or effect. A reader would have to commit the
-shallow list on its way to the deep one (a visible frame of the wrong list), and
-a reader hidden in an [`<Activity>`](./consistency.md#activity) is not there to
-be told at all, so its depth has to be intact by the time it is revealed.
+That is the lever, and it is the one to reach for: on a screen whose list depth
+matters, converge derived data from the mutation's own response with `set`
+rather than marking it stale with `invalidate`. An `invalidate` of *any* key the
+route owns is answered by [`refresh`](#refresh--the-owner-ask), and a route that
+renders again republishes everything it publishes — this list included, at page
+1. The list's depth is not what makes an `invalidate` reach it; the route is.
 
-**The limit: a depth nobody has rendered is not preserved.** "The entry holds a
-settled list" is answered synchronously, from the promise cache protocol's
-`status` / `value` stamps — Lane writes them on a value it was handed (a
-publication, `set`), React writes them on a promise a reader has `use()`d. An
-append made with `lane.update` that no reader ever rendered carries neither, so
-a publication landing on it starts again at one page. In a mounted list this
-does not arise: `loadMore`'s result is what the reader renders.
+`invalidate` on the list itself discards the depth by design: saying "this key
+is stale" says it about pages 2..n too, and they cannot be re-derived without
+walking the cursor chain again. The owner answers with page 1, and the list
+starts again there — as it does for a publication that lands while the reader
+is hidden in an [`<Activity>`](./consistency.md#activity), or one that lands
+before `loadMore`'s page has arrived. There is one rule, and no window in which
+a different one applies.
 
 ### Deferred reads (render first, swap when ready)
 
@@ -1972,6 +1988,23 @@ Which to use is not a matter of taste — see
 behavioural differences (one round trip vs. parallelism, and what a revalidating
 Server Action always re-renders).
 
+**`update` needs a current value; `set` and `invalidate` do not.** An updater
+is handed what the key holds, so on an entry that holds nothing — never
+published, invalidated, or collected because its payload and every reader were
+gone ([retention](#external-retention)) — `update` returns `undefined` and the
+updater does not run. That is the ordinary `update` contract, and it is where a
+screen that is *not on display* differs from the one you are looking at: the
+visible screen's readers hold the value, so it is there to update; a screen
+that has left the router's keep-alive may or may not still have it, depending
+on whether the router still holds its payload. So for a key no reader is
+showing, say what you know in a form that does not need a current value —
+`set(key, value)` when you have the value, `invalidate(key)` when you do not
+(the shell it marks is never collected, so the mark is always there for the
+reveal to find) — and treat `update` as best-effort: where it finds nothing,
+the next reveal reads the owner's version, which has the mutation in it anyway.
+The difference is only whether the screen comes back instantly or through one
+fallback.
+
 In a client router the revalidation channel is the router's own — see
 [Data mode](./integrations.md#data-mode--loaders-publish-into-lane).
 
@@ -2069,7 +2102,13 @@ adds an ask for a payload already in flight.
   payload is *already* gone: there is nothing to take the place of, so it is
   held by its readers alone and can be collected with them — the next read waits
   and asks the owner, the same recovery as for a collected publication, and the
-  state the owner is in anyway. The **shell** is what is never collected:
+  state the owner is in anyway. "Its readers" means the readers that have
+  *adopted* it: a reader keeps alive the promise it rendered, and a reader in a
+  hidden `<Activity>` adopts nothing until its reveal, so a write made while a
+  screen is hidden lives with the payload — or, if that is gone, with no one —
+  until the screen comes back. A visible reader adopts in the transition the
+  write opens, so on the screen you are looking at the new value is held the
+  moment it lands. The **shell** is what is never collected:
   `invalidate`, `remove`, and the sweep all leave it standing, so a key that has
   been published stays a key an owner fills. Client-owned entries are untouched
   by any of this.

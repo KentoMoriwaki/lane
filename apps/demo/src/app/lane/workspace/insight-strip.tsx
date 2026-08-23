@@ -37,7 +37,10 @@ export function InsightStrip() {
           and recomputed them; the mutation's own response carries them now
           (`api/hooks.ts`), so they change in the same commit as the row that
           moved them and there is no in-between state to draw. */}
-      <div className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3">
+      <div
+        data-testid="insight-strip"
+        className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3"
+      >
         {cards.map((card) => (
           <InsightCardButton
             key={card.key}

@@ -99,26 +99,47 @@ export function TaskRow({
   }
 
   return (
-    <Link
-      href={href}
-      scroll={false}
-      aria-label={optimisticTask.title}
-      aria-current={isSelected ? "page" : undefined}
+    <div
       // The row's identity, in the DOM: what the list's order policy decided,
       // readable without matching on a title that an edit can change.
       data-task-id={task.id}
       className={cn(
-        "group relative flex items-center gap-3 border-l-2 border-transparent py-2.5 pl-3 pr-2 text-sm outline-none transition-colors",
-        "hover:bg-accent/60 focus-visible:bg-accent/60",
+        "group relative flex items-center gap-3 border-l-2 border-transparent py-2.5 pl-3 pr-2 text-sm transition-colors",
+        "hover:bg-accent/60 focus-within:bg-accent/60",
         isSelected && "bg-accent border-l-cobalt",
         isMine && !isSelected && "border-l-cobalt/40",
         dimmed && "opacity-60",
         isClosed && "text-muted-foreground",
       )}
     >
-      <PriorityIcon priority={optimisticTask.priority} className="shrink-0" />
+      {/* The way into the task, laid *behind* the row rather than wrapped
+          around it. A link that contains the controls makes every one of them
+          responsible for cancelling a navigation it never asked for — and a
+          control that only stops propagation (a popover trigger) still leaves
+          the browser following the anchor it sits in. Positioned, so it covers
+          the row and paints beneath the controls below, which carry `relative`
+          to sit on top: interactive content is never nested in the link. */}
+      <Link
+        href={href}
+        scroll={false}
+        aria-label={optimisticTask.title}
+        aria-current={isSelected ? "page" : undefined}
+        // Going where you already are is not a navigation, and here it is a
+        // destructive one: this href is the panel's own URL, so a click on the
+        // open row navigates *from* the task route rather than from the list,
+        // which is not the referrer the interception matches — the router
+        // renders the task without the list behind it. Nothing to do instead:
+        // the panel is already open on this task.
+        onClick={isSelected ? (event) => event.preventDefault() : undefined}
+        className="absolute inset-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      />
 
-      <div onClick={stopNavigation}>
+      <PriorityIcon
+        priority={optimisticTask.priority}
+        className="relative shrink-0"
+      />
+
+      <div className="relative">
         <StatusControl
           variant="icon"
           value={optimisticTask.status}
@@ -139,7 +160,7 @@ export function TaskRow({
         />
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <div className="pointer-events-none relative flex min-w-0 flex-1 flex-col gap-1">
         <span
           className={cn(
             "truncate font-medium text-foreground",
@@ -196,10 +217,7 @@ export function TaskRow({
         />
       )}
 
-      <div
-        onClick={stopNavigation}
-        className="opacity-0 transition-opacity group-hover:opacity-100 data-[open=true]:opacity-100"
-      >
+      <div className="relative opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 data-[open=true]:opacity-100">
         <DropdownMenu>
           <DropdownMenuTrigger
             className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -218,16 +236,7 @@ export function TaskRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </Link>
+    </div>
   );
 }
 
-/**
- * A click on a control inside the row is not a click on the row. Both halves
- * matter: `stopPropagation` keeps `<Link>`'s own handler from routing, and
- * `preventDefault` keeps the browser from following the anchor it is nested in.
- */
-function stopNavigation(event: React.MouseEvent) {
-  event.stopPropagation();
-  event.preventDefault();
-}

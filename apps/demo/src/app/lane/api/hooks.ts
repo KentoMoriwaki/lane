@@ -6,6 +6,7 @@ import type {
   CreateTaskInput,
   Project,
   Task,
+  TaskMutationResult,
   TaskPage,
   TeamLabel,
   UpdateTaskInput,
@@ -113,28 +114,35 @@ export function useInsights() {
  * channels). The question each mutation answers is *"do I want the screen read
  * again?"*, and this workspace answers it both ways.
  *
- * **Editing a task: no.** The API answers with the task as it now is, and every
- * key that has to change is either that task or something derived from it. So
- * the hook calls the embedded API from the browser — same `endpoints.ts` the
- * route reads through, same typed client, no Server Action in the path — and
- * then converges the lane itself. What that convergence *is* depends on where
- * the edit was made, which is the `surface` every one of these hooks takes:
+ * **Editing a task: no — and on the list screen, not once.** The API answers
+ * with everything the edit changed: the task as it now is, and the two numbers
+ * derived from it, recomputed by the handler after the write
+ * (`server/team/routes.ts`). So the hook calls the embedded API from the
+ * browser — same `endpoints.ts` the route reads through, same typed client, no
+ * Server Action in the path — and then converges the lane from the answer it is
+ * already holding. What that convergence *is* depends on where the edit was
+ * made, which is the `surface` every one of these hooks takes:
  *
  * **`"panel"` — the list is on screen beside the detail.** The intercepted
- * panel, and the status control on a row.
+ * panel, and the status control on a row. **Nothing here asks the route to
+ * render.**
  *
  * - `set(task(id))` — the entity that came back, in place, no round trip;
  * - `updateAll(["tasks"])` — the same row patched inside every list holding it,
  *   in whichever *page* holds it and at the index it already occupies.
  *   Membership is not recomputed here: a task that no longer matches a filter
  *   keeps its place until the next publication sorts it out, which is the whole
- *   reason a row never jumps under the cursor. The rerender that follows
- *   republishes page 1 unchanged, so the pages the browser loaded after it stay
- *   loaded — the list does not collapse to one page because a status moved;
- * - `invalidate(insights())` and `invalidate(projectCounts())` — the two counts
- *   nothing in the response can compute. Marking them is all this does: the
- *   mounted strip and sidebar re-read, Lane asks the owner *once* for both, and
- *   the route's next publication answers.
+ *   reason a row never jumps under the cursor. No publication follows this
+ *   edit, so the pages the browser loaded stay exactly as they were — nothing
+ *   lands on page 1 for the depth to survive;
+ * - `set(insights())` and `set(projectCounts())` — the two counts, from the
+ *   same response. They are derived from the tasks table and the client cannot
+ *   compute them; the *server* can, and it just did, at the moment it knew
+ *   they had moved. The strip and the sidebar take the new numbers the way the
+ *   row takes its new status — as a value that arrived, not as a reason to read.
+ *
+ * That is the whole of it: one `PATCH`, four writes, zero reads. `invalidate`
+ * would mean *read again*, and there is nothing left to read.
  *
  * **`"page"` — no list is on screen.** The full task page at
  * `/lane/task/<id>`, which is what a direct visit, a reload, or a shared link
@@ -142,14 +150,17 @@ export function useInsights() {
  *
  * - `set(task(id))` — the same;
  * - `invalidateAll(["tasks"])` — every list entry this lane holds is marked
- *   stale rather than rewritten. Patching a row nobody is looking at would only
- *   guess at a sort order the server owns, and there is no jump to avoid.
+ *   stale rather than rewritten. This is the one thing the response genuinely
+ *   cannot carry: where the edited row now sorts among rows this client has
+ *   never seen. Patching a list nobody is looking at would only guess at an
+ *   order the server owns, and there is no jump to avoid.
  *   **This resets the list to one page, by design**: saying "stale" about a
  *   list says it about pages 2..n too, and those cannot be re-derived without
  *   walking the cursor chain again. So the list revealed after an edit made
  *   here is the route's first page, freshly sorted, and the browser deepens it
  *   again if the user wants it deeper;
- * - the two counts — the same.
+ * - the two counts — `set` from the response, exactly as in the panel. Being on
+ *   another screen does not make a number the server already computed unknown.
  *
  * Nothing is *asked* by the second form while the page is up: a marked key with
  * no reader stays marked. The ask comes when a list is revealed again — the
@@ -186,10 +197,10 @@ export function useUpdateTask(taskId: string, surface: TaskSurface) {
 
   return React.useCallback(
     async (input: UpdateTaskInput): Promise<Task> => {
-      const task = await updateTask(ctx, taskId, input);
-      convergeOnTask(lane, task, surface);
+      const result = await updateTask(ctx, taskId, input);
+      convergeOnTask(lane, result, surface);
 
-      return task;
+      return result.task;
     },
     [ctx, lane, surface, taskId],
   );
@@ -201,14 +212,14 @@ export function useDeleteTask(surface: TaskSurface) {
 
   return React.useCallback(
     async (taskId: string): Promise<void> => {
-      await deleteTask(ctx, taskId);
+      const { insights, projectCounts } = await deleteTask(ctx, taskId);
       if (surface === "panel") {
         lane.updateAll<TaskList>(["tasks"], (list) => withoutRow(list, taskId));
       } else {
         lane.invalidateAll(["tasks"]);
       }
-      lane.invalidate(workspaceReads.insights().key);
-      lane.invalidate(workspaceReads.projectCounts().key);
+      lane.set(workspaceReads.insights().key, insights);
+      lane.set(workspaceReads.projectCounts().key, projectCounts);
       // The `task(id)` entry is left where it is rather than removed. The
       // detail showing it is still mounted while the view moves back to the
       // list, and removing a key under its reader would suspend it into a
@@ -225,10 +236,10 @@ export function useAddTaskLabel(taskId: string, surface: TaskSurface) {
 
   return React.useCallback(
     async (label: TeamLabel): Promise<Task> => {
-      const task = await addTaskLabel(ctx, taskId, label.id);
-      convergeOnTask(lane, task, surface);
+      const result = await addTaskLabel(ctx, taskId, label.id);
+      convergeOnTask(lane, result, surface);
 
-      return task;
+      return result.task;
     },
     [ctx, lane, surface, taskId],
   );
@@ -240,10 +251,10 @@ export function useRemoveTaskLabel(taskId: string, surface: TaskSurface) {
 
   return React.useCallback(
     async (labelId: string): Promise<Task> => {
-      const task = await removeTaskLabel(ctx, taskId, labelId);
-      convergeOnTask(lane, task, surface);
+      const result = await removeTaskLabel(ctx, taskId, labelId);
+      convergeOnTask(lane, result, surface);
 
-      return task;
+      return result.task;
     },
     [ctx, lane, surface, taskId],
   );
@@ -285,17 +296,31 @@ export function useCreateProject() {
 }
 
 /**
- * What a confirmed task does to the lane. One entity, three sentences: this is
- * it, this is what the lists holding it should do about it, and the numbers
- * computed from it are stale.
+ * What a confirmed task write does to the lane. One response, four sentences:
+ * this is the task, this is what the lists holding it should do about it, and
+ * these are the two numbers it moved.
+ *
+ * Three of the four are `set`, and that is the shape of the claim: **the server
+ * said what changed, so nobody has to ask.** The response was computed by the
+ * handler that did the write, from the same tables a render would read, one
+ * moment later — reading it back would produce the same numbers at the cost of
+ * a round trip and a rerender of a screen that is already right.
  *
  * Only the middle sentence differs by surface, and it is the same distinction
  * either way — *is anyone looking at a list right now?* With the list beside
  * the detail, rewriting the row is what keeps it from moving under the cursor.
  * Without one, marking is strictly better: no order is guessed, and nothing is
- * read until a list is on screen to read it for.
+ * read until a list is on screen to read it for. It is also the one thing here
+ * that is a read at all, which is why `invalidate` appears on this branch and
+ * nowhere else.
  */
-function convergeOnTask(lane: Lane, task: Task, surface: TaskSurface) {
+function convergeOnTask(
+  lane: Lane,
+  result: TaskMutationResult,
+  surface: TaskSurface,
+) {
+  const { task, insights, projectCounts } = result;
+
   lane.set(workspaceReads.task(task.id).key, task);
 
   if (surface === "panel") {
@@ -304,10 +329,8 @@ function convergeOnTask(lane: Lane, task: Task, surface: TaskSurface) {
     lane.invalidateAll(["tasks"]);
   }
 
-  lane.invalidate(workspaceReads.insights().key);
-  // Marked in the same tick as the insights, so both are answered by one
-  // `refresh` — Lane coalesces the asks a single run produces.
-  lane.invalidate(workspaceReads.projectCounts().key);
+  lane.set(workspaceReads.insights().key, insights);
+  lane.set(workspaceReads.projectCounts().key, projectCounts);
 }
 
 /**

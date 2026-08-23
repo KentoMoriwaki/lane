@@ -106,6 +106,12 @@ export async function createProjectAction(
  * None of them expires a tag: `refresh()` alone is the ask, because no cached
  * read holds anything a task can change. The project task counts used to be the
  * exception, and `route-reads.ts` says why they are their own dynamic read now.
+ *
+ * The endpoints answer with the task *and* the two derivations that moved with
+ * it; these actions keep the task and drop the rest. That is not waste being
+ * tolerated — it is the difference between the channels stated in one line. A
+ * route that is about to be re-rendered gets its counters from the render; only
+ * a caller that refuses to re-render needs them in the response.
  */
 
 export async function updateTaskAction(
@@ -113,7 +119,7 @@ export async function updateTaskAction(
   taskId: string,
   input: UpdateTaskInput,
 ): Promise<Task> {
-  const task = await updateTask(ctx, taskId, input);
+  const { task } = await updateTask(ctx, taskId, input);
   refresh();
 
   return task;
@@ -132,7 +138,7 @@ export async function addTaskLabelAction(
   taskId: string,
   labelId: string,
 ): Promise<Task> {
-  const task = await addTaskLabel(ctx, taskId, labelId);
+  const { task } = await addTaskLabel(ctx, taskId, labelId);
   refresh();
 
   return task;
@@ -143,7 +149,7 @@ export async function removeTaskLabelAction(
   taskId: string,
   labelId: string,
 ): Promise<Task> {
-  const task = await removeTaskLabel(ctx, taskId, labelId);
+  const { task } = await removeTaskLabel(ctx, taskId, labelId);
   refresh();
 
   return task;

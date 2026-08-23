@@ -6,6 +6,7 @@ import type {
   Insights,
   Project,
   Task,
+  TaskMutationResult,
   TaskPage,
   TaskPriority,
   TaskScope,
@@ -126,6 +127,12 @@ export async function createTask(
   return (await response.json()) as Task;
 }
 
+/**
+ * The task writes answer with an envelope — the row, plus the insights and
+ * project counts recomputed after it landed (`server/team/routes.ts`). This
+ * route converges its own way and wants the row, so it unwraps and drops the
+ * rest; `/lane` is the one that lives off the whole answer.
+ */
 export async function updateTask(
   ctx: WorkspaceCtx,
   id: string,
@@ -136,7 +143,7 @@ export async function updateTask(
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return ((await response.json()) as TaskMutationResult).task;
 }
 
 export async function deleteTask(ctx: WorkspaceCtx, id: string): Promise<void> {
@@ -157,7 +164,7 @@ export async function addTaskLabel(
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return ((await response.json()) as TaskMutationResult).task;
 }
 
 export async function removeTaskLabel(
@@ -170,7 +177,7 @@ export async function removeTaskLabel(
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return ((await response.json()) as TaskMutationResult).task;
 }
 
 /* ------------------------------ Reference ------------------------------ */

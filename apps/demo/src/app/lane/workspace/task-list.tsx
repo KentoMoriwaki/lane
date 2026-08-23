@@ -1,10 +1,11 @@
 "use client";
 
 import type { Task } from "@/server/api";
-import { Inbox, ListTodo } from "lucide-react";
+import { Inbox, ListTodo, Loader2 } from "lucide-react";
 import * as React from "react";
 import { useTasks } from "@/app/lane/api/hooks";
 import type { TaskFilters } from "@/app/lane/api/endpoints";
+import { Button } from "@/components/ui/button";
 import { PRIORITY_GROUP_ORDER, PRIORITY_META } from "@/lib/task-meta";
 import { useSessionUser, useWorkspaceRefresh } from "./workspace-provider";
 import { EmptyState, ErrorChip } from "./feedback";
@@ -20,6 +21,17 @@ import { useSelectedTaskId, useWorkspaceUrl } from "./use-workspace-url";
  * list, which is why this component neither renders the detail nor knows that
  * it exists — it only says which task each row points at, and reads the current
  * pathname to know which of them is the open one.
+ *
+ * **The first page is the route's; the depth is the browser's.** `useTasks` is
+ * an infinite read on one key: the route published page 1, `loadMore` fetches
+ * the next from the browser, and both live under `["tasks", filters]`. What
+ * this component does with that is flatten it — the rows are the rows, whoever
+ * fetched them — and offer the button at the bottom while `hasNext`. A scroll
+ * sentinel would work the same way; a button is the version whose every load is
+ * something the user asked for.
+ *
+ * The display-order policy below runs over the flattened list, so an appended
+ * page arrives at the end (where the server's order puts it) and stays there.
  */
 export function TaskList() {
   const { filters, taskHref, closeTask, resetFilters } = useWorkspaceUrl();
@@ -35,8 +47,15 @@ export function TaskList() {
   );
   const { id: userId } = useSessionUser();
   const { refresh, isRefreshing, error } = useWorkspaceRefresh();
-  const { promise, isInvalidationPending } = useTasks(filters);
-  const { data: tasks } = React.use(promise);
+  const { promise, isInvalidationPending, loadMore } = useTasks(filters);
+  const { data, error: readError } = React.use(promise);
+  // The pages, as one list. The first belongs to the route and the rest to the
+  // browser; from here down there is no difference between them, which is the
+  // point of them sharing a key.
+  const tasks = React.useMemo(
+    () => data.pages.flatMap((page) => page.items),
+    [data.pages],
+  );
   const displayed = useDisplayOrder(filters, tasks);
 
   const dimmed = isInvalidationPending || isRefreshing;
@@ -107,6 +126,31 @@ export function TaskList() {
           />
         ))}
       </div>
+      {data.hasNext ? (
+        <div className="flex justify-center border-t border-border px-4 py-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="load-more"
+            disabled={isInvalidationPending}
+            onClick={() => {
+              void loadMore();
+            }}
+          >
+            {isInvalidationPending ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                Loading
+              </>
+            ) : readError ? (
+              "Try again"
+            ) : (
+              "Load more"
+            )}
+          </Button>
+        </div>
+      ) : null}
     </>
   );
 }

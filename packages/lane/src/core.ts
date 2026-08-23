@@ -116,6 +116,11 @@ type LaneState = {
   refresh: (() => void) | undefined;
   /** An ask is already scheduled for this tick — see {@link askOwner}. */
   refreshScheduled: boolean;
+  /**
+   * The next look at whether anyone is still waiting — see
+   * {@link scheduleReask}. One per lane; absent when nothing was asked for.
+   */
+  reaskTimer: ReturnType<typeof setTimeout> | undefined;
 };
 
 type LanePromiseSettlement = {
@@ -223,6 +228,7 @@ export function createLane(options: LaneOptions = {}): Lane {
     gcTime: options.gcTime ?? DEFAULT_GC_TIME,
     refresh: options.refresh,
     refreshScheduled: false,
+    reaskTimer: undefined,
     revisionCounter: 0,
     warmTime: options.warmTime ?? DEFAULT_WARM_TIME,
     sweepAt: undefined,
@@ -543,8 +549,59 @@ function askOwner(state: LaneState, entry: LaneEntry): void {
     // Cleared first: a `refresh` that throws must not wedge the lane, and an
     // ask raised from inside one belongs to the next tick.
     state.refreshScheduled = false;
+    scheduleReask(state);
     state.refresh?.();
   });
+}
+
+/**
+ * How long an ask is given before Lane asks again for a reader still waiting.
+ * Shorter than {@link EXTERNAL_TIMEOUT} by enough to ask several times.
+ */
+export const REASK_INTERVAL = 2_000;
+
+/**
+ * An ask can be lost on its way: a `router.refresh()` is aborted by a
+ * navigation that starts while it is in flight, which is what a mutation that
+ * invalidates and then navigates does in one breath. The wait it was meant to
+ * fill has no reader rendering — a suspended reader re-renders only when its
+ * promise settles — so nothing reads, and nothing asks. Without this, the
+ * reader would sit in the boundary's fallback until the wait's timeout.
+ *
+ * So while a wait that was asked for is still unsettled **and someone is
+ * subscribed to it** — a committed reader, visible or in its fallback — Lane
+ * looks again every {@link REASK_INTERVAL} and asks once more. A wait nobody is
+ * subscribed to (a hidden tree's, a departed reader's) is not re-asked for: its
+ * reveal reads and asks for itself. Bounded by the wait's own timeout: a
+ * rejected wait is cleared and no longer waiting, so the looking stops.
+ *
+ * Nothing here tracks whether an ask *completed* — `refresh` returns `void`
+ * and a publication need not carry this key. It only keeps asking while
+ * someone is still waiting, which is the same rule as asking on a read.
+ */
+function scheduleReask(state: LaneState): void {
+  if (state.reaskTimer !== undefined) {
+    return;
+  }
+
+  state.reaskTimer = setTimeout(() => {
+    state.reaskTimer = undefined;
+
+    for (const entry of state.entries.values()) {
+      const cache = entry.cache;
+
+      if (
+        entry.published &&
+        entry.subscribers.size > 0 &&
+        cache?.waiting &&
+        cache.settlement === undefined
+      ) {
+        // One ask covers every waiting key; `askOwner` schedules the next look.
+        askOwner(state, entry);
+        return;
+      }
+    }
+  }, REASK_INTERVAL);
 }
 
 /** Out of render, as cheaply as the platform allows. */

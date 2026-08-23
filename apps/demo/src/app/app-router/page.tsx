@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import {
+  readAllTasks,
   readCurrentUser,
   readInsights,
   readLabels,
@@ -8,7 +9,6 @@ import {
   readProjectTaskCounts,
   readProjects,
   readTask,
-  readTasks,
   readTeams,
 } from "@/app/lane/api/route-reads";
 import {
@@ -74,7 +74,7 @@ async function WorkspaceContent({ searchParams }: PageProps) {
     selectedTask,
   ] = await Promise.all([
     teamsRead,
-    readTasks(ctx, requested.filters),
+    readAllTasks(ctx, requested.filters),
     readInsights(ctx),
     readProjects(ctx),
     // The counts are their own read now, here as well: this route shares

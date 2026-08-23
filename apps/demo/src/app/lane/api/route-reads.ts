@@ -10,6 +10,7 @@ import {
   fetchProjectTaskCounts,
   fetchProjects,
   fetchTask,
+  fetchTaskPage,
   fetchTasks,
   fetchTeams,
   type ProjectTaskCounts,
@@ -100,7 +101,30 @@ export async function readLabels(ctx: WorkspaceCtx) {
   return fetchLabels(ctx);
 }
 
-export async function readTasks(ctx: WorkspaceCtx, filters: TaskFilters) {
+/**
+ * **The first page of the list — the part of it that belongs to this route.**
+ *
+ * `/lane`'s list is infinite on one key: the route reads page 1 and publishes
+ * it, and the browser reads pages 2..n with the cursor each page hands back
+ * (`api/lane-reads.ts`). So this read takes the cursor it starts from, and the
+ * regions pass `null` — a route always publishes the *first* page, whatever
+ * depth the browser has reached on top of it, because a publication is what the
+ * route can state and depth is not (see `docs/api-reference.md` §
+ * `useInfiniteLane` → "The first page from the route").
+ */
+export async function readTasks(
+  ctx: WorkspaceCtx,
+  filters: TaskFilters,
+  page: { cursor: string | null },
+) {
+  return fetchTaskPage(ctx, filters, { cursor: page.cursor });
+}
+
+/**
+ * The list entire, for `/app-router` — the baseline route, which hands the
+ * whole thing down as props and has no browser-side half to deepen it.
+ */
+export async function readAllTasks(ctx: WorkspaceCtx, filters: TaskFilters) {
   return fetchTasks(ctx, filters);
 }
 

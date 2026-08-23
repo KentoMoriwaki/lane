@@ -39,7 +39,12 @@ export function FilterBar() {
   const tasksResult = useTasks(filters);
   const projects = React.use(projectsResult.promise).data;
   const labels = React.use(labelsResult.promise).data;
-  const tasks = React.use(tasksResult.promise).data;
+  // The list is paginated, so what this bar can honestly count is what has been
+  // loaded — page 1 from the route plus whatever the browser has added. The
+  // total is not a number anyone here holds, and inventing one would be worse
+  // than saying "so far".
+  const list = React.use(tasksResult.promise).data;
+  const loaded = list.pages.reduce((count, page) => count + page.items.length, 0);
 
   const project = projects?.find(
     (item) => item.id === optimisticFilters.projectId,
@@ -204,8 +209,9 @@ export function FilterBar() {
             Syncing
           </span>
         ) : null}
-        <span className="tabular-nums">
-          {tasks.length} {tasks.length === 1 ? "task" : "tasks"}
+        <span className="tabular-nums" data-testid="task-count">
+          {loaded} {loaded === 1 ? "task" : "tasks"}
+          {list.hasNext ? " so far" : ""}
         </span>
       </div>
     </div>

@@ -6,10 +6,17 @@ import type {
   CreateTaskInput,
   Project,
   Task,
+  TaskPage,
   TeamLabel,
   UpdateTaskInput,
 } from "@/server/api";
-import { useLane, useLaneInstance, type Lane } from "use-lane";
+import {
+  useInfiniteLane,
+  useLane,
+  useLaneInstance,
+  type InfiniteLaneValue,
+  type Lane,
+} from "use-lane";
 import * as React from "react";
 import type { TaskSurface } from "@/app/lane/regions";
 import { useWorkspaceCtx } from "@/app/lane/workspace/workspace-provider";
@@ -49,8 +56,25 @@ export function useTeams() {
   return useLane(workspaceReads.teams());
 }
 
+/**
+ * The list — the one read here with a browser half.
+ *
+ * `useInfiniteLane` over an `external` read: page 1 arrives with the
+ * publication and `loadMore` fetches the pages after it from the browser, all
+ * under one key. The result carries the actions (`loadMore`, `invalidate`) and
+ * `use(promise)` carries the data (`pages`, `hasNext`) — see
+ * `workspace/task-list.tsx`.
+ *
+ * `useWorkspaceCtx()` is what makes the browser's half ask about the same team
+ * the route published page 1 for. The lane's own `loaderMeta` cannot: it is
+ * built above the frame, where reading the URL would make the frame
+ * request-dependent, so it carries empty ids and lets the API default (see
+ * `workspace/workspace-provider.tsx`).
+ */
 export function useTasks(filters: TaskFilters) {
-  return useLane(workspaceReads.tasks(filters));
+  const ctx = useWorkspaceCtx();
+
+  return useInfiniteLane(workspaceReads.tasks(filters, ctx));
 }
 
 export function useTask(taskId: string) {
@@ -101,9 +125,12 @@ export function useInsights() {
  *
  * - `set(task(id))` — the entity that came back, in place, no round trip;
  * - `updateAll(["tasks"])` — the same row patched inside every list holding it,
- *   at the index it already occupies. Membership is not recomputed here: a task
- *   that no longer matches a filter keeps its place until the next publication
- *   sorts it out, which is the whole reason a row never jumps under the cursor;
+ *   in whichever *page* holds it and at the index it already occupies.
+ *   Membership is not recomputed here: a task that no longer matches a filter
+ *   keeps its place until the next publication sorts it out, which is the whole
+ *   reason a row never jumps under the cursor. The rerender that follows
+ *   republishes page 1 unchanged, so the pages the browser loaded after it stay
+ *   loaded — the list does not collapse to one page because a status moved;
  * - `invalidate(insights())` and `invalidate(projectCounts())` — the two counts
  *   nothing in the response can compute. Marking them is all this does: the
  *   mounted strip and sidebar re-read, Lane asks the owner *once* for both, and
@@ -116,7 +143,12 @@ export function useInsights() {
  * - `set(task(id))` — the same;
  * - `invalidateAll(["tasks"])` — every list entry this lane holds is marked
  *   stale rather than rewritten. Patching a row nobody is looking at would only
- *   guess at a sort order the server owns, and there is no jump to avoid;
+ *   guess at a sort order the server owns, and there is no jump to avoid.
+ *   **This resets the list to one page, by design**: saying "stale" about a
+ *   list says it about pages 2..n too, and those cannot be re-derived without
+ *   walking the cursor chain again. So the list revealed after an edit made
+ *   here is the route's first page, freshly sorted, and the browser deepens it
+ *   again if the user wants it deeper;
  * - the two counts — the same.
  *
  * Nothing is *asked* by the second form while the page is up: a marked key with
@@ -171,7 +203,7 @@ export function useDeleteTask(surface: TaskSurface) {
     async (taskId: string): Promise<void> => {
       await deleteTask(ctx, taskId);
       if (surface === "panel") {
-        lane.updateAll<Task[]>(["tasks"], (tasks) => withoutRow(tasks, taskId));
+        lane.updateAll<TaskList>(["tasks"], (list) => withoutRow(list, taskId));
       } else {
         lane.invalidateAll(["tasks"]);
       }
@@ -267,7 +299,7 @@ function convergeOnTask(lane: Lane, task: Task, surface: TaskSurface) {
   lane.set(workspaceReads.task(task.id).key, task);
 
   if (surface === "panel") {
-    lane.updateAll<Task[]>(["tasks"], (tasks) => withRowPatched(tasks, task));
+    lane.updateAll<TaskList>(["tasks"], (list) => withRowPatched(list, task));
   } else {
     lane.invalidateAll(["tasks"]);
   }
@@ -279,18 +311,54 @@ function convergeOnTask(lane: Lane, task: Task, surface: TaskSurface) {
 }
 
 /**
- * The row replaced where it stands. A list that does not hold this task is
- * returned unchanged — same array, so the lists the user is not looking at do
- * not mint a new value for a task that was never in them.
+ * What one of these list entries holds: every page loaded so far, the cursor
+ * each was fetched with, and whether there is another. The route publishes the
+ * first page in this shape (`api/lane-reads.ts`) and `loadMore` appends to it,
+ * so a write that patches a row has to find the row in whichever page holds it.
  */
-function withRowPatched(tasks: Task[], task: Task): Task[] {
-  return tasks.some((row) => row.id === task.id)
-    ? tasks.map((row) => (row.id === task.id ? task : row))
-    : tasks;
+type TaskList = InfiniteLaneValue<TaskPage, string | null>;
+
+/**
+ * The row replaced where it stands — same page, same index. A list that does
+ * not hold this task is returned unchanged, and so is every page that does not:
+ * the lists the user is not looking at do not mint a new value for a task that
+ * was never in them, and a two-page list does not mint a new page 2 for an edit
+ * that happened on page 1.
+ *
+ * Which page a row is on is not a fact this app maintains — it is wherever the
+ * page boundary put it, and a row edited here stays on the page it was served
+ * on until a publication re-cuts the boundaries. That is the same promise the
+ * single-page version made (an edit never moves a row) extended one dimension.
+ */
+function withRowPatched(list: TaskList, task: Task): TaskList {
+  return withPageHolding(list, task.id, (items) =>
+    items.map((row) => (row.id === task.id ? task : row)),
+  );
 }
 
-function withoutRow(tasks: Task[], taskId: string): Task[] {
-  return tasks.some((row) => row.id === taskId)
-    ? tasks.filter((row) => row.id !== taskId)
-    : tasks;
+function withoutRow(list: TaskList, taskId: string): TaskList {
+  return withPageHolding(list, taskId, (items) =>
+    items.filter((row) => row.id !== taskId),
+  );
+}
+
+function withPageHolding(
+  list: TaskList,
+  taskId: string,
+  rewrite: (items: Task[]) => Task[],
+): TaskList {
+  const at = list.pages.findIndex((page) =>
+    page.items.some((row) => row.id === taskId),
+  );
+
+  if (at === -1) {
+    return list;
+  }
+
+  return {
+    ...list,
+    pages: list.pages.map((page, index) =>
+      index === at ? { ...page, items: rewrite(page.items) } : page,
+    ),
+  };
 }

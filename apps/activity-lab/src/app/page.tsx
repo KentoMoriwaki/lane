@@ -20,6 +20,12 @@ const scenes = [
       "external reads: a layout-level reader outside every LaneHydration boundary, publishing / non-publishing sibling routes, and the WeakRef retention probe.",
   },
   {
+    href: "/owner-ask",
+    title: "/owner-ask",
+    description:
+      "The owner-ask: <LaneProvider refresh> wired to router.refresh(), counted. Hidden set, visible and hidden invalidate, a refresh a navigation discarded, and a three-key burst — each read as painted frames x asks x server renders.",
+  },
+  {
     href: "/reveal-sync",
     title: "/reveal-sync",
     description:

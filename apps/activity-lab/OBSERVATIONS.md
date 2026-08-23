@@ -977,3 +977,282 @@ snapshots オブジェクトをクライアント state だけに持ち、`<Lane
   `offsetParent !== null` で絞る。
 - ブランチ/パッケージを触ったら計測前に `rm -rf apps/activity-lab/.next`
   (既存の注意どおり。今回も `pnpm --filter use-lane build` → `.next` 削除 → build の順)。
+
+## 検証: owner-ask(`refresh`)の 6 計測(/owner-ask、本番・2026-08-22)
+
+対象は #92 PR 2(#94)が入れた `createLane({ refresh })` / `<LaneProvider refresh>`。
+issue #92 三番目のコメントの activity-lab チェックリスト 5 項目 + `update` 版の 1 項目。
+`packages/lane` は一切触っていない(計測であって通すテストではない)。
+
+**シーン**: `/owner-ask`。1 レーン(module scope)・published キー 3 本(`["oa","k1"]`
+`["oa","k2"]` `["oa","k3"]`、いずれも `loader: external`)・ルート 2 本。
+`/owner-ask/a` が owner で、RSC render が `<LaneHydration>` で 3 本を seed し、
+その中の client probe が同じ read で読む。`/owner-ask/b` は publish も read もしない
+完全 static なので、B に立つと A は隠し `<Activity>`、K1–K3 の reader は全部画面外になる。
+shell(layout)が `<LaneProvider lane={ownerAskLane} refresh={() => { refreshStore.bump(); router.refresh(); }}>`
+を張り、その回数を HUD の葉(`[data-refresh-count]`)で購読する。ops パネル
+(`set` / `update` / `invalidate` / 3 本同時 `invalidate`)は A にも B にも同じものが載る
+— **どちらで押したかだけが実験の中身**。FrameStrip と Timeline は shell 側、
+つまり全 Activity 境界の外。
+
+**再現**:
+
+```sh
+kill $(lsof -ti :3007)
+rm -rf apps/activity-lab/.next
+pnpm --filter use-lane build          # exports は src を指すので dist は使われないが手順どおり
+pnpm --filter @lane/activity-lab exec next build
+pnpm --filter @lane/activity-lab exec next start -p 3007
+node apps/activity-lab/scripts/owner-ask.mjs        # m1 … m6、個別なら `… owner-ask.mjs m4`
+```
+
+driver は apps/e2e の `@playwright/test` から headless chromium を借りる(`createRequire`
+で解決。lab 自身は Playwright に依存しない)。各計測は**新しい context・新しいページ**で
+始め、`reset` ボタンで refresh カウンタ / Timeline / FrameStrip を空にしてから録画する。
+
+### 計測の道具について(2 つとも一度ハマった)
+
+- **フレーム録画は driver 側の rAF ループ**で、`[data-route-area]` の中の**表示中の**
+  `[data-probe]` だけを読む。隠し Activity の DOM は `display:none` で残るという既知の罠
+  (2026-08-02 の注記)に加えて、**mount 済みの Suspense 境界が後から fallback に落ちるとき、
+  React は旧 children を削除せず `display:none` にして fallback を隣に足す**。
+  `[data-probe-value]` の**存在**を見ると fallback 窓のあいだ旧値を読み続け、
+  fallback フレームが 1 枚も見えなくなる(最初の pass で m3/m6 を取り違えた)。
+  値要素自身の `offsetParent` を見るのが正しい。
+- **server render 数を数えるなら dynamic API は `connection()` だけにする。**
+  最初 delay を cookie で渡していたところ、`cacheComponents` 下で `cookies()` を読む
+  ルートは**1 リクエストにつき dynamic hole を 2 回 render**した(`/bfcache/list` は
+  `connection()` だけなので 1 回。同一ビルドで比較)。server render 列が全部倍になる。
+  delay は `POST /owner-ask/api` で process 上の global に置き、ルートは `connection()`
+  のみに戻した。以下の数字はすべてこの修正後のもの(1 render = 1 カウント)。
+
+### 結果(期待 → 実測)
+
+| # | 系列 | 期待 | 実測 | |
+| --- | --- | --- | --- | --- |
+| 1 | hidden `set` → reveal | fallback 0 / refresh 0 / server 0 | fallback **0** / refresh **0** / server **0** | ○ |
+| 2 | visible `invalidate` → SWR | fallback 0 / refresh 1 / server 1 | fallback **0** / refresh **1** / server **1** | ○ |
+| 3 | hidden `invalidate` → back | reveal で fallback / refresh 1 / server 1 | fallback **1 枚 614ms** / refresh **1** / server **1** | ○ |
+| 4 | refresh を nav が捨てる → 自己修復 | refresh **2** / 二度目の ask で収束 | refresh **1** / server **1** / 旧値のフレーム 0 | **×** |
+| 5 | 3 キー同時 invalidate | refresh 1 / server 1 / 1 commit | refresh **1** / server **1** / 1 commit | ○ |
+| 6 | hidden `update` → reveal | fallback 1 枚 ~300ms | fallback **1 枚 299.9ms** | ○(期待どおり劣化) |
+
+### 1. hidden `set` → reveal — fallback 0 枚、ask 0 回
+
+A 着地(K1 = `k1 v2 (rsc)`)→ B へ soft nav → B で `lane.set(K1, "client-v2")` →
+`page.goBack()`。
+
+```
+       0.5  ▸ click nav → /owner-ask/b
+      27.8  x3    raf:3    [a] k1=k1 v2 (rsc) | k2=k2 v2 (rsc) | k3=k3 v2 (rsc) | srv#2
+        40  x40   raf:39   [b] (no probes)
+     360.2  ▸ click set K1 → lane.set(K1, "client-v2")
+     698.9  ▸ page.goBack()
+     712.4  x135  raf:134  [a] k1=client-v2 | k2=k2 v2 (rsc) | k3=k3 v2 (rsc) | srv#2
+```
+
+Timeline は hide の layout/passive-cleanup ×3(+38.9 / +39.9)、`set K1 · pressed on b`
+(+392)、reveal の layout-mount ×3(+712.0)と `render owner-ask:k1 bg:0 tr:0`(+712.5)だけ。
+
+**A に戻って最初に描かれたフレームがもう `client-v2`**(raf:134 = 134 回の rAF で
+描かれ続けた)。`SUSPENDED` フレームも `SEED-FALLBACK` フレームも 0、`refresh()` 0 回、
+server render 0。隠しているあいだの `set` は offscreen re-render すら起こさず
+(hide と reveal のあいだに render イベントが 1 つも無い)、reveal の layout-effect 照合が
+store の現在値をそのまま採用して 1 commit で着地している。値が同期で手にある書き込みは
+作成時点で `'fulfilled'` に stamp されている(#93)ので、sync な reveal 照合でも suspend
+しない — その設計の帰結が画面上そのまま出た。
+
+### 2. visible `invalidate` → SWR — fallback 0 枚、ask 1 回
+
+A 上で、K1 の reader が見えている状態で `lane.invalidate(K1)`。
+
+```
+       0.4  ▸ click invalidate K1 on A (reader visible)
+      37.5  x41   raf:39   [a] k1=k1 v3 (rsc) | k2=k2 v3 (rsc) | k3=k3 v3 (rsc) | srv#3
+     657.2  x127  raf:126  [a] k1=k1 v4 (rsc) | k2=k2 v4 (rsc) | k3=k3 v4 (rsc) | srv#4
+```
+
+```
+      40.2  lane-op          owner-ask:op    invalidate K1 · pressed on a
+      40.6  render           owner-ask:k1    bg:0 tr:1        ← 旧値のまま transition pending
+      40.7  lane-op          owner-ask:ask   refresh() #1
+      56.7  custom           owner-ask:a     seed-fallback render x37 (…648.3ms)
+     655.x  render           k1/k2/k3        bg:0 tr:1 → bg:0 tr:0
+```
+
+**フレームは 2 枚だけ**: v3(raf:39、620ms 描かれ続けた)→ v4。中間状態は無い。
+`refresh()` はちょうど 1 回、server render もちょうど 1。注目は `seed-fallback render`
+が round trip のあいだ 37 回出ていることで、**ルート自身の Suspense fallback は
+render はされているが commit されていない** — FrameStrip に `SEED-FALLBACK` は
+1 フレームも無い。pending transition の中で捨てられている render を Timeline が拾って
+いるだけ。SWR は「旧値 + `tr:1` を出したまま owner の再 render を待ち、届いたら差し替える」
+形で、画面には 1 度も穴が開かない。
+
+### 3. hidden `invalidate` → back — 読まれるまで頼まない
+
+A → B → B で `lane.invalidate(K1)` → 700ms 待って計測 → `page.goBack()`。
+
+```
+     369.6  ▸ click invalidate K1 on B (reader hidden)
+    1121.4  ▸ while still on B: refresh=0          ← server render も 0
+    1121.9  ▸ page.goBack()
+    1126.8  x39   raf:37   [a] k1=SUSPENDED | k2=k2 v5 (rsc) | k3=k3 v5 (rsc) | srv#5
+    1740.6  x157  raf:156  [a] k1=k1 v6 (rsc) | k2=k2 v6 (rsc) | k3=k3 v6 (rsc) | srv#6
+```
+
+```
+     402.7  lane-op          owner-ask:op    invalidate K1 · pressed on b
+    1125.6  layout-mount     owner-ask:k1/k2/k3               ← reveal
+    1125.9  render           owner-ask:k1    bg:0 tr:0
+    1126.3  custom           owner-ask:k1    suspense-fallback render
+    1126.3  layout-cleanup   owner-ask:k1                     ← reader が fallback に落ちる
+    1126.8  lane-op          owner-ask:ask   refresh() #1     ← ここで初めて頼む
+    1141.7  custom           owner-ask:a     seed-fallback render(以降 round trip 中ずっと)
+    1738.3  render           k1/k2/k3        bg:0 tr:1 → tr:0
+    1740.1  layout-mount     owner-ask:k1
+```
+
+**B に立っているあいだ `refresh()` は 0 回、server render も 0。** 誰も読んでいない
+キーを空にしただけでは owner に何も頼まない、が実機で確認できた。頼むのは reveal の
+**+0.5ms 後**、reader が空の殻を読み直した瞬間。
+
+reveal の見え方は**その境界の fallback**で、K1 の旧値 `k1 v5 (rsc)` を出すフレームは
+1 枚も無い(`k1=SUSPENDED` が raf:37 = 614ms、ちょうど server delay 600ms + α)。
+一方 invalidate していない K2/K3 は同じ窓で v5 を出し続け、収束のときに **K1 と一緒に
+v6 へ**動く — publication は route 単位なので、1 本の invalidate が 3 本を新しい世代へ
+揃える。「stale なキーが reveal されたときに、必要な分だけ route 再描画が起きる」が
+そのままの形で出ている。
+
+### 4. nav が捨てた refresh — **期待に反して、捨てられていなかった**
+
+server delay 1500ms。A 上で `invalidate(K1)`(refresh #1 が出る)→ +200ms で B へ nav
+(Next は "Navigations take priority over any pending actions" で pending action を捨てる、
+というのが `askOwner` の doc コメントの前提)→ delay を過ぎるまで 2.5s 待つ →
+`page.goBack()`。
+
+期待は「reveal 時点でまだ wait が埋まっていない → 読み直しが再 ask(`refresh` = 2)→
+二度目の render が着くまで fallback」。**実測は `refresh()` 1 回・server render 1 回**で、
+B に立っている時点(+2819.6ms)ですでに `refresh=1 / renders=1`。
+
+```
+       0.4  ▸ click invalidate K1 on A (delay 1500ms)
+        38  x19   raf:18   [a] k1=k1 v7 (rsc) | k2=k2 v7 (rsc) | k3=k3 v7 (rsc) | srv#7
+     247.4  ▸ click nav → /owner-ask/b
+       299  x153  raf:151  [b] (no probes)
+    2819.6  ▸ while still on B: refresh=1
+    2820.1  ▸ page.goBack()
+      2823  x19   raf:18   [a] SEED-FALLBACK
+    3114.9  x265  raf:264  [a] k1=k1 v8 (rsc) | k2=k2 v8 (rsc) | k3=k3 v8 (rsc) | srv#8
+```
+
+```
+      40.4  lane-op          owner-ask:op    invalidate K1 · pressed on a
+      40.7  render           owner-ask:k1    bg:0 tr:1
+      40.9  lane-op          owner-ask:ask   refresh() #1
+      54.1  custom           owner-ask:a     seed-fallback render x15 (…280.1ms)
+     298.1  layout-cleanup   owner-ask:k1/k2/k3               ← B への nav(hide)
+     299.7  render           owner-ask:k1    bg:0 tr:0
+     299.8  custom           owner-ask:k1    suspense-fallback render
+                                             ← ここから +2521ms、render イベント 0
+    2821.7  custom           owner-ask:a     seed-fallback render
+    2824.1  render           k1/k2/k3        bg:0 tr:0(以降 ~290ms 再試行が続く)
+    3114.x  layout-mount     k1/k2/k3
+```
+
+読み方は 3 つに分かれる。
+
+1. **refresh の round trip は捨てられていない。** 画面に出た値は `k1 v8` = server
+   render #8 で、その #8 は **B に立っているあいだに完了した**(midpoint で
+   `renders=1`)。back のあと server render は 1 つも増えていない。つまり
+   nav 前に撃った `router.refresh()` の payload を Next が持ち越し、back で適用した。
+   `askOwner` の doc が想定する「wait が永久に埋まらない」状態は、この系列では発生しない。
+2. **隠しているあいだに payload は当たっていない。** +299.8ms から +2821.7ms まで
+   render イベントがゼロ — refresh の応答が着いたはずの ~+1540ms にも隠しツリーは
+   再 render していない。持ち越されたのは payload であって、適用は back のとき。
+3. **旧値のフレームは 0 枚。** back の最初の描画は `[a] SEED-FALLBACK`(raf:18)で、
+   292ms 後に v8。`k1 v7` を出すフレームは無い。この 292ms は server の仕事ではなく
+   (server render は増えていない)React の `FALLBACK_THROTTLE_MS = 300` の窓と一致する
+   — 6 の 299.9ms、3 の「600ms delay に対して 614ms」と並べると、throttle は下限として
+   効き、実待ちがそれより長ければ実待ちが出る、という形。
+
+なお reveal 時に再 ask が出なかったこと自体は矛盾ではない。`reconcileOnReveal` は
+`useLayoutEffect` の中にあり、**fallback に落ちて mount されていない reader には
+layout-effect が無い**(hide の時点で `suspense-fallback render` 済み)。
+3 のように「値を持ったまま隠れた reader」は reveal で読み直して ask するが、
+4 のように「既に suspend した状態で隠れた reader」は自分からは読み直さない。
+この系列ではそれで困らなかった(Next が payload を持ち越したので wait は publication で
+解けた)が、**「navigation で捨てられた refresh からの自己修復」は、この経路では
+実測できていない**。捨てられる状況自体を Next 16.3.0-preview.10 で作れなかった、が
+今回の結論。
+
+**後日談(2026-08-23)**: この前提は `<Link>` では作れなかったが、**アプリの普通の流れでは起きた**。demo の `/lane` で panel から delete → `invalidate(insights)` の ask → その直後に `closeTask()` の `router.replace` が走り、実行中の `router.refresh()` の fetch が `net::ERR_ABORTED`。wait 中の reader は suspend したままで再 read も再 ask もせず、10 秒後に `LaneExternalTimeoutError: No publication arrived for ["insights"]`(ブラウザで実測)。ここでの計測が「作れなかった」と記録した状態は実在する。
+対応はライブラリ側に入った(#109): **subscriber のいる `published` な entry が wait のままなら `REASK_INTERVAL`(2 秒)ごとに聞き直す**。hidden(subscriber なし)は従来どおり reveal の read が ask する。このシーンで m4 を `router.replace` 版に書き換えて再走するのが、次にこの lab に来たときの最初の項目。
+
+### 5. 3 キー同時 invalidate — ask は 1 回
+
+A 上で 1 クリックが `invalidate(K1)` `invalidate(K2)` `invalidate(K3)` を同期で走らせる。
+3 本とも表示中の reader を持つ。
+
+```
+       0.3  ▸ click invalidate K1+K2+K3 on A (one synchronous run)
+      37.3  x40   raf:39   [a] k1=k1 v9 (rsc) | k2=k2 v9 (rsc) | k3=k3 v9 (rsc) | srv#9
+     653.2  x127  raf:126  [a] k1=k1 v10 (rsc) | k2=k2 v10 (rsc) | k3=k3 v10 (rsc) | srv#10
+```
+
+```
+      40.3  lane-op          owner-ask:op    invalidate K1+K2+K3 · pressed on a
+      40.7  render           owner-ask:k1    bg:0 tr:1
+      40.8  render           owner-ask:k2    bg:0 tr:1
+      40.8  render           owner-ask:k3    bg:0 tr:1
+      40.8  lane-op          owner-ask:ask   refresh() #1      ← 3 本で 1 回
+     651.x  render           k1/k2/k3        bg:0 tr:1 → tr:0
+```
+
+`refresh()` **1 回**、server render **1 回**、フレームは v9 → v10 の **2 枚だけ**で
+3 本が同じ commit で動く。tick 単位の coalesce(`queueMicrotask` + `refreshScheduled`)が
+実機の `router.refresh()` 単位でもそのまま 1 round trip になっている。
+
+### 6. hidden `update` → reveal — 期待どおり fallback 1 枚(299.9ms)
+
+1 と同じ系列で `set` を `update` に替えただけ。
+
+```
+     368.1  ▸ click update K1 → lane.update(K1, () => "client-u1")
+     704.8  ▸ page.goBack()
+     716.2  x20   raf:19   [a] k1=SUSPENDED | k2=k2 v11 (rsc) | k3=k3 v11 (rsc) | srv#11
+    1016.1  x116  raf:115  [a] k1=client-u1 | k2=k2 v11 (rsc) | k3=k3 v11 (rsc) | srv#11
+```
+
+```
+     401.4  lane-op          owner-ask:op    update K1 · pressed on b
+     713.5  layout-mount     owner-ask:k1/k2/k3
+     714.5  render           owner-ask:k1    bg:0 tr:0
+     715.2  custom           owner-ask:k1    suspense-fallback render
+     715.3  layout-cleanup   owner-ask:k1
+     719.4  render           owner-ask:k1    bg:0 tr:0 x19 (…1014.7ms)
+    1015.5  layout-mount     owner-ask:k1
+```
+
+**K1 だけが 299.9ms fallback を出す**(raf:19 = 実際に 19 フレーム描かれた)。`refresh()`
+0 回・server render 0 なので待っている相手はネットワークではなく、`updateLaneEntry` が
+作る `promise.then(...)` — Lane が status を書かないチェーン promise で、sync な reveal
+照合では React が settle 済みだと分かれない。1 の `set` は同じ系列で 0 枚。
+**設計が予告した劣化がそのまま出た**(#92 コメントの「一度も `use()` されていない
+settled promise を reveal で採用すると fallback が ~300ms 出る」の、stamp されない側の
+実測)。値が手にあるなら `set`、`update` は「今見えているものを直す」用、という
+使い分けが frame レベルで裏付けられた形。
+
+### 総括
+
+- ask は**読まれたときにだけ**出る(3)、**tick で 1 回に畳まれる**(5)、
+  **値がある書き込みには出ない**(1・6)。#92 の「ask の規則(確定)」の (1)(2) は
+  実機で成立している。
+- 値を持っている書き込み(`set`)は hidden でも visible でも穴を開けない(1・2)。
+  `update` は promise を stamp しない分 reveal で 300ms 払う(6)。
+- (3) の「in-flight 追跡はしない」で心配される二重 round trip は、
+  この 6 系列では一度も起きていない(4 でも server render は 1)。
+- **未計測**: navigation が本当に refresh を捨てるケース(4)。Next 16.3.0-preview.10 は
+  持ち越して back で適用したため、自己修復の再 ask が要る状態を作れなかった。
+  fallback に落ちた reader は reveal で読み直さない(`reconcileOnReveal` は layout-effect)
+  ので、もし本当に捨てられる Next が現れたら**そこは 10s timeout になり得る** —
+  次に Next を上げたときに真っ先に再走行する系列。

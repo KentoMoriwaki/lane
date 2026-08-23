@@ -41,13 +41,13 @@ type PageProps = {
  * file publishes the list's keys and nothing else, and the panel's empty state
  * is `@modal/default.tsx` — literally nothing rendered.
  *
- * Mutations arrive by two channels, and both end here. Creating something calls
- * a Server Action, whose response *is* this route rendered again — the new task
- * comes back already in its sorted place. Editing a task calls the API from the
- * browser and lands the answer in the lane directly, marking only what it could
- * not compute; the rerender that follows is a background one, and it
- * republishes every region just the same. Neither channel needs the other to
- * know what it did (see `api/hooks.ts`).
+ * Mutations arrive by two channels, and only one of them ends here. Creating
+ * something calls a Server Action, whose response *is* this route rendered
+ * again — the new task comes back already in its sorted place. Editing a task
+ * calls the API from the browser and lands the whole answer in the lane: the
+ * row, and the counters the write recomputed after it. **That channel never
+ * renders this file.** Neither needs the other to know what it did (see
+ * `api/hooks.ts`).
  *
  * `/lane-spa` is the same workspace with the opposite answer: no seeding,
  * client loaders, and the cache maintenance that comes with owning your data.

@@ -182,6 +182,36 @@ export default function Home() {
 
         <div className="rounded-xl border border-dashed bg-card/50 px-5 py-4 text-sm">
           <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold">Hybrid first-page lab</span>
+            <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+              separate · not the workspace
+            </span>
+            <code className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+              /lane-infinite
+            </code>
+          </div>
+          <p className="mt-1 text-pretty text-muted-foreground">
+            The route streams page 1 as a promise prop; a client-owned{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">
+              useInfiniteLane
+            </code>{" "}
+            adopts it and owns the depth. A republication that changed the first
+            page resets the list to it through a transition — zero requests, no
+            frame of stale rows — and one that changed nothing preserves the
+            depth. Instrumented with a frame recorder and request counters;{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">/late</code>{" "}
+            mounts the reader ahead of the publication.{" "}
+            <Link
+              href="/lane-infinite"
+              className="text-foreground underline underline-offset-4"
+            >
+              Open →
+            </Link>
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-dashed bg-card/50 px-5 py-4 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold">Infinite scroll lab</span>
             <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
               separate · not the workspace

@@ -15,6 +15,7 @@ import {
   listLabels,
   listMembers,
   listProjects,
+  listTaskPage,
   listTasks,
   listTeamsForUser,
   removeTaskLabel,
@@ -28,6 +29,7 @@ import {
   createTaskInputSchema,
   listLabelsQuerySchema,
   listMembersQuerySchema,
+  listTaskPageQuerySchema,
   listTasksQuerySchema,
   updateTaskInputSchema,
 } from "./schema";
@@ -69,6 +71,7 @@ team.use("*", async (context, next) => {
 const teamScopedPaths = [
   "/tasks",
   "/tasks/*",
+  "/task-pages",
   "/projects",
   "/projects/*",
   "/labels",
@@ -120,6 +123,56 @@ const DERIVED_DATA_DELAY_MS = readMilliseconds(
   30,
 );
 
+/**
+ * A process-wide serve counter for `/task-pages`. Parked on `globalThis` so the
+ * dev server's module reloading does not reset it mid-experiment — the number
+ * is only ever compared, never interpreted.
+ */
+const taskPageSequenceStore = globalThis as typeof globalThis & {
+  __taskPageSequence?: number;
+};
+
+function nextTaskPageSequence(): number {
+  taskPageSequenceStore.__taskPageSequence =
+    (taskPageSequenceStore.__taskPageSequence ?? 0) + 1;
+  return taskPageSequenceStore.__taskPageSequence;
+}
+
+/**
+ * The content identity of a page — see `TaskPage.version`.
+ *
+ * FNV-1a over a canonical rendering of *only* the fields a reader can see.
+ * Not a cryptographic hash and it does not need to be: the client compares it
+ * for equality and nothing else, and both sides of every comparison come from
+ * this same function.
+ *
+ * What goes in is the whole contract. Rows contribute their id and `updatedAt`,
+ * because that pair is what the demo's mutations move; the cursor and the total
+ * go in because the page carries them and the UI shows them. `servedAt` and
+ * `serveSeq` stay out: they change on every serve, and a version that changed on
+ * every serve would make the client's version-keyed entry churn on every
+ * refresh — the exact behavior the version exists to avoid.
+ */
+function taskPageVersion(page: {
+  items: { id: string; updatedAt: string }[];
+  nextCursor: string | null;
+  total: number;
+}): string {
+  const canonical = [
+    ...page.items.map((item) => `${item.id}@${item.updatedAt}`),
+    `next:${page.nextCursor ?? ""}`,
+    `total:${page.total}`,
+  ].join("|");
+
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < canonical.length; index += 1) {
+    hash ^= canonical.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return hash.toString(16).padStart(8, "0");
+}
+
 export const teamRoutes = team
   .get("/me", async (context) => {
     const user = await getCurrentUser(context.get("userId"));
@@ -150,6 +203,48 @@ export const teamRoutes = team
           due: query.due,
           ids: query.ids,
         }),
+        200,
+      );
+    },
+  )
+  /**
+   * The cursor-paginated task list, for the hybrid-ownership spike
+   * (`app/lane-infinite`). A sibling of `/tasks` rather than a mode of it: the
+   * flat list is what six of the demo's variants read, and a page shape is a
+   * different contract.
+   *
+   * Every response carries two different kinds of identity, and the difference
+   * is the point:
+   *
+   * - `version` is the page's **content**. The client keys its infinite list on
+   *   it, so a page that came back unchanged keeps the list exactly as deep as
+   *   the user left it, and a page that changed resets it.
+   * - `servedAt` / `serveSeq` are the page's **provenance** — which response
+   *   this is. They are the instrument the spike measures with: they say where
+   *   a rendered page actually came from, which no amount of content
+   *   comparison can.
+   */
+  .get(
+    "/task-pages",
+    zValidator("query", listTaskPageQuerySchema, validationHook),
+    async (context) => {
+      const query = context.req.valid("query");
+      const requestedCursor = query.cursor ?? null;
+      const page = await listTaskPage(
+        context.get("teamId"),
+        context.get("userId"),
+        { scope: query.scope, status: query.status },
+        { cursor: requestedCursor, limit: query.limit },
+      );
+
+      return context.json(
+        {
+          ...page,
+          requestedCursor,
+          serveSeq: nextTaskPageSequence(),
+          servedAt: new Date().toISOString(),
+          version: taskPageVersion(page),
+        },
         200,
       );
     },

@@ -1106,6 +1106,48 @@ export async function listTasks(
   });
 }
 
+/**
+ * One page of {@link listTasks}, addressed by a keyset cursor.
+ *
+ * Paged over the already-sorted list rather than in SQL, because the sort this
+ * API exposes (closed last, then priority, then status, then age) is computed
+ * in `listTasks` and the page boundaries have to agree with it exactly. The
+ * dataset is a demo seed, so the cost of sorting the whole list per page is
+ * irrelevant next to keeping the two lists identical.
+ *
+ * The cursor is the id of the last row of the previous page. An anchor that no
+ * longer exists (its row was deleted) restarts at the top rather than throwing:
+ * a shorter or re-anchored list is the honest answer, and a re-walk that hits it
+ * ends up with the same rows the user would see on a fresh load.
+ */
+export async function listTaskPage(
+  teamId: string,
+  currentUserId: string,
+  filters: TaskFilters,
+  page: { cursor: string | null; limit: number },
+): Promise<{
+  items: Task[];
+  nextCursor: string | null;
+  pageIndex: number;
+  total: number;
+}> {
+  const tasks = await listTasks(teamId, currentUserId, filters);
+  const anchor = page.cursor
+    ? tasks.findIndex((task) => task.id === page.cursor)
+    : -1;
+  const start = anchor >= 0 ? anchor + 1 : 0;
+  const items = tasks.slice(start, start + page.limit);
+  const last = items[items.length - 1];
+  const hasNext = start + items.length < tasks.length;
+
+  return {
+    items,
+    nextCursor: hasNext && last ? last.id : null,
+    pageIndex: Math.floor(start / page.limit) + 1,
+    total: tasks.length,
+  };
+}
+
 export async function getTask(
   teamId: string,
   taskId: string,

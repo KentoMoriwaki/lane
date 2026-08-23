@@ -15,6 +15,24 @@ const ACME_INVOICE_TASK = "Generate downloadable invoice PDFs";
 const GROWTH_TASK = "Welcome email rewrite";
 const BILLING_PROJECT = "Billing";
 
+/**
+ * The page `/api/tasks` serves when nobody names a `limit`
+ * (`apps/demo/src/lib/team-api.ts`). The seeded Acme workspace has sixteen
+ * tasks, so its list is two pages: the route publishes the first and the
+ * browser fetches the second.
+ */
+const PAGE_SIZE = 10;
+
+/**
+ * The last row of page 1 and the first row of page 2, under the list's sort
+ * (closed last, then priority, status, age, id). Tasks created by the tests in
+ * this file default to the lowest priority, so they land behind every seeded
+ * open task and never move this boundary.
+ */
+const ACME_PAGE_ONE_LAST_ID = "task_audit_log";
+const ACME_PAGE_TWO_TASK = "Design calmer empty states";
+const ACME_PAGE_TWO_TASK_ID = "task_empty_states";
+
 const SEARCH_PLACEHOLDER = "Search tasks, labels…";
 
 /**
@@ -58,6 +76,19 @@ function serverReadsOf(
   return records.filter(
     (entry) =>
       entry.origin === "server" &&
+      entry.method === "GET" &&
+      (entry.path === path || entry.path.startsWith(`${path}?`)),
+  );
+}
+
+/** The tab's own reads of one endpoint — the other half of the same list. */
+function browserReadsOf(
+  records: TeamApiRequestRecord[],
+  path: string,
+): TeamApiRequestRecord[] {
+  return records.filter(
+    (entry) =>
+      entry.origin === "browser" &&
       entry.method === "GET" &&
       (entry.path === path || entry.path.startsWith(`${path}?`)),
   );
@@ -123,6 +154,27 @@ function taskUrl(taskId: string) {
 async function openTaskPanel(page: Page, title: string) {
   await taskRow(page, title).click();
   await expect(detailTitle(page)).toHaveValue(title);
+}
+
+/**
+ * The control the list offers while `hasNext` — the browser's half of a list
+ * whose first page came from the route.
+ */
+function loadMoreButton(page: Page) {
+  return page.getByTestId("load-more");
+}
+
+/**
+ * Take the list one page deeper, the way a user does, and wait for the rows.
+ *
+ * Every test that wants a task the first page does not hold has to do this
+ * first: a task created here sorts behind every seeded open task, and the
+ * seeded list is longer than one page.
+ */
+async function loadMore(page: Page) {
+  const before = await taskRows(page).count();
+  await loadMoreButton(page).click();
+  await expect(taskRows(page)).not.toHaveCount(before);
 }
 
 /** The sidebar's count for one project, read out of its nav link. */
@@ -410,6 +462,11 @@ test("an edit after an in-app navigation reaches the list", async ({ page }) => 
   const original = `E2E rename source ${stamp}`;
   const renamed = `E2E renamed destination ${stamp}`;
   await createTask(page, original);
+  // A new task sorts behind every seeded open task, which puts it on the second
+  // page. The browser has to have asked for that page before the list can show
+  // the rename landing in it.
+  await loadMore(page);
+  await expect(taskRow(page, original)).toBeVisible();
 
   await detailTitle(page).fill(renamed);
   await detailTitle(page).press("Enter");
@@ -460,6 +517,8 @@ test("deleting a task drops its row and clears the detail", async ({
 
   const title = `E2E delete target ${Date.now()}`;
   await createTask(page, title);
+  // On the second page, like every task these tests create.
+  await loadMore(page);
   await expect(taskRow(page, title)).toBeVisible();
 
   await resetRequestDiagnostics(request);
@@ -501,7 +560,9 @@ test("creating a task reads the list again and opens the new task", async ({
   await createTask(page, title);
 
   // Channel 1: the action's response is the route, so the row arrives where the
-  // server sorted it rather than where the client guessed.
+  // server sorted it rather than where the client guessed — which for a new task
+  // is the second page, and the browser asks for that itself.
+  await loadMore(page);
   await expect(taskRow(page, title)).toBeVisible();
 
   const records = await readRequestDiagnostics(request);
@@ -697,6 +758,10 @@ test("a project's count follows a task the browser moved", async ({
 
   const title = `E2E count mover ${Date.now()}`;
   await createTask(page, title);
+  // Deep enough to hold the new row, so the delete at the end has a row to take
+  // away — and takes it out of the page that holds it, not the first one.
+  await loadMore(page);
+  await expect(taskRow(page, title)).toBeVisible();
   const before = await projectCount(page, BILLING_PROJECT);
 
   await resetRequestDiagnostics(request);
@@ -750,4 +815,132 @@ test("opening a task paints the panel's shell before the read lands", async ({
   });
 
   await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+});
+
+/**
+ * **The list's first page belongs to the route; its depth belongs to the
+ * browser** — and both live under one key.
+ *
+ * The three tests below are the whole claim: where each page comes from, what a
+ * republication does to a depth the browser paid for, and what an explicit
+ * "this list is stale" does to it instead.
+ */
+test("the list's second page comes from the browser", async ({
+  page,
+  request,
+}) => {
+  await gotoWorkspace(page);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+
+  // The route published one page, and the list says so rather than implying it
+  // has everything.
+  expect(await taskRows(page).count()).toBe(PAGE_SIZE);
+  await expect(taskRow(page, ACME_PAGE_TWO_TASK)).toHaveCount(0);
+  await expect(page.getByTestId("task-count")).toHaveText(/10 tasks so far/);
+  await expect(loadMoreButton(page)).toBeVisible();
+
+  const firstPage = await rowOrder(page);
+  await resetRequestDiagnostics(request);
+  await loadMore(page);
+
+  await expect(taskRow(page, ACME_PAGE_TWO_TASK)).toBeVisible();
+  const both = await rowOrder(page);
+  // Page 1 kept every row it had, in the order it had them…
+  expect(both.filter((id) => firstPage.includes(id))).toEqual(firstPage);
+  // …and page 2 arrived behind the last row of page 1.
+  expect(both.indexOf(ACME_PAGE_TWO_TASK_ID)).toBeGreaterThan(
+    both.indexOf(ACME_PAGE_ONE_LAST_ID),
+  );
+  expect(both.length).toBeGreaterThan(firstPage.length);
+
+  const records = await readRequestDiagnostics(request);
+  // One request, from the tab, carrying the cursor page 1 handed back.
+  const fetched = browserReadsOf(records, "/api/tasks");
+  expect(fetched).toHaveLength(1);
+  expect(fetched[0]?.path).toContain("cursor=");
+  // And nothing was asked of the route: a deeper list is not a rerender.
+  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(0);
+  expect(serverReadsOf(records, "/api/insights")).toHaveLength(0);
+});
+
+test("an inline edit keeps the pages the browser loaded", async ({
+  page,
+  request,
+}) => {
+  await gotoWorkspace(page);
+  await loadMore(page);
+  await expect(taskRow(page, ACME_PAGE_TWO_TASK)).toBeVisible();
+
+  // Opened from a row, which is a navigation and therefore a republication of
+  // page 1 — the first of two this test puts the depth through.
+  await openTaskPanel(page, ACME_PAGE_TWO_TASK);
+  const before = await rowOrder(page);
+  expect(before.length).toBeGreaterThan(PAGE_SIZE);
+
+  await resetRequestDiagnostics(request);
+  const next = await chooseAnotherStatus(
+    page,
+    detailPanel(page).getByRole("button", { name: /^Status:/ }),
+  );
+  await expect(page.getByText("Saved")).toBeVisible();
+
+  // The row took the new value inside the page that holds it, at the index it
+  // already occupied — a second page is patched exactly like a first.
+  await expect(
+    taskRow(page, ACME_PAGE_TWO_TASK).getByRole("button", {
+      name: `Status: ${next}`,
+    }),
+  ).toBeVisible();
+  expect(await rowOrder(page)).toEqual(before);
+
+  const records = await readRequestDiagnostics(request);
+  expect(
+    records.filter(
+      (entry) => entry.origin === "browser" && entry.method === "PATCH",
+    ),
+  ).toHaveLength(1);
+  // One rerender, for the two counters the edit marked. The page 1 it
+  // republishes is the page 1 already standing there, so the pages behind it
+  // stay — and the browser does not re-fetch a single one of them.
+  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(1);
+  expect(serverReadsOf(records, "/api/insights")).toHaveLength(1);
+  expect(browserReadsOf(records, "/api/tasks")).toHaveLength(0);
+});
+
+test("an edit on the task page resets the list to one page when it is looked at again", async ({
+  page,
+}) => {
+  await gotoWorkspace(page);
+  await loadMore(page);
+  expect(await taskRows(page).count()).toBeGreaterThan(PAGE_SIZE);
+
+  // The other surface: a direct visit is not intercepted, so this is the full
+  // task page with no list beside it, and an edit here marks every list entry
+  // stale rather than patching a row.
+  await page.goto(taskUrl(ACME_TASK_ID));
+  await expect(pageTitle(page)).toHaveValue(ACME_TASK);
+  await expect(detailPanel(page)).toHaveCount(0);
+
+  const next = await chooseAnotherStatus(
+    page,
+    detailPage(page).getByRole("button", { name: /^Status:/ }),
+  );
+  await expect(page.getByText("Saved")).toBeVisible();
+
+  await page.goBack();
+
+  // One page, freshly sorted, with the edit in it — and the button back, because
+  // there is more again. An explicit invalidate resets the depth by design:
+  // "this list is stale" is said about pages 2..n as well, and they cannot be
+  // re-derived without walking the cursor chain from the start.
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await expect(
+    taskRow(page, ACME_TASK).getByRole("button", { name: `Status: ${next}` }),
+  ).toBeVisible();
+  expect(await taskRows(page).count()).toBe(PAGE_SIZE);
+  await expect(loadMoreButton(page)).toBeVisible();
+
+  // And the browser can buy the depth back.
+  await loadMore(page);
+  await expect(taskRow(page, ACME_PAGE_TWO_TASK)).toBeVisible();
 });

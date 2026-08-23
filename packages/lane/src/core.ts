@@ -39,34 +39,7 @@ export type LaneReadOptions = {
   }) => unknown;
   /** The lane's `loaderMeta`, passed as `context.meta`; never affects cache reuse. */
   loaderMeta?: LaneLoaderMeta;
-  /**
-   * What a publication becomes when it lands on a value this read already
-   * holds — see {@link LaneMergePublication}. Travels with the read like
-   * `fallback` does, but is kept on the entry: the publication arrives from
-   * somewhere else entirely, so the policy has to be there when it does.
-   */
-  merge?: LaneMergePublication;
 };
-
-/**
- * A read's policy for a publication landing on an entry that already holds a
- * fulfilled value: return what the entry should store. `useInfiniteLane` is
- * what it exists for — a list whose first page is the route's and whose depth
- * is the browser's has to survive a republication of page 1 — and it is the
- * only policy Lane ships.
- *
- * Never called with nothing to merge into: "the entry holds a fulfilled value"
- * is the store's question, decided synchronously at publication time, and the
- * publication is stored verbatim when the answer is no. What counts as "the
- * same value" is the read's question, which is why the policy is the read's.
- */
-export type LaneMergePublication = (context: {
-  /** The value the owner just published. */
-  published: unknown;
-  /** What the entry holds right now — settled, and known so synchronously. */
-  held: unknown;
-  key: LaneKey;
-}) => unknown;
 
 type LaneSubscription = (
   entry: LaneEntryInfo,
@@ -135,12 +108,7 @@ type LanePromiseSettlement = {
  * widens a public type — what Lane hands out is still a `Promise<LaneRead<T>>`.
  */
 type LaneThenable<T> = Promise<T> & {
-  /**
-   * Lane only ever writes `"fulfilled"` (it stamps values it was handed, which
-   * are settled by definition); React writes the other two on any promise a
-   * reader has `use()`d, and this type is also how those are read back.
-   */
-  status?: "fulfilled" | "pending" | "rejected";
+  status?: "fulfilled";
   value?: T;
 };
 
@@ -209,24 +177,6 @@ type LaneEntry = {
    * as long as the payload `hydrate.ts` keyed it by. See {@link tetherWrite}.
    */
   tether: LaneTether | undefined;
-  /**
-   * The reading side's {@link LaneMergePublication}, left here by
-   * {@link readOrCreate} because the publication that consults it arrives from
-   * the other side of the store. Last read to declare one wins; a read that
-   * declares none leaves what is there, since nothing else can answer for it.
-   */
-  merge: LaneMergePublication | undefined;
-  /**
-   * What an external entry last fulfilled with — the value a publication is
-   * merged into — known to the store itself the moment it settles, and held
-   * weakly like the rest of an external entry. Not read off the promise's
-   * `status` / `value` stamps: React writes those only when a reader's `use()`
-   * has run, and a concurrent render suspended on another key's wait never
-   * reaches this reader, so a publication landing in that window would find
-   * nothing and discard the depth. Cleared with the cache (`invalidate`,
-   * `remove`, a timed-out wait): an entry holding no value has nothing to merge.
-   */
-  held: LaneWeakSlot<object> | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -372,57 +322,15 @@ export function publishEntry<T>(
     entry.tether = { at: publication.length, bucket: externalRef(publication) };
   }
 
-  const promise = publishEntryValue(
-    state,
-    entry,
-    // Only what an owner published is merged with what stands there. A
-    // `lane.set` is the client stating a whole value it already has — there is
-    // nothing of the store's to keep alongside it.
-    publication ? mergePublication(entry, valueOrPromise) : valueOrPromise,
-  );
+  // A publication is authoritative: it replaces the key's value outright, and
+  // is stored exactly as it arrived. The store never compares it with what it
+  // holds — a deep-equal publication may be an undo of something that happened
+  // in between, so equality proves nothing.
+  const promise = publishEntryValue(state, entry, valueOrPromise);
 
   notifyInvalidate(entry, "transition");
 
   return promise;
-}
-
-/**
- * What a publication becomes on an entry whose read declared a
- * {@link LaneMergePublication} — the one place a published value is not stored
- * as it arrived.
- *
- * It runs **here**, in the write path, rather than in a reader, for two
- * reasons. A reader would have to commit the published value on its way to the
- * merged one, so the screen would show the shallow list for a frame. And a
- * hidden `<Activity>` reader gets no notification at all, so a publication
- * landing while it is hidden has to be merged by the time it is revealed.
- *
- * "The entry holds a value" is answered synchronously, from the promise cache
- * protocol's stamps on the promise it holds (`status` / `value`): Lane's own on
- * a value it was handed (`set`, a publication), React's on a chain some reader
- * has `use()`d. A value nobody has rendered carries no stamp and reads as
- * absent — a real limit, documented where the policy is.
- */
-function mergePublication<T>(
-  entry: LaneEntry,
-  published: LaneValue<T>,
-): LaneValue<T> {
-  const { cache, merge } = entry;
-
-  // A published promise has no value to compare yet, and waiting for one would
-  // give up the synchronous landing this whole path exists for.
-  if (!merge || !cache || isPromiseLike(published)) {
-    return published;
-  }
-
-  // The store's own record of what the entry holds (see `LaneEntry.held`),
-  // not the promise's stamps: a reader that has not rendered yet has not
-  // stamped anything, and the publication does not wait for it.
-  const held = entry.held?.deref();
-
-  return held === undefined
-    ? published
-    : (merge({ held, key: entry.key, published }) as T);
 }
 
 /**
@@ -457,12 +365,6 @@ export function readOrCreate<T, C = T>(
   // An `external` read declares the key is filled from outside; retention and
   // the owner-ask hang off this. Nothing downstream re-checks the loader.
   const isExternal = isExternalLoader(loader);
-
-  if (options?.merge) {
-    // Left on the entry before anything can be read or published: the write
-    // path is where it is consulted, and it must be there by then.
-    entry.merge = options.merge;
-  }
 
   if (isExternal) {
     markExternal(entry);
@@ -981,8 +883,6 @@ function createEntry(state: LaneState, key: LaneKey, keyId: string): LaneEntry {
     key,
     keyId,
     lastFulfilled: undefined,
-    held: undefined,
-    merge: undefined,
     published: false,
     revision: 0,
     subscribers: new Set(),
@@ -1130,7 +1030,6 @@ function setEntryCache<T>(
       // being handed back a rejection that has already been reported.
       if (entry.external && entry.cache === cache) {
         entry.cache = undefined;
-        entry.held = undefined;
       }
 
       // This throw unmounts the reader, so wrap the error to carry the key to
@@ -1309,11 +1208,6 @@ function rememberFulfilled(
   if (entry.external) {
     entry.published = true;
     entry.revision = ++state.revisionCounter;
-    // Weakly, like the slot: the value lives as long as its promise does.
-    entry.held =
-      typeof value === "object" && value !== null
-        ? externalRef(value)
-        : undefined;
     return;
   }
 
@@ -1345,9 +1239,6 @@ function shareWithLastFulfilled<T>(entry: LaneEntry, value: T): T {
 function removeEntryCache(entry: LaneEntry): void {
   entry.cache?.controller?.abort();
   entry.cache = undefined;
-  // An entry holding no value has nothing for a publication to merge into:
-  // an invalidated list comes back at the depth the owner publishes.
-  entry.held = undefined;
 }
 
 /** A read's `gcTime`, defaulting to the lane's (a default, not a floor or ceiling). */

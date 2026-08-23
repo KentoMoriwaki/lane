@@ -2,10 +2,8 @@
 
 import { useCallback } from "react";
 import { updateEntry } from "./core";
-import type { LaneMergePublication } from "./core";
 import { serializeKey } from "./keys";
 import { useLaneContext } from "./provider";
-import { replaceEqualDeep } from "./structural";
 import type {
   LaneInvalidate,
   LaneLoader,
@@ -128,12 +126,9 @@ export function useInfiniteLane<P, C>(
       return { hasNext: next !== null, pages, params };
     });
 
-  // The pagination fields ride along inert (`useLane` ignores options it does
-  // not know) and `merge` rides along to the store, which is where a
-  // publication meets the depth this list already has. A value rather than an
-  // inline literal: `merge` is nothing a public read shape names, and an object
-  // literal would be checked for exactly that.
-  const spec = { ...read, loader, merge: mergeFirstPage };
+  // The pagination fields ride along inert: `useLane` ignores options it does
+  // not know.
+  const spec = { ...read, loader };
 
   const {
     invalidate,
@@ -182,53 +177,5 @@ export function useInfiniteLane<P, C>(
     promise,
     startInvalidationTransition,
   };
-}
-
-/**
- * What a publication does to a list the browser has already deepened — the one
- * merge policy Lane ships, and the reason {@link LaneMergePublication} exists.
- *
- * A route republishes page 1 on every navigation and every `refresh`. If it is
- * the page the list already starts with, the pages the browser fetched after it
- * are still the pages that follow it, so the list keeps its depth: the
- * published page 1, then the pages standing behind it, with the cursors and
- * `hasNext` that describe them. Anything else — a different page 1, or nothing
- * standing there at all (the store answers that one) — is a list the browser's
- * depth no longer describes, and the publication stands alone.
- *
- * Equality is `replaceEqualDeep`'s, the same notion the store shares refetched
- * values by: deep for arrays and plain objects, identity for everything else.
- */
-const mergeFirstPage: LaneMergePublication = ({ held, published }) => {
-  const incoming = asInfiniteValue(published);
-  const standing = asInfiniteValue(held);
-
-  // Nothing to keep: a list one page deep *is* the publication, and a value of
-  // some other shape is not this list at all.
-  if (!incoming || !standing || standing.pages.length < 2) {
-    return published;
-  }
-
-  const first = incoming.pages[0];
-
-  if (replaceEqualDeep(standing.pages[0], first) !== standing.pages[0]) {
-    return published;
-  }
-
-  return {
-    hasNext: standing.hasNext,
-    pages: [first, ...standing.pages.slice(1)],
-    params: standing.params,
-  };
-};
-
-function asInfiniteValue(
-  value: unknown,
-): InfiniteLaneValue<unknown, unknown> | undefined {
-  return typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as InfiniteLaneValue<unknown, unknown>).pages)
-    ? (value as InfiniteLaneValue<unknown, unknown>)
-    : undefined;
 }
 

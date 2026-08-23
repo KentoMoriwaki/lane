@@ -13,18 +13,16 @@ import {
   LaneProvider,
   useInfiniteLane,
 } from "../index";
-import { hydrateMany, publishedBy } from "../hydrate";
+import { publishedBy } from "../hydrate";
 import type { InfiniteLaneResult } from "../use-infinite-lane";
 import type {
   Lane,
   LaneHydrationSnapshots,
   LaneUseOptions,
 } from "../types";
-import type { InfiniteLaneValue } from "../use-infinite-lane";
 import {
   caughtMessage,
   deferred,
-  readOrCreate,
   resetVitest,
   settlePromiseHandlers,
 } from "./test-utils";
@@ -414,7 +412,7 @@ describe("an infinite list whose first page the route publishes", () => {
     });
   });
 
-  it("keeps the browser's depth across a republication of the same page 1", async () => {
+  it("starts again at the published page on any republication", async () => {
     vi.useFakeTimers();
 
     const lane = createLane();
@@ -427,91 +425,22 @@ describe("an infinite list whose first page the route publishes", () => {
 
     frames.length = 0;
 
-    // A new payload — a navigation, a `refresh` — carrying a deep-equal page 1.
-    // The pages the browser fetched after it are still the pages after it.
+    // A new payload — a navigation, a `refresh` — carrying a page 1 deep-equal
+    // to the one standing there. It replaces the key all the same: the store
+    // never asks whether a publication looks like what it holds, because it
+    // cannot tell an unchanged page from one changed and changed back.
     await renderRouteFeed(lane, feedSnapshots(page(0)), { app });
 
-    expect(app.container.textContent).toBe("0,1,2|more");
-    // And not one frame of the shallow list on the way there. The merge happens
-    // in the store's write path, so there is no depth-1 value for a reader to
-    // commit — which is the whole reason it is not a reader's job.
-    expect(frames).toEqual(["0,1,2|more"]);
+    expect(app.container.textContent).toBe("0|more");
+    expect(frames).toEqual(["0|more"]);
 
-    // The cursors came back with the pages, not from the publication: the next
-    // append continues from where the list actually ends.
+    // And the list the browser deepens from here is the published one: the
+    // next append walks on from the cursor the publication carried.
     await click(() => handle?.loadMore());
-    await waitForText(app.container, "0,1,2,3|more");
+    await waitForText(app.container, "0,1|more");
   });
 
-  it("keeps the depth across a republication after a client patch to a later page", async () => {
-    vi.useFakeTimers();
-
-    const lane = createLane();
-    pageSource = pageFetcher(10);
-    const app = await renderRouteFeed(lane, feedSnapshots(page(0)));
-
-    await click(() => handle?.loadMore());
-    await click(() => handle?.loadMore());
-    await waitForText(app.container, "0,1,2|more");
-
-    // A mutation lands its confirmed row in place on page 2 — the demo's
-    // `updateAll(["tasks"], withRowPatched)` — so the value standing in the
-    // store is now an `update` chain, stamped by React when the reader read it,
-    // not a value Lane was handed.
-    await click(() => {
-      void lane.update(routeFeed.key, (value) => ({
-        ...value,
-        pages: value.pages.map((feedPage, index) =>
-          index === 1 ? { ...feedPage } : feedPage,
-        ),
-      }));
-    });
-    await waitForText(app.container, "0,1,2|more");
-
-    frames.length = 0;
-
-    // The owner republishes the same page 1 (a background refresh the mutation
-    // asked for). The depth the browser added has to survive it.
-    await renderRouteFeed(lane, feedSnapshots(page(0)), { app });
-
-    expect(app.container.textContent).toBe("0,1,2|more");
-    expect(frames).toEqual(["0,1,2|more"]);
-  });
-
-  it("keeps the depth when two regions republish the same page 1 after a patch", async () => {
-    vi.useFakeTimers();
-
-    const lane = createLane();
-    pageSource = pageFetcher(10);
-    // Two regions publish the key from one render pass — separate payload
-    // objects, equal content — as the demo's list and filter bar do.
-    hydrateMany(lane, feedSnapshots(page(0)));
-    const app = await renderRouteFeed(lane, feedSnapshots(page(0)));
-
-    await click(() => handle?.loadMore());
-    await click(() => handle?.loadMore());
-    await waitForText(app.container, "0,1,2|more");
-
-    await click(() => {
-      void lane.updateAll<InfiniteLaneValue<Page, number>>(["route-feed"], (value) => ({
-        ...value,
-        pages: value.pages.map((feedPage, index) =>
-          index === 1 ? { ...feedPage } : feedPage,
-        ),
-      }));
-      lane.set(["other"], "confirmed");
-      lane.invalidate(["insights"]);
-    });
-    await waitForText(app.container, "0,1,2|more");
-
-    // The refresh answers with both regions republishing page 1.
-    hydrateMany(lane, feedSnapshots(page(0)));
-    await renderRouteFeed(lane, feedSnapshots(page(0)), { app });
-
-    expect(app.container.textContent).toBe("0,1,2|more");
-  });
-
-  it("resets to depth 1 when the published page 1 is a different page", async () => {
+  it("starts again when the published page 1 differs", async () => {
     vi.useFakeTimers();
 
     const lane = createLane();
@@ -523,12 +452,37 @@ describe("an infinite list whose first page the route publishes", () => {
     await waitForText(app.container, "0,1,2|more");
 
     // The list starts somewhere else now, so the cursors behind the old page 1
-    // describe nothing. The publication stands alone.
+    // describe nothing. The publication stands alone — as it always does.
     await renderRouteFeed(lane, feedSnapshots({ index: 100, next: 101 }), {
       app,
     });
 
     expect(app.container.textContent).toBe("100|more");
+  });
+
+  it("keeps the depth through writes that do not republish the key", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    pageSource = pageFetcher(10);
+    const app = await renderRouteFeed(lane, feedSnapshots(page(0)));
+
+    await click(() => handle?.loadMore());
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1,2|more");
+
+    // What a mutation does to the keys around the list: converge the row it
+    // touched, mark what derives from it stale. None of that publishes the
+    // list's key, so the depth the browser added is nobody's business but the
+    // browser's.
+    await click(() => {
+      lane.set(["task", 1], "confirmed");
+      lane.set(["insights"], "stale-soon");
+      void lane.update(["task", 1], (value: string) => `${value}!`);
+      lane.invalidate(["insights"]);
+    });
+
+    expect(app.container.textContent).toBe("0,1,2|more");
   });
 
   it("asks the owner on invalidate, and takes the answer at depth 1", async () => {
@@ -554,7 +508,7 @@ describe("an infinite list whose first page the route publishes", () => {
     expect(app.container.textContent).toBe("0|more");
   });
 
-  it("reveals the depth it had when the publication landed while hidden", async () => {
+  it("a publication landing while hidden replaces the depth too", async () => {
     vi.useFakeTimers();
 
     const lane = createLane();
@@ -580,55 +534,12 @@ describe("an infinite list whose first page the route publishes", () => {
 
     await renderRouteFeed(lane, second, { app, mode: "visible" });
 
-    // Which is the other half of why the merge is the store's: the depth had to
-    // survive a publication nobody was there to receive.
-    expect(app.container.textContent).toBe("0,1,2|more");
+    // The publication landed on an entry nobody was there to receive it — and
+    // it replaced the value all the same. The reveal shows what the owner last
+    // said, at the depth the owner said it, with nothing left to fetch.
+    expect(app.container.textContent).toBe("0|more");
     expect(fallbackRenders).toBe(fallbacksBeforeReveal);
     expect(fetchPage).toHaveBeenCalledTimes(fetchesBeforePublish);
-  });
-
-  it("keeps a depth no reader has rendered yet", async () => {
-    vi.useFakeTimers();
-
-    const lane = createLane();
-    pageSource = pageFetcher(10);
-    const app = await renderRouteFeed(lane, feedSnapshots(page(0)));
-
-    // The reader registered the policy; it can leave, the policy stays on the
-    // entry — and so does the store's own record of what the entry holds.
-    await act(async () => {
-      app.root.render(
-        React.createElement(LaneProvider, { children: null, lane }),
-      );
-      await settlePromiseHandlers();
-    });
-
-    await act(async () => {
-      lane.update(routeFeed.key, (value) => ({
-        hasNext: true,
-        pages: [...value.pages, page(1)],
-        params: [...value.params, 1],
-      }));
-      await settlePromiseHandlers();
-    });
-
-    // Settled, and nobody has rendered it. The merge still sees it: what the
-    // entry holds is the store's knowledge the moment a value settles, not
-    // something read off stamps a reader's `use()` may not have written yet
-    // — a concurrent render suspended on another key's wait never reaches
-    // this reader, and the publication does not wait for it.
-    hydrateMany(lane, feedSnapshots(page(0)));
-
-    await expect(
-      readOrCreate<InfiniteLaneValue<Page, number>>(
-        lane,
-        routeFeed.key,
-        external,
-      ),
-    ).resolves.toEqual({
-      revision: expect.any(Number),
-      data: { hasNext: true, pages: [page(0), page(1)], params: [0, 1] },
-    });
   });
 });
 

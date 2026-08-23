@@ -124,9 +124,32 @@ export function DetailSkeleton() {
 
 export function DetailPanelSkeleton() {
   return (
-    <aside className="scrollbar-calm hidden w-[360px] shrink-0 overflow-y-auto border-l border-border bg-surface lg:block">
+    <aside
+      data-testid="task-panel-skeleton"
+      className="scrollbar-calm hidden w-[360px] shrink-0 overflow-y-auto border-l border-border bg-surface lg:block"
+    >
       <DetailSkeleton />
     </aside>
+  );
+}
+
+/**
+ * The task route's own shell. Same detail, drawn in the box `TaskDetailPage`
+ * draws it in, so the page does not move when the read lands.
+ */
+export function DetailPageSkeleton() {
+  return (
+    <div
+      data-testid="task-page-skeleton"
+      className="scrollbar-calm min-w-0 flex-1 overflow-y-auto bg-background"
+    >
+      <div className="mx-auto w-full max-w-2xl px-4 py-6">
+        <Skeleton className="h-5 w-28" />
+        <div className="mt-4 overflow-hidden rounded-xl border border-border bg-surface">
+          <DetailSkeleton />
+        </div>
+      </div>
+    </div>
   );
 }
 

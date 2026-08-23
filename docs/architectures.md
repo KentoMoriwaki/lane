@@ -222,7 +222,7 @@ Lane does not currently target pre-RSC SSR hydration patterns — the
 `window.__DATA__`-style "server collects arbitrary client-component data, hydrate
 into a client cache, CSR takes over" flow. This may be revisited later. Lane
 focuses first on apps where the server either owns route data directly or
-publishes it into a store the client reads but does not write.
+publishes it into a store whose freshness it keeps deciding.
 
 ## Examples
 
@@ -231,11 +231,16 @@ is a runnable Next.js app that builds the same team-task workspace seven ways
 against one backend. Its landing page groups the routes by the owner whose
 freshness policy they follow:
 
-- **App Router-owned:** `/app-router` is the plain-props baseline; `/lane` reads
-  the same uncached sources, Server Actions, and latency, then publishes for
-  `external` readers — one publication per region, each behind its own Suspense
-  boundary, so the route streams rather than waiting on its slowest read.
-  Mutations call `refresh()`, and optimistic UI covers the server round trip.
+- **App Router-owned:** `/app-router` is the plain-props baseline, where every
+  mutation is a Server Action and the whole route comes back. `/lane` reads the
+  same sources at the same latency and publishes them for `external` readers —
+  one publication per region, each behind its own Suspense boundary, so the
+  route streams rather than waiting on its slowest read — and then converges
+  both ways: creating something calls an action and reads again, while editing a
+  task calls the API from the browser, `set`s what came back, patches the row in
+  place, and sets the counters from the response too — the write recomputes them
+  server-side, so an inline edit costs one round trip and no rerender at all.
+  Optimistic UI covers the round trip.
 - **Browser-owned:** `/lane-spa` and `/react-query` ship no workspace data in
   SSR. Browser loaders fetch every key, mutation results patch the entries they
   can determine, and targeted invalidation converges derived data.

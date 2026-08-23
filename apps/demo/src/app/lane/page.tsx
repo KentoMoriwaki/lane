@@ -1,22 +1,18 @@
 import { Suspense } from "react";
-import { getSession } from "@/app/lane/api/session";
 import {
   FilterBarRegion,
   InsightStripRegion,
   SidebarRegion,
-  TaskDetailRegion,
   TaskListRegion,
 } from "./regions";
 import { WorkspaceBrand } from "@/app/lane/workspace/brand";
 import {
-  DetailPanelSkeleton,
   FilterBarSkeleton,
   InsightStripSkeleton,
   SidebarSkeleton,
   TaskListSkeleton,
 } from "@/app/lane/workspace/skeletons";
 import { Workspace } from "@/app/lane/workspace/workspace";
-import { WorkspaceProvider } from "@/app/lane/workspace/workspace-provider";
 
 // The route claims its navigations produce a UI immediately. Nothing below may
 // await above a Suspense boundary, or the claim fails validation.
@@ -38,49 +34,47 @@ type PageProps = {
  * navigation paints it immediately and each region streams in as its own read
  * lands — the task list at its own latency, not the slowest read's.
  *
- * Mutations do not change shape: a Server Action mutates and calls `refresh()`,
- * this route renders again, and every region republishes. One coherent
- * workspace, delivered in pieces.
+ * **The detail is not here any more.** A task is its own route
+ * (`task/[id]/page.tsx`), and a row is a `<Link>` to it. Clicking one is
+ * intercepted into the `@modal` slot, which `layout.tsx` draws beside this
+ * list; opening the same URL directly renders the full page instead. So this
+ * file publishes the list's keys and nothing else, and the panel's empty state
+ * is `@modal/default.tsx` — literally nothing rendered.
  *
- * The discipline that buys it: the client never writes to these keys. Where the
- * round trip is too slow to feel right, `useOptimistic` covers it over the read
- * value, which is a display concern and never a write.
+ * Mutations arrive by two channels, and only one of them ends here. Creating
+ * something calls a Server Action, whose response *is* this route rendered
+ * again — the new task comes back already in its sorted place. Editing a task
+ * calls the API from the browser and lands the whole answer in the lane: the
+ * row, and the counters the write recomputed after it. **That channel never
+ * renders this file.** Neither needs the other to know what it did (see
+ * `api/hooks.ts`).
  *
  * `/lane-spa` is the same workspace with the opposite answer: no seeding,
  * client loaders, and the cache maintenance that comes with owning your data.
  */
 export default function Page({ searchParams }: PageProps) {
   return (
-    <WorkspaceProvider session={getSession()}>
-      <Workspace
-        sidebar={
-          <Suspense
-            fallback={<SidebarSkeleton brand={<WorkspaceBrand />} />}
-          >
-            <SidebarRegion searchParams={searchParams} />
-          </Suspense>
-        }
-        insights={
-          <Suspense fallback={<InsightStripSkeleton />}>
-            <InsightStripRegion searchParams={searchParams} />
-          </Suspense>
-        }
-        filterBar={
-          <Suspense fallback={<FilterBarSkeleton />}>
-            <FilterBarRegion searchParams={searchParams} />
-          </Suspense>
-        }
-        taskList={
-          <Suspense fallback={<TaskListSkeleton />}>
-            <TaskListRegion searchParams={searchParams} />
-          </Suspense>
-        }
-        detail={
-          <Suspense fallback={<DetailPanelSkeleton />}>
-            <TaskDetailRegion searchParams={searchParams} />
-          </Suspense>
-        }
-      />
-    </WorkspaceProvider>
+    <Workspace
+      sidebar={
+        <Suspense fallback={<SidebarSkeleton brand={<WorkspaceBrand />} />}>
+          <SidebarRegion searchParams={searchParams} />
+        </Suspense>
+      }
+      insights={
+        <Suspense fallback={<InsightStripSkeleton />}>
+          <InsightStripRegion searchParams={searchParams} />
+        </Suspense>
+      }
+      filterBar={
+        <Suspense fallback={<FilterBarSkeleton />}>
+          <FilterBarRegion searchParams={searchParams} />
+        </Suspense>
+      }
+      taskList={
+        <Suspense fallback={<TaskListSkeleton />}>
+          <TaskListRegion searchParams={searchParams} />
+        </Suspense>
+      }
+    />
   );
 }

@@ -1,15 +1,23 @@
-import { external, laneRead, laneSnapshot } from "use-lane";
+import {
+  external,
+  infiniteLaneRead,
+  infiniteLaneSnapshot,
+  laneRead,
+  laneSnapshot,
+} from "use-lane";
 import type { LaneHydrationSnapshots, LaneSnapshot } from "use-lane";
 import type {
   CurrentUser,
   Insights,
-  Project,
   Task,
+  TaskPage,
   TeamLabel,
   TeamMember,
   TeamSummary,
 } from "@/server/api";
-import type { TaskFilters } from "./endpoints";
+import type { WorkspaceCtx } from "@/lib/lane-meta";
+import { fetchTaskPage, type ProjectTaskCounts, type TaskFilters } from "./endpoints";
+import type { ProjectRef } from "./route-reads";
 
 /**
  * Every read this workspace performs, defined once — and every one of them is
@@ -39,12 +47,15 @@ import type { TaskFilters } from "./endpoints";
  * ```ts
  * laneSnapshot(workspaceReads.insights(), insights);  // the server publishes
  * useLane(workspaceReads.insights());                 // the client reads
+ * lane.invalidate(workspaceReads.insights().key);     // the client marks stale
  * ```
  *
- * Those are the only two things anyone does with these reads. There is no third
- * line writing to `.key` — `lane.set` / `update` / `invalidate` / `remove` all
- * throw on a key a publication seeded, and the mutations live in `actions.ts`
- * instead, where a change ends in a republication rather than in a local edit.
+ * The third line is a write, and there is nothing special about it: a published
+ * key takes `set` / `update` / `invalidate` like any other. What "server-owned"
+ * means is not that the client may not write — it is that the client has no
+ * freshness policy of its own here. It can say *this value is what came back*
+ * and *this key is stale*; deciding when to load again is the owner's, and the
+ * answer always arrives as a publication (see `api/hooks.ts`).
  *
  * Note there is no `"use client"` on this module, and both graphs import it: the
  * components read in the browser, while `page.tsx` — a Server Component — calls
@@ -59,15 +70,62 @@ import type { TaskFilters } from "./endpoints";
  * have to evict them by hand; here the same event that changes the team is the
  * one that republishes them.
  */
+/**
+ * The context for a caller that will never make the call: the route building
+ * `workspaceReads.tasks(filters)` for its key. Empty ids are what this API
+ * reads as "apply your defaults", and nothing on the server ever reaches the
+ * `fetchPage` they would travel on.
+ */
+const NOT_THE_BROWSER: WorkspaceCtx = { teamId: "", userId: "" };
+
 export const workspaceReads = {
   currentUser: () =>
     laneRead<CurrentUser>({ key: ["current-user"], loader: external }),
   teams: () => laneRead<TeamSummary[]>({ key: ["teams"], loader: external }),
-  tasks: (filters: TaskFilters) =>
-    laneRead<Task[]>({ key: ["tasks", filters], loader: external }),
+  /**
+   * **The list whose first page is the route's and whose depth is the
+   * browser's**, on one key.
+   *
+   * `loader: external` says page 1 is published, exactly as on every other read
+   * here; `fetchPage` and `nextCursor` are the browser's half, and they are the
+   * only client fetch anywhere in this workspace's reads. The key holds
+   * `{ pages, params, hasNext }` whoever filled it, and `infiniteLaneSnapshot`
+   * (in `workspaceSnapshots` below) is the one place a page becomes that shape.
+   *
+   * A page is `{ items, nextCursor }` — the endpoint's own envelope — rather
+   * than a bare `Task[]`, so "where the next page starts" travels with the rows
+   * it was computed from and `nextCursor(page)` is a field read, not a guess.
+   *
+   * What a republication does to the depth is the library's rule, not this
+   * app's: an equal page 1 keeps the pages standing behind it, a different one
+   * (or an `invalidate`) resets to one page. See `docs/api-reference.md` §
+   * `useInfiniteLane` → "The first page from the route", and `api/hooks.ts` for
+   * which mutation does which.
+   *
+   * `ctx` is the one argument here that is not part of the key, because it is
+   * not part of the value either — it is who the *browser* says it is when it
+   * asks for page 2, and the team it asks about has to be the team the route
+   * published page 1 for. The hook passes `useWorkspaceCtx()`; the route's own
+   * callers build this read for its `key` and `nextCursor` alone and leave it
+   * out. (It cannot ride on `read.loaderMeta`, the documented per-read
+   * override: the external infinite spec carries no `LaneUseOptions`.)
+   */
+  tasks: (filters: TaskFilters, ctx: WorkspaceCtx = NOT_THE_BROWSER) =>
+    infiniteLaneRead<TaskPage, string | null>({
+      key: ["tasks", filters],
+      loader: external,
+      fetchPage: (cursor) => fetchTaskPage(ctx, filters, { cursor }),
+      nextCursor: (page) => page.nextCursor,
+    }),
   task: (taskId: string) =>
     laneRead<Task>({ key: ["task", taskId], loader: external }),
-  projects: () => laneRead<Project[]>({ key: ["projects"], loader: external }),
+  projects: () =>
+    laneRead<ProjectRef[]>({ key: ["projects"], loader: external }),
+  // Its own key because it has its own freshness: the roster of projects is
+  // cached for hours, the number of tasks in each is read through on every
+  // render. One key, one lifetime — see `api/route-reads.ts`.
+  projectCounts: () =>
+    laneRead<ProjectTaskCounts>({ key: ["project-counts"], loader: external }),
   labels: () => laneRead<TeamLabel[]>({ key: ["labels"], loader: external }),
   members: () => laneRead<TeamMember[]>({ key: ["members"], loader: external }),
   insights: () => laneRead<Insights>({ key: ["insights"], loader: external }),
@@ -83,12 +141,25 @@ export const workspaceReads = {
  * it, and `data` is checked against what that read loads.
  */
 export const workspaceSnapshots = {
+  /**
+   * The list route's reference data, published in one place.
+   *
+   * It is more than the sidebar draws, and deliberately so: the create dialog
+   * lives in the frame, which is not a region and publishes nothing, and its
+   * three pickers read members, projects, the counts and labels. The detail
+   * used to publish those as a region of this route; it is its own route now,
+   * so the list route has to carry them itself or the pickers wait for a
+   * publication that never comes. All four are `"use cache"` reads or the one
+   * dynamic count, so saying so here costs the frame nothing.
+   */
   sidebar(seeds: {
     currentUser: CurrentUser;
     teams: TeamSummary[];
     insights: Insights;
-    projects: Project[];
+    projects: ProjectRef[];
+    projectCounts: ProjectTaskCounts;
     labels: TeamLabel[];
+    members: TeamMember[];
   }): LaneHydrationSnapshots {
     return {
       entries: [
@@ -96,7 +167,9 @@ export const workspaceSnapshots = {
         laneSnapshot(workspaceReads.teams(), seeds.teams),
         laneSnapshot(workspaceReads.insights(), seeds.insights),
         laneSnapshot(workspaceReads.projects(), seeds.projects),
+        laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
         laneSnapshot(workspaceReads.labels(), seeds.labels),
+        laneSnapshot(workspaceReads.members(), seeds.members),
       ],
     };
   },
@@ -105,49 +178,82 @@ export const workspaceSnapshots = {
     return { entries: [laneSnapshot(workspaceReads.insights(), insights)] };
   },
 
+  /**
+   * The list's first page, published as the list.
+   *
+   * The key holds `{ pages, params, hasNext }` however deep the browser has
+   * taken it, so the route has to publish that shape — and
+   * `infiniteLaneSnapshot` is **the only place in this app where a page becomes
+   * it**. `null` is the cursor page 1 was fetched with, recorded so a re-read
+   * starts where this one did; `hasNext` comes from the read's own `nextCursor`
+   * applied to the page, so the route and the browser agree there is more
+   * before a single client fetch has run.
+   *
+   * What lands on top of a browser that has already loaded page 2 is the
+   * library's business, not this file's: an equal page 1 keeps the depth
+   * (`docs/api-reference.md` § "The first page from the route").
+   */
   tasks(seeds: {
     filters: TaskFilters;
-    data: Task[];
+    data: TaskPage;
   }): LaneHydrationSnapshots {
     return {
       entries: [
-        laneSnapshot(workspaceReads.tasks(seeds.filters), seeds.data),
+        infiniteLaneSnapshot(
+          workspaceReads.tasks(seeds.filters),
+          seeds.data,
+          null,
+        ),
       ],
     };
   },
 
   filterBar(seeds: {
-    projects: Project[];
+    projects: ProjectRef[];
     labels: TeamLabel[];
-    tasks: { filters: TaskFilters; data: Task[] };
+    tasks: { filters: TaskFilters; data: TaskPage };
   }): LaneHydrationSnapshots {
     return {
       entries: [
         laneSnapshot(workspaceReads.projects(), seeds.projects),
         laneSnapshot(workspaceReads.labels(), seeds.labels),
-        laneSnapshot(workspaceReads.tasks(seeds.tasks.filters), seeds.tasks.data),
+        infiniteLaneSnapshot(
+          workspaceReads.tasks(seeds.tasks.filters),
+          seeds.tasks.data,
+          null,
+        ),
       ],
     };
   },
 
+  /**
+   * The detail's keys, published by whichever route is showing it — the task
+   * page or its intercepted twin in the panel slot. Both publish the same
+   * entries, so `useTask(id)` reads one key however the detail was opened.
+   */
   detail(seeds: {
     members: TeamMember[];
-    projects: Project[];
+    projects: ProjectRef[];
+    /**
+     * Only the page surface passes these. In the panel the sidebar is on
+     * screen and has already published them, and the count is the one
+     * dynamic read of the four — asking for it twice in one render would be
+     * two trips to the source for one number.
+     */
+    projectCounts?: ProjectTaskCounts;
     labels: TeamLabel[];
-    selectedTask: Task | null;
+    task: Task;
   }): LaneHydrationSnapshots {
     const entries: LaneSnapshot[] = [
       laneSnapshot(workspaceReads.members(), seeds.members),
       laneSnapshot(workspaceReads.projects(), seeds.projects),
       laneSnapshot(workspaceReads.labels(), seeds.labels),
+      laneSnapshot(workspaceReads.task(seeds.task.id), seeds.task),
     ];
 
-    if (seeds.selectedTask) {
+    if (seeds.projectCounts) {
       entries.push(
-        laneSnapshot(
-          workspaceReads.task(seeds.selectedTask.id),
-          seeds.selectedTask,
-        ),
+        laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
       );
     }
 

@@ -4,6 +4,7 @@ import {
   readInsights,
   readLabels,
   readMembers,
+  readProjectTaskCounts,
   readProjects,
   readTask,
   readTasks,
@@ -13,7 +14,12 @@ import { parseWorkspaceState, getterFromRecord } from "@/app/lane/api/url-state"
 import { FilterBar } from "@/app/lane/workspace/filter-bar";
 import { InsightStrip } from "@/app/lane/workspace/insight-strip";
 import { Sidebar } from "@/app/lane/workspace/sidebar";
-import { TaskDetailPanel } from "@/app/lane/workspace/task-detail-panel";
+import {
+  TaskDetailPage,
+  TaskDetailPanel,
+  TaskMissingPage,
+  TaskMissingPanel,
+} from "@/app/lane/workspace/task-detail-panel";
 import { TaskList } from "@/app/lane/workspace/task-list";
 
 /**
@@ -26,9 +32,23 @@ import { TaskList } from "@/app/lane/workspace/task-list";
  *
  * Splitting the publication is what `LaneHydration` nesting is for — a reader's
  * seeds may come from any boundary in its lineage, so a region can publish just
- * the keys its leaf reads. Coherence is unchanged: a mutation calls `refresh()`,
- * the route renders again, and every region republishes. It simply arrives in
- * pieces now instead of all at once.
+ * the keys its leaf reads. Coherence is unchanged: whatever asks for a rerender
+ * — a Server Action's `refresh()`, or the `router.refresh()` Lane fires for a
+ * key a mutation marked stale — renders this whole file, and every region
+ * republishes. It simply arrives in pieces instead of all at once.
+ *
+ * What a rerender costs is not the whole file, though. `readProjects`,
+ * `readLabels` and `readMembers` are `"use cache"` (see `api/route-reads.ts`),
+ * so a render re-reads the tasks, the project counts, the open task and the
+ * insights, and nothing else reaches the API. Which is a cost worth knowing
+ * and mostly worth not paying: an inline edit converges from the write's own
+ * response and asks for no render at all (`api/hooks.ts`).
+ *
+ * The last region here belongs to a different route. `TaskDetailRegion` is
+ * rendered by `task/[id]/page.tsx` and by its intercepted twin under
+ * `@modal/(.)task/[id]`, and it publishes the same keys for both — the surface
+ * only decides which shell is drawn around the detail and how an edit made
+ * there converges (`api/hooks.ts`).
  *
  * Each region resolves the session itself rather than receiving it. That is
  * what keeps the frame free of awaits, and `getSession` is `cache`d so the
@@ -46,13 +66,19 @@ async function requested(searchParams: RegionProps["searchParams"]) {
 export async function SidebarRegion({ searchParams }: RegionProps) {
   const state = await requested(searchParams);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const [currentUser, teams, insights, projects, labels] = await Promise.all([
-    getSession(),
-    getTeams(),
-    readInsights(ctx),
-    readProjects(ctx),
-    readLabels(ctx),
-  ]);
+  // More than the sidebar draws: this is where the list route publishes its
+  // reference data, and the create dialog's pickers read it from here (see
+  // `workspaceSnapshots.sidebar`). Three of the five are cached reads.
+  const [currentUser, teams, insights, projects, projectCounts, labels, members] =
+    await Promise.all([
+      getSession(),
+      getTeams(),
+      readInsights(ctx),
+      readProjects(ctx),
+      readProjectTaskCounts(ctx),
+      readLabels(ctx),
+      readMembers(ctx),
+    ]);
 
   return (
     <LaneHydration
@@ -61,7 +87,9 @@ export async function SidebarRegion({ searchParams }: RegionProps) {
         teams,
         insights,
         projects,
+        projectCounts,
         labels,
+        members,
       })}
     >
       <Sidebar />
@@ -87,7 +115,8 @@ export async function FilterBarRegion({ searchParams }: RegionProps) {
   const [projects, labels, tasks] = await Promise.all([
     readProjects(ctx),
     readLabels(ctx),
-    readTasks(ctx, state.filters),
+    // Page 1. The browser reads the rest on the same key (`api/lane-reads.ts`).
+    readTasks(ctx, state.filters, { cursor: null }),
   ]);
 
   return (
@@ -106,7 +135,9 @@ export async function FilterBarRegion({ searchParams }: RegionProps) {
 export async function TaskListRegion({ searchParams }: RegionProps) {
   const state = await requested(searchParams);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const tasks = await readTasks(ctx, state.filters);
+  // Page 1, and only ever page 1: what this route publishes is the first page
+  // of the list, and the depth on top of it is the browser's (`api/hooks.ts`).
+  const tasks = await readTasks(ctx, state.filters, { cursor: null });
 
   return (
     <LaneHydration
@@ -120,28 +151,55 @@ export async function TaskListRegion({ searchParams }: RegionProps) {
   );
 }
 
-export async function TaskDetailRegion({ searchParams }: RegionProps) {
-  const state = await requested(searchParams);
+/** Which route is rendering the detail — see `TaskDetailRegion`. */
+export type TaskSurface = "panel" | "page";
+
+export type TaskRegionProps = RegionProps & {
+  params: Promise<{ id: string }>;
+  surface: TaskSurface;
+};
+
+export async function TaskDetailRegion({
+  params,
+  searchParams,
+  surface,
+}: TaskRegionProps) {
+  const [{ id }, state] = await Promise.all([params, requested(searchParams)]);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const [members, projects, labels, selectedTask] = await Promise.all([
+  // The counts are read here only for the page, which has no sidebar beside it
+  // to have published them. In the panel the list route already did, and this
+  // region reading them again would cost a second trip to the source for the
+  // same number in the same render.
+  const [members, projects, labels, task, projectCounts] = await Promise.all([
     readMembers(ctx),
     readProjects(ctx),
     readLabels(ctx),
-    state.selectedTaskId
-      ? readTask(ctx, state.selectedTaskId)
-      : Promise.resolve(null),
+    readTask(ctx, id),
+    surface === "page" ? readProjectTaskCounts(ctx) : Promise.resolve(undefined),
   ]);
+
+  // A task deleted from another tab, or an id someone typed. Nothing is
+  // published for it: an `external` read with no publication would wait for one
+  // that is never coming, so the surface says so instead.
+  if (!task) {
+    return surface === "panel" ? <TaskMissingPanel /> : <TaskMissingPage />;
+  }
 
   return (
     <LaneHydration
       snapshots={workspaceSnapshots.detail({
         members,
         projects,
+        projectCounts,
         labels,
-        selectedTask,
+        task,
       })}
     >
-      <TaskDetailPanel />
+      {surface === "panel" ? (
+        <TaskDetailPanel taskId={task.id} />
+      ) : (
+        <TaskDetailPage taskId={task.id} />
+      )}
     </LaneHydration>
   );
 }

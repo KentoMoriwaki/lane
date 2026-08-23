@@ -1,11 +1,13 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { TASK_PAGE_LIMIT_MAX, TASK_PAGE_SIZE } from "@/lib/team-api";
 import {
   DEFAULT_USER_ID,
   addTaskLabel,
   createLabel,
   createProject,
   createTask,
+  decodeTaskCursor,
   deleteTask,
   getCurrentUser,
   getInsights,
@@ -14,8 +16,9 @@ import {
   getUserById,
   listLabels,
   listMembers,
+  listProjectTaskCounts,
   listProjects,
-  listTasks,
+  listTaskPage,
   listTeamsForUser,
   removeTaskLabel,
   updateTask,
@@ -120,6 +123,29 @@ const DERIVED_DATA_DELAY_MS = readMilliseconds(
   30,
 );
 
+/**
+ * The two numbers a task write moves, recomputed after it lands.
+ *
+ * Every task mutation below answers with these beside whatever it changed. The
+ * insights and the project counts are derived from the tasks table, so a write
+ * that has just changed a row is the one place in the system that knows they
+ * are wrong and can produce the right ones in the same breath — one extra read
+ * each, here, instead of two more round trips from whoever made the edit.
+ *
+ * They are the same values `GET /insights` and `GET /projects/counts` serve,
+ * computed by the same functions, and they carry the same modelled cost: a
+ * derivation is not cheaper because a write asked for it.
+ */
+async function derivationsAfterTaskWrite(teamId: string, userId: string) {
+  const [insights, projectCounts] = await Promise.all([
+    getInsights(teamId, userId),
+    listProjectTaskCounts(teamId),
+    delay(DERIVED_DATA_DELAY_MS),
+  ]);
+
+  return { insights, projectCounts };
+}
+
 export const teamRoutes = team
   .get("/me", async (context) => {
     const user = await getCurrentUser(context.get("userId"));
@@ -133,23 +159,51 @@ export const teamRoutes = team
   .get("/teams", async (context) => {
     return context.json(await listTeamsForUser(context.get("userId")), 200);
   })
+  /**
+   * The task list, one page at a time.
+   *
+   * `limit` defaults to {@link TASK_PAGE_SIZE} and `cursor` continues strictly
+   * after the row it names, so the response is always an envelope — the rows
+   * and where the next ones start. A caller that wants the list entire says so
+   * by asking for {@link TASK_PAGE_LIMIT_MAX}; every route in this demo except
+   * `/lane` does exactly that, which keeps one shape for one endpoint instead
+   * of a response that changes with its query string.
+   */
   .get(
     "/tasks",
     zValidator("query", listTasksQuerySchema, validationHook),
     async (context) => {
       const query = context.req.valid("query");
+      const cursor = query.cursor ? decodeTaskCursor(query.cursor) : null;
+
+      if (query.cursor && !cursor) {
+        return context.json(
+          { error: "Cursor could not be decoded", code: "invalid_cursor" },
+          400,
+        );
+      }
+
+      const requested = Number.parseInt(query.limit ?? "", 10);
+      const limit = Number.isFinite(requested)
+        ? Math.min(Math.max(requested, 1), TASK_PAGE_LIMIT_MAX)
+        : TASK_PAGE_SIZE;
 
       return context.json(
-        await listTasks(context.get("teamId"), context.get("userId"), {
-          q: query.q,
-          scope: query.scope,
-          status: query.status,
-          priority: query.priority,
-          projectId: query.projectId,
-          labelId: query.labelId,
-          due: query.due,
-          ids: query.ids,
-        }),
+        await listTaskPage(
+          context.get("teamId"),
+          context.get("userId"),
+          {
+            q: query.q,
+            scope: query.scope,
+            status: query.status,
+            priority: query.priority,
+            projectId: query.projectId,
+            labelId: query.labelId,
+            due: query.due,
+            ids: query.ids,
+          },
+          { cursor, limit },
+        ),
         200,
       );
     },
@@ -176,6 +230,12 @@ export const teamRoutes = team
 
     return context.json(task, 200);
   })
+  /**
+   * The four task writes below answer with what the edit changed: the row as
+   * it now is, and the two derivations that moved with it
+   * ({@link derivationsAfterTaskWrite}). A caller holding the response holds
+   * everything the write touched, and has nothing left to go and read.
+   */
   .patch(
     "/tasks/:id",
     zValidator("json", updateTaskInputSchema, validationHook),
@@ -190,9 +250,21 @@ export const teamRoutes = team
         return context.json({ error: "Task not found" }, 404);
       }
 
-      return context.json(task, 200);
+      return context.json(
+        {
+          task,
+          ...(await derivationsAfterTaskWrite(
+            context.get("teamId"),
+            context.get("userId"),
+          )),
+        },
+        200,
+      );
     },
   )
+  // 200 with a body rather than 204: a delete moves the same two numbers every
+  // other task write moves, and the caller that removed the row is the one that
+  // has to show them.
   .delete("/tasks/:id", async (context) => {
     const deleted = await deleteTask(
       context.get("teamId"),
@@ -203,7 +275,13 @@ export const teamRoutes = team
       return context.json({ error: "Task not found" }, 404);
     }
 
-    return context.body(null, 204);
+    return context.json(
+      await derivationsAfterTaskWrite(
+        context.get("teamId"),
+        context.get("userId"),
+      ),
+      200,
+    );
   })
   .post(
     "/tasks/:id/labels",
@@ -219,7 +297,16 @@ export const teamRoutes = team
         return context.json({ error: "Task or label not found" }, 404);
       }
 
-      return context.json(task, 200);
+      return context.json(
+        {
+          task,
+          ...(await derivationsAfterTaskWrite(
+            context.get("teamId"),
+            context.get("userId"),
+          )),
+        },
+        200,
+      );
     },
   )
   .delete("/tasks/:id/labels/:labelId", async (context) => {
@@ -233,11 +320,30 @@ export const teamRoutes = team
       return context.json({ error: "Task not found" }, 404);
     }
 
-    return context.json(task, 200);
+    return context.json(
+      {
+        task,
+        ...(await derivationsAfterTaskWrite(
+          context.get("teamId"),
+          context.get("userId"),
+        )),
+      },
+      200,
+    );
   })
   .get("/projects", async (context) => {
     await delay(DERIVED_DATA_DELAY_MS);
     return context.json(await listProjects(context.get("teamId")), 200);
+  })
+  // The counts, separately from the projects. They are derived from tasks, so
+  // whoever reads them cannot cache them the way the roster of projects is
+  // cached — see `app/lane/api/route-reads.ts`.
+  .get("/projects/counts", async (context) => {
+    await delay(DERIVED_DATA_DELAY_MS);
+    return context.json(
+      await listProjectTaskCounts(context.get("teamId")),
+      200,
+    );
   })
   .post(
     "/projects",

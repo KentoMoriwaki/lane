@@ -3,7 +3,7 @@
 import * as React from "react";
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import { buildWorkspaceHref } from "@/app/lane/api/url-state";
-import { useWorkspaceUrl } from "./use-workspace-url";
+import { LANE_PATH, useWorkspaceUrl } from "./use-workspace-url";
 
 /**
  * The links a region needs, built where the region lives.
@@ -13,28 +13,33 @@ import { useWorkspaceUrl } from "./use-workspace-url";
  * crosses that boundary. Every input is in the URL, which each client leaf can
  * read for itself, so the threading was never carrying anything the leaf did
  * not already have access to.
+ *
+ * They all point at `LANE_PATH`, never at the current pathname. A view is a
+ * property of the list, so choosing one while the panel is open navigates to
+ * the list showing it — which closes the panel, because the slot matches
+ * nothing at `/lane`.
  */
 export function useWorkspaceHrefs() {
-  const { pathname, state, filters } = useWorkspaceUrl();
+  const { state, filters } = useWorkspaceUrl();
 
   const viewHref = React.useCallback(
     (view: Partial<TaskFilters>) =>
-      buildWorkspaceHref(pathname, state, {
+      buildWorkspaceHref(LANE_PATH, state, {
         filters: { ...EMPTY_FILTERS, ...view },
       }),
-    [pathname, state],
+    [state],
   );
 
   const filterHref = React.useCallback(
     (nextFilters: TaskFilters) =>
-      buildWorkspaceHref(pathname, state, { filters: nextFilters }),
-    [pathname, state],
+      buildWorkspaceHref(LANE_PATH, state, { filters: nextFilters }),
+    [state],
   );
 
   const resetFiltersHref = React.useMemo(
     () =>
-      buildWorkspaceHref(pathname, state, { filters: { ...EMPTY_FILTERS } }),
-    [pathname, state],
+      buildWorkspaceHref(LANE_PATH, state, { filters: { ...EMPTY_FILTERS } }),
+    [state],
   );
 
   return { filters, viewHref, filterHref, resetFiltersHref };

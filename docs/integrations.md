@@ -169,10 +169,15 @@ export const taskLanes = {
   again?"* — see [the two mutation channels](#the-two-mutation-channels).
   A **Server Action that revalidates** (`revalidatePath` / `updateTag`) answers
   with the re-rendered payload, which republishes every seeded key at once;
-  nothing is left for Lane to do. A **Route Handler** answers with the new value
-  and nothing else: `lane.set` / `lane.update` land what it returned in place,
-  `lane.invalidate` marks what derives from it, and the next reader of an
-  invalidated key gets `refresh` fired for it — one `router.refresh()` for
+  nothing is left for Lane to do. A **Route Handler** answers with whatever you
+  make it answer with, and that is the lever: `lane.set` / `lane.update` land
+  what it returned in place, so **a handler that also returns the data derived
+  from the write leaves nothing to ask for**. Design the response around the
+  keys the mutation moves — the handler is on the server, one read from the
+  source, at the moment it knows the old values are wrong. `lane.invalidate` is
+  for what the response genuinely cannot carry (an ordering across rows this
+  client has never seen, a screen that is not on the screen); the next reader of
+  an invalidated key gets `refresh` fired for it — one `router.refresh()` for
   however many keys one run invalidated. Cover whatever round trip is left with
   `useOptimistic` over the read value.
 - **Client-only** surfaces (no publication) just call `useLane` with their own
@@ -203,7 +208,7 @@ stylistic:
 
 | | Server Action + revalidate | Route Handler + Lane writes |
 | --- | --- | --- |
-| Round trips | One — the action's response carries the re-rendered route | One for the mutation; a second only if something was invalidated and a reader needs it |
+| Round trips | One — the action's response carries the re-rendered route | One — the response carries what the edit changed; derived data the response cannot carry is `invalidate`d, and only that costs a second |
 | Concurrency | Serialized in the client's action queue (a navigation discards a pending action's router result) | Parallel — better for a control users click repeatedly |
 | Scope | Always re-renders the current route, even when revalidating a different path | Touches exactly the keys you name |
 | "Make another screen stale without touching this one" | Not expressible | `lane.invalidate(key)` — nothing happens until that screen is revealed |

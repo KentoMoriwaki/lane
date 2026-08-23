@@ -91,6 +91,9 @@ export const taskSchema = z.object({
   updatedAt: z.string(),
 });
 
+/** How many tasks are in each project, keyed by project id. */
+export const projectTaskCountsSchema = z.record(z.string(), z.number());
+
 export const insightsSchema = z.object({
   total: z.number(),
   open: z.number(),
@@ -102,6 +105,35 @@ export const insightsSchema = z.object({
   assignedToMe: z.number(),
   dueSoon: z.number(),
   byStatus: z.record(taskStatusSchema, z.number()),
+});
+
+/* --------------------------- Mutation results --------------------------- */
+
+/**
+ * **What a task write answers with: the row, and the two numbers derived from
+ * it.**
+ *
+ * A caller that edits a task and then reads `/insights` and `/projects/counts`
+ * back is asking the same source three times about one change. The write knows
+ * what it changed, so it recomputes both derivations after the row lands and
+ * ships them in the same response — the client converges everything the edit
+ * touched without asking anything again.
+ *
+ * `insights` is exactly what `GET /insights` returns and `projectCounts`
+ * exactly what `GET /projects/counts` returns, and both endpoints stay: a
+ * route rendering the workspace still reads them, and this envelope is for the
+ * caller that has just written.
+ */
+export const taskMutationResultSchema = z.object({
+  task: taskSchema,
+  insights: insightsSchema,
+  projectCounts: projectTaskCountsSchema,
+});
+
+/** The same, for the write that leaves no row behind. */
+export const taskRemovalResultSchema = z.object({
+  insights: insightsSchema,
+  projectCounts: projectTaskCountsSchema,
 });
 
 /* ------------------------------- Inputs -------------------------------- */
@@ -119,6 +151,15 @@ export const listTasksQuerySchema = z.object({
   due: z.enum(["overdue", "today", "week"]).optional(),
   /** Comma-separated task IDs — used to resolve dependency edges. */
   ids: z.string().optional(),
+  /**
+   * How many rows to serve. Absent means the endpoint's own page size; a
+   * caller that wants the whole list asks for the ceiling. Kept as a string so
+   * the RPC client's query type stays the plain `Record<string, string>` every
+   * caller already builds — the route parses it.
+   */
+  limit: z.string().optional(),
+  /** Where to continue from: an opaque cursor from a previous page. */
+  cursor: z.string().optional(),
 });
 
 export const createTaskInputSchema = z.object({
@@ -181,7 +222,33 @@ export type TeamMember = z.infer<typeof memberSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type TeamLabel = z.infer<typeof labelSchema>;
 export type Task = z.infer<typeof taskSchema>;
+
+/**
+ * The sort key a task occupies in every listing of tasks: closed last, then
+ * priority, then status, then age, and finally the id.
+ *
+ * The id is not decoration. Two tasks created in the same millisecond used to
+ * compare "after" in both directions, which is a comparator without a total
+ * order — fine for painting a screen, useless as the thing a cursor names. With
+ * it, "the row after this one" has exactly one answer, and that is what a page
+ * cursor continues from.
+ */
+export type TaskSortKey = {
+  status: TaskStatus;
+  priority: TaskPriority;
+  createdAt: string;
+  id: string;
+};
+
+/** One page of the task list, and where the next one starts. */
+export type TaskPage = {
+  items: Task[];
+  nextCursor: string | null;
+};
 export type Insights = z.infer<typeof insightsSchema>;
+export type ProjectTaskCounts = z.infer<typeof projectTaskCountsSchema>;
+export type TaskMutationResult = z.infer<typeof taskMutationResultSchema>;
+export type TaskRemovalResult = z.infer<typeof taskRemovalResultSchema>;
 export type TaskScope = z.infer<typeof taskScopeSchema>;
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;

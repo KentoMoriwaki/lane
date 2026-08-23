@@ -20,6 +20,7 @@ import {
   useCurrentUser,
   useInsights,
   useLabels,
+  useProjectCounts,
   useProjects,
 } from "@/app/lane/api/hooks";
 import { EMPTY_FILTERS } from "@/app/lane/api/endpoints";
@@ -61,12 +62,19 @@ export function Sidebar() {
   const active = activeKey(filters);
   const user = React.use(useCurrentUser().promise).data;
   const insights = React.use(useInsights().promise).data;
+  // Two reads for one row of the nav: the project's name and colour come from
+  // the cached roster, the number beside it from a read that goes through to
+  // the source every time. A task edit marks only the second.
   const projects = React.use(useProjects().promise).data;
+  const projectCounts = React.use(useProjectCounts().promise).data;
   const labels = React.use(useLabels().promise).data;
   const { signOut } = useWorkspace();
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
+    <aside
+      data-testid="sidebar"
+      className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex"
+    >
       <div className="flex h-14 items-center gap-2 px-4">
         <WorkspaceBrand />
       </div>
@@ -132,7 +140,7 @@ export function Sidebar() {
                 key={project.id}
                 dotClass={accent(project.color).dot}
                 label={project.name}
-                count={project.taskCount}
+                count={projectCounts[project.id] ?? 0}
                 isActive={active === `project:${project.id}`}
                 href={viewHref({ projectId: project.id })}
               />

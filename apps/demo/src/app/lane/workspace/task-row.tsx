@@ -2,6 +2,7 @@
 
 import type { Task } from "@/server/api";
 import { MoreHorizontal, Trash2 } from "lucide-react";
+import Link from "next/link";
 import * as React from "react";
 import { toast } from "sonner";
 import { useDeleteTask, useUpdateTask } from "@/app/lane/api/hooks";
@@ -18,23 +19,43 @@ import { cn } from "@/lib/utils";
 import { DueBadge, LabelChip, PriorityIcon } from "./task-bits";
 import { StatusControl } from "./status-control";
 
+/**
+ * A row is a link to the task's own route.
+ *
+ * Clicking it is a soft navigation to `/lane/task/<id>`, intercepted into the
+ * `@modal` slot so the detail opens beside this list and the list itself is
+ * never re-rendered by the navigation. The href carries the current filters and
+ * team along, which is what keeps the list reading the very key it was
+ * published under while the panel is on top of it.
+ *
+ * The controls inside the row — the status icon, the actions menu — are not
+ * navigations. They both stop the event and cancel it: stopping it alone would
+ * leave the anchor's own activation to run and take the browser to the task.
+ *
+ * The accessible name is the title alone, set explicitly. Left to the row's
+ * contents it would begin with the status control's label ("Status: In
+ * progress …"), which reads badly and makes every row answer to the same
+ * queries the insight cards do.
+ */
 export function TaskRow({
   task,
   isSelected,
   isMine,
   dimmed,
-  onSelect,
+  href,
   deleteAction,
 }: {
   task: Task;
   isSelected: boolean;
   isMine: boolean;
   dimmed?: boolean;
-  onSelect: () => void;
+  href: string;
   deleteAction?: (taskId: string) => void;
 }) {
-  const update = useUpdateTask(task.id);
-  const remove = useDeleteTask();
+  // The list is on screen beside whatever this opens, so an edit made from a
+  // row patches the row in place rather than marking the list stale.
+  const update = useUpdateTask(task.id, "panel");
+  const remove = useDeleteTask("panel");
   const [isUpdating, startUpdateTransition] = React.useTransition();
   const [isDeleting, startDeleteTransition] = React.useTransition();
   const [deleteConfirmed, setDeleteConfirmed] = React.useState(false);
@@ -78,16 +99,14 @@ export function TaskRow({
   }
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect();
-        }
-      }}
+    <Link
+      href={href}
+      scroll={false}
+      aria-label={optimisticTask.title}
+      aria-current={isSelected ? "page" : undefined}
+      // The row's identity, in the DOM: what the list's order policy decided,
+      // readable without matching on a title that an edit can change.
+      data-task-id={task.id}
       className={cn(
         "group relative flex items-center gap-3 border-l-2 border-transparent py-2.5 pl-3 pr-2 text-sm outline-none transition-colors",
         "hover:bg-accent/60 focus-visible:bg-accent/60",
@@ -99,7 +118,7 @@ export function TaskRow({
     >
       <PriorityIcon priority={optimisticTask.priority} className="shrink-0" />
 
-      <div onClick={(event) => event.stopPropagation()}>
+      <div onClick={stopNavigation}>
         <StatusControl
           variant="icon"
           value={optimisticTask.status}
@@ -178,7 +197,7 @@ export function TaskRow({
       )}
 
       <div
-        onClick={(event) => event.stopPropagation()}
+        onClick={stopNavigation}
         className="opacity-0 transition-opacity group-hover:opacity-100 data-[open=true]:opacity-100"
       >
         <DropdownMenu>
@@ -199,6 +218,16 @@ export function TaskRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </div>
+    </Link>
   );
+}
+
+/**
+ * A click on a control inside the row is not a click on the row. Both halves
+ * matter: `stopPropagation` keeps `<Link>`'s own handler from routing, and
+ * `preventDefault` keeps the browser from following the anchor it is nested in.
+ */
+function stopNavigation(event: React.MouseEvent) {
+  event.stopPropagation();
+  event.preventDefault();
 }

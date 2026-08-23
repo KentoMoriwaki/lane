@@ -5,15 +5,20 @@ import type {
   CurrentUser,
   Insights,
   Project,
+  ProjectTaskCounts,
   Task,
+  TaskPage,
   TaskPriority,
   TaskScope,
+  TaskMutationResult,
+  TaskRemovalResult,
   TaskStatus,
   TeamLabel,
   TeamMember,
   TeamSummary,
   UpdateTaskInput,
 } from "@/server/api";
+import { ALL_TASKS_LIMIT } from "@/lib/team-api";
 import { assertOk, client, requestOptions, type WorkspaceCtx } from "./client";
 
 export type TaskFilters = {
@@ -64,16 +69,50 @@ export async function fetchTeams(ctx: WorkspaceCtx): Promise<TeamSummary[]> {
 
 /* -------------------------------- Tasks -------------------------------- */
 
+/**
+ * The whole list, in one request.
+ *
+ * `GET /api/tasks` always answers with a page — the rows, plus the cursor the
+ * next ones start at — so a caller that wants every row says so with the
+ * endpoint's ceiling and unwraps the envelope here. `/lane` is the one route
+ * that reads the list a page at a time.
+ */
 export async function fetchTasks(
   ctx: WorkspaceCtx,
   filters: TaskFilters,
 ): Promise<Task[]> {
   const response = await client.api.tasks.$get(
-    { query: toTaskQuery(filters) },
+    { query: { ...toTaskQuery(filters), limit: ALL_TASKS_LIMIT } },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task[];
+  return ((await response.json()) as TaskPage).items;
+}
+
+/**
+ * One page of the list — the form `/lane` reads it in.
+ *
+ * The route reads the first page (`cursor: null`) and publishes it; the browser
+ * reads every page after that with the cursor the page before it handed back.
+ * Same endpoint, same filters, same wrapper for both callers — the only thing
+ * that differs is which side of the wire the call is made from, which is what
+ * `requestOptions` stamps.
+ */
+export async function fetchTaskPage(
+  ctx: WorkspaceCtx,
+  filters: TaskFilters,
+  page: { cursor: string | null; limit?: number },
+): Promise<TaskPage> {
+  const query: Record<string, string> = { ...toTaskQuery(filters) };
+  if (page.cursor) query.cursor = page.cursor;
+  if (page.limit !== undefined) query.limit = String(page.limit);
+
+  const response = await client.api.tasks.$get(
+    { query },
+    requestOptions(ctx),
+  );
+  await assertOk(response);
+  return (await response.json()) as TaskPage;
 }
 
 export async function fetchTask(
@@ -97,11 +136,11 @@ export async function fetchTasksByIds(
   }
 
   const response = await client.api.tasks.$get(
-    { query: { ids: ids.join(",") } },
+    { query: { ids: ids.join(","), limit: ALL_TASKS_LIMIT } },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task[];
+  return ((await response.json()) as TaskPage).items;
 }
 
 export async function createTask(
@@ -116,51 +155,69 @@ export async function createTask(
   return (await response.json()) as Task;
 }
 
+/**
+ * **The four writes that answer with what they changed.**
+ *
+ * Each of these returns the task as it now is *and* the two numbers derived
+ * from it — the insights and the per-project counts, recomputed by the handler
+ * after the row landed (`server/team/routes.ts`). The envelope is what lets
+ * `/lane` converge an inline edit without asking the route to render again:
+ * every key the edit moves is in the response (`api/hooks.ts`).
+ *
+ * `/app-router` calls the same functions through `api/actions.ts` and uses the
+ * `task` alone — its channel is a rerender, so the derivations arrive with the
+ * publication instead.
+ */
 export async function updateTask(
   ctx: WorkspaceCtx,
   id: string,
   input: UpdateTaskInput,
-): Promise<Task> {
+): Promise<TaskMutationResult> {
   const response = await client.api.tasks[":id"].$patch(
     { param: { id }, json: input },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return (await response.json()) as TaskMutationResult;
 }
 
-export async function deleteTask(ctx: WorkspaceCtx, id: string): Promise<void> {
+/** The delete answers with the derivations alone: there is no row left. */
+export async function deleteTask(
+  ctx: WorkspaceCtx,
+  id: string,
+): Promise<TaskRemovalResult> {
   const response = await client.api.tasks[":id"].$delete(
     { param: { id } },
     requestOptions(ctx),
   );
   await assertOk(response);
+  return (await response.json()) as TaskRemovalResult;
 }
 
 export async function addTaskLabel(
   ctx: WorkspaceCtx,
   taskId: string,
   labelId: string,
-): Promise<Task> {
+): Promise<TaskMutationResult> {
   const response = await client.api.tasks[":id"].labels.$post(
     { param: { id: taskId }, json: { labelId } },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return (await response.json()) as TaskMutationResult;
 }
 
 export async function removeTaskLabel(
   ctx: WorkspaceCtx,
   taskId: string,
   labelId: string,
-): Promise<Task> {
+): Promise<TaskMutationResult> {
   const response = await client.api.tasks[":id"].labels[":labelId"].$delete(
     { param: { id: taskId, labelId } },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return (await response.json()) as TaskMutationResult;
 }
 
 /* ------------------------------ Reference ------------------------------ */
@@ -172,6 +229,24 @@ export async function fetchProjects(ctx: WorkspaceCtx): Promise<Project[]> {
   );
   await assertOk(response);
   return (await response.json()) as Project[];
+}
+
+/**
+ * How many tasks are in each project, keyed by project id — the server's own
+ * type, re-exported here so the reads and the mutation envelope that carry it
+ * cannot drift apart.
+ */
+export type { ProjectTaskCounts };
+
+export async function fetchProjectTaskCounts(
+  ctx: WorkspaceCtx,
+): Promise<ProjectTaskCounts> {
+  const response = await client.api.projects.counts.$get(
+    undefined,
+    requestOptions(ctx),
+  );
+  await assertOk(response);
+  return (await response.json()) as ProjectTaskCounts;
 }
 
 export async function createProject(

@@ -4,13 +4,19 @@ import { COLOCATED_SERVER_REQUEST_HEADER } from "@/lib/team-api";
 
 /**
  * The single place the frontend touches the backend. Everything goes through
- * the typed Hono RPC client; Lane hooks call the wrappers in `endpoints.ts`,
- * never `fetch` directly.
+ * the typed Hono RPC client; the route's reads and the browser's mutations both
+ * call the wrappers in `endpoints.ts`, never `fetch` directly.
+ *
+ * Both graphs use this module, which is the point rather than an accident: the
+ * route reads the API from the server, and the task mutations call the same
+ * endpoints from the browser (`api/hooks.ts`). One typed client, one set of
+ * wrappers, and the only difference between a caller in Node and a caller in a
+ * tab is the two headers `requestOptions` adds below.
  */
 /**
  * The team API is embedded in this app (`app/api/[[...route]]/route.ts`), so the
- * browser talks to it same-origin via a relative URL. Server Components (the RSC
- * seed in `page.tsx`) run in Node and need an absolute origin: an explicit
+ * browser talks to it same-origin via a relative URL. Server Components (the
+ * regions in `regions.tsx`) run in Node and need an absolute origin: an explicit
  * `NEXT_PUBLIC_SITE_URL`, the Vercel deployment URL, or the local dev port.
  */
 function resolveApiBaseUrl(): string {
@@ -53,7 +59,11 @@ export function requestOptions(ctx: WorkspaceCtx) {
   if (typeof window === "undefined") {
     headers["x-random-fail-bypass"] = "1";
     // Source work remains the same for every caller. This marker only removes
-    // the browser-to-server portion of the artificial latency model.
+    // the browser-to-server portion of the artificial latency model — and it is
+    // what tells the request log which side a request came from, which is how
+    // the E2E budgets count a render's reads apart from the browser's own
+    // requests — which is what lets them assert that an inline edit produces
+    // one of the second kind and none of the first.
     headers[COLOCATED_SERVER_REQUEST_HEADER] = "1";
   }
 

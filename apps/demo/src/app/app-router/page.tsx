@@ -1,13 +1,14 @@
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import {
+  readAllTasks,
   readCurrentUser,
   readInsights,
   readLabels,
   readMembers,
+  readProjectTaskCounts,
   readProjects,
   readTask,
-  readTasks,
   readTeams,
 } from "@/app/lane/api/route-reads";
 import {
@@ -27,11 +28,13 @@ type PageProps = {
 /**
  * Plain App Router baseline for the server-owned Lane demo.
  *
- * Both routes use the exact same reads, mutation actions, latency, URL
- * contract, and static-shell strategy. The difference is only distribution:
- * this route resolves ordinary values and passes them down as props. There is
- * no keyed client store, hydration publication, or external reader hidden
- * behind an adapter.
+ * Both routes use the exact same reads, latency, URL contract, and static-shell
+ * strategy, and this one keeps the mutation shape both started with: every
+ * change is a Server Action that asks for a rerender, and the whole route comes
+ * back as props. There is no keyed client store, hydration publication, or
+ * external reader hidden behind an adapter — and no way to converge one row
+ * without redrawing the workspace around it, which is what `/lane` is now the
+ * comparison for.
  */
 export default function Page({ searchParams }: PageProps) {
   return (
@@ -60,18 +63,31 @@ async function WorkspaceContent({ searchParams }: PageProps) {
 
   const activeTeamId = requested.teamId ?? currentUser.defaultTeamId;
   const ctx = { userId: currentUser.id, teamId: activeTeamId };
-  const [teams, tasks, insights, projects, labels, members, selectedTask] =
-    await Promise.all([
-      teamsRead,
-      readTasks(ctx, requested.filters),
-      readInsights(ctx),
-      readProjects(ctx),
-      readLabels(ctx),
-      readMembers(ctx),
-      requested.selectedTaskId
-        ? readTask(ctx, requested.selectedTaskId)
-        : Promise.resolve(null),
-    ]);
+  const [
+    teams,
+    tasks,
+    insights,
+    projects,
+    projectCounts,
+    labels,
+    members,
+    selectedTask,
+  ] = await Promise.all([
+    teamsRead,
+    readAllTasks(ctx, requested.filters),
+    readInsights(ctx),
+    readProjects(ctx),
+    // The counts are their own read now, here as well: this route shares
+    // `route-reads.ts`, and the roster it caches no longer carries a number
+    // that a task can move (see that file). One extra line, and the baseline
+    // keeps showing exactly what it showed.
+    readProjectTaskCounts(ctx),
+    readLabels(ctx),
+    readMembers(ctx),
+    requested.selectedTaskId
+      ? readTask(ctx, requested.selectedTaskId)
+      : Promise.resolve(null),
+  ]);
 
   return (
     <Workspace
@@ -81,6 +97,7 @@ async function WorkspaceContent({ searchParams }: PageProps) {
       tasks={tasks}
       insights={insights}
       projects={projects}
+      projectCounts={projectCounts}
       labels={labels}
       members={members}
       selectedTask={selectedTask}

@@ -2,6 +2,7 @@
 
 import type { TaskPriority, TaskStatus, TeamLabel } from "@/server/api";
 import { AlertTriangle, Loader2, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 import { useWorkspaceUrl } from "./use-workspace-url";
 import { toast } from "sonner";
@@ -49,17 +50,20 @@ const emptyDraft: Draft = {
 };
 
 /**
- * Mounted only while open. It reads the URL to select the task it creates, and
- * the frame that hosts it must stay free of request data, so its lifetime is
- * the open state rather than the frame's.
+ * Mounted only while open. It reads the URL to build the link to the task it
+ * creates, and the frame that hosts it must stay free of request data, so its
+ * lifetime is the open state rather than the frame's.
  */
 export function CreateTaskDialog({ closeAction }: { closeAction: () => void }) {
-  const { selectTask } = useWorkspaceUrl();
+  const { taskHref } = useWorkspaceUrl();
+  const router = useRouter();
   const open = true;
   const onOpenChange = (next: boolean) => {
     if (!next) closeAction();
   };
-  const createAction = selectTask;
+  // The created task opens where a clicked row opens: a push to its route,
+  // intercepted into the panel beside the list the action just republished.
+  const createAction = (taskId: string) => router.push(taskHref(taskId));
 
   const createTask = useCreateTask();
   const [isCreating, startCreateTransition] = React.useTransition();

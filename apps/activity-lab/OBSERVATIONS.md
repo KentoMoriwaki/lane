@@ -1185,6 +1185,9 @@ layout-effect が無い**(hide の時点で `suspense-fallback render` 済み)�
 実測できていない**。捨てられる状況自体を Next 16.3.0-preview.10 で作れなかった、が
 今回の結論。
 
+**後日談(2026-08-23)**: この前提は `<Link>` では作れなかったが、**アプリの普通の流れでは起きた**。demo の `/lane` で panel から delete → `invalidate(insights)` の ask → その直後に `closeTask()` の `router.replace` が走り、実行中の `router.refresh()` の fetch が `net::ERR_ABORTED`。wait 中の reader は suspend したままで再 read も再 ask もせず、10 秒後に `LaneExternalTimeoutError: No publication arrived for ["insights"]`(ブラウザで実測)。ここでの計測が「作れなかった」と記録した状態は実在する。
+対応はライブラリ側に入った(#109): **subscriber のいる `published` な entry が wait のままなら `REASK_INTERVAL`(2 秒)ごとに聞き直す**。hidden(subscriber なし)は従来どおり reveal の read が ask する。このシーンで m4 を `router.replace` 版に書き換えて再走するのが、次にこの lab に来たときの最初の項目。
+
 ### 5. 3 キー同時 invalidate — ask は 1 回
 
 A 上で 1 クリックが `invalidate(K1)` `invalidate(K2)` `invalidate(K3)` を同期で走らせる。

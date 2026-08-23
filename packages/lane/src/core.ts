@@ -87,6 +87,17 @@ type LanePromiseSettlement = {
   kind: "fulfilled" | "rejected";
 };
 
+/**
+ * A promise carrying its own settlement, as React's promise cache protocol
+ * describes it (react.dev, `use` → "How to implement a promise cache"). The
+ * field names are the protocol; nothing else reads them, and none of this
+ * widens a public type — what Lane hands out is still a `Promise<LaneRead<T>>`.
+ */
+type LaneThenable<T> = Promise<T> & {
+  status?: "fulfilled";
+  value?: T;
+};
+
 type LanePromiseCache = {
   /**
    * The promise for a client-owned entry; a weak reference for an external one
@@ -746,6 +757,31 @@ function startWarmClock(
   scheduleSweep(state);
 }
 
+/**
+ * A promise for a value already in hand, fulfilled before it is returned:
+ * `status` and `value` written at creation with no microtask in between, so
+ * `use()` reads it in the very render that receives it.
+ *
+ * That is what the one path that cannot wait needs. A reveal adopts the store's
+ * promise from a layout effect — a synchronous update with no microtask to wait
+ * in — so an unstamped promise commits the boundary's fallback and comes back
+ * on a retry React throttles fallbacks on for 300ms.
+ *
+ * Only for a value the store received synchronously (`set(key, value)`, a
+ * publication seed). A promise is left exactly as it arrived: it is the
+ * caller's or the loader's result passed through, and there is nothing the
+ * store can say about it synchronously. React writes the same fields itself on
+ * the first `use()` of one.
+ */
+function instrumentedValue<T>(value: T): Promise<T> {
+  const thenable = Promise.resolve(value) as LaneThenable<T>;
+
+  thenable.status = "fulfilled";
+  thenable.value = value;
+
+  return thenable;
+}
+
 function setEntryCache<T>(
   state: LaneState,
   entry: LaneEntry,
@@ -755,10 +791,15 @@ function setEntryCache<T>(
 ): Promise<LaneRead<T>> {
   const startedAt = Date.now();
 
+  // A value, not a promise: the settlement bookkeeping and the read itself
+  // happen in this same synchronous run, so the promise handed back is already
+  // fulfilled — the case a reveal cannot wait a microtask for. The async path's
+  // displacement checks have no window to guard here: nothing can replace
+  // `entry.cache` between building this read and installing it.
   if (!isPromiseLike(valueOrPromise)) {
     const value = shareWithLastFulfilled(entry, valueOrPromise);
     rememberFulfilled(state, entry, startedAt, value);
-    const settled = Promise.resolve<LaneRead<T>>(settledRead(entry, value));
+    const settled = instrumentedValue<LaneRead<T>>(settledRead(entry, value));
 
     entry.cache = {
       cancelled: false,

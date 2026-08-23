@@ -7,7 +7,7 @@
       "react",
       "react-dom"
     ],
-    "limit": "2.73 kB"
+    "limit": "2.75 kB"
   },
   {
     "name": "typical: LaneProvider + useLane",

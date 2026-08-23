@@ -147,13 +147,14 @@ hidden would fetch data that is stale again by the time anyone sees it.
 **What revealing does.** A reveal re-creates layout effects inside the commit
 that unhides the tree, before paint, and Lane reconciles there: it compares the
 promise the reader is holding against the store's current one, and adopts the
-store's if they differ. Three outcomes, all decided by what the store holds
+store's if they differ. Four outcomes, all decided by what the store holds
 rather than by what happened while hidden:
 
 | Store state at the reveal | What the first revealed frame shows |
 | --- | --- |
 | the same promise the reader holds | that value, immediately — no work, no request |
-| a settled replacement (a publication, a sibling's finished read) | the replacement, adopted synchronously |
+| a replacement the store was handed as a value (a publication, a `set`) | the replacement, adopted synchronously — no fallback |
+| a settled promise nothing has read yet (a finished read, a warmed prefetch) | the replacement, one suspend later — the fallback is committed first |
 | invalidated or absent (removed, collected) | the boundary's fallback, with the re-read starting *at* the reveal |
 
 The last row is the guarantee worth stating plainly: **an invalidated value is
@@ -161,8 +162,8 @@ never painted.** The correction happens in the same task as the unhide, and the
 browser does not paint mid-task, so there is no frame in which the old value is
 on screen.
 
-**A reveal that carries a publication skips even the fallback.** When the reveal
-re-renders the tree under a new publication — an App Router navigation that
+**A reveal that carries a publication converges in the render itself.** When the
+reveal re-renders the tree under a new publication — an App Router navigation that
 re-streams the payload — readers adopt the new seed during that render, inside the
 navigation's transition, and the whole thing commits once. That is what keeps a
 framework's "fetch, then reveal" intact instead of converting resolved data into a
@@ -180,32 +181,44 @@ Per ownership, in one line each:
   is `gcTime`: if the entry was collected while the tree was hidden, the reveal
   re-reads through the loader and falls back until it lands.
 
-#### Flash-free reveals: the promise has to have been `use()`d
+#### Flash-free reveals: a value the store was handed, not a promise it holds
 
-React tags a promise's status the first time `use()` sees it. Until then it has
-to suspend once, even if the promise is already resolved, before it can replay
-with the value. So an adoption at a reveal repaints without a fallback **only if
-the promise being adopted has been through `use()` at least once** — which is
-true of anything a reader has already rendered, and of anything a sibling reader
-resolved while the tree was hidden.
+A value that reached the store synchronously — `set(key, value)`, a
+`<LaneHydration>` seed — is wrapped in a promise that is already fulfilled when
+it is handed back, carrying `status` and `value`
+([React's promise cache protocol](https://react.dev/reference/react/use#how-to-implement-a-promise-cache))
+with no microtask in between. `use()` reads it in the render that receives it,
+so **a reveal that adopts one commits without a fallback** even though nothing
+has ever read it. That is the case the reveal has to survive: a mutation
+converged behind a hidden tree, or a navigation's payload seeding a key the tree
+never saw.
 
-The practical corollary is about warming: `lane.prefetch` runs outside React, so
-a prefetched-and-never-read promise is untagged, and the first `use()` of it
-suspends for one retry. Warming still saves the request; it does not by itself
-buy a flash-free first frame. If a surface must appear complete on reveal, have
-something read the key (even a hidden `<Activity>` reader) rather than only
-prefetching it.
+A *promise* is left as it arrived. A loader's result, `set(key, promise)`, an
+`update` chained onto one, `lane.prefetch` — those are somebody else's promise
+passed through, and there is nothing the store can say about one synchronously.
+React stamps it on its first `use()`, which is one suspend later. That is
+usually invisible, because a suspend inside a transition holds the current
+screen. **A reveal is not a transition**: it adopts from a layout effect, a
+synchronous update with nowhere to wait, so the boundary commits its fallback
+and comes back on a retry React throttles fallbacks on for ~300ms.
 
-In measurement, that one retry has been transient enough not to reach the
-screen. Do not lean on that: it is a race that a slower reveal commit can lose,
-whereas a promise that has already been read cannot suspend at all.
+So warming still needs care. `lane.prefetch` runs a loader, and the promise it
+leaves in the store has been read by nobody, so a synchronous reveal that adopts
+it shows the fallback. Warming saves the request; it does not by itself buy a
+flash-free first frame. If a surface must appear complete on reveal, either have
+something read the key (a hidden `<Activity>` reader will do) or put the value in
+with `set` rather than warming a loader for it.
+
+What none of this buys is a promise that is still loading. A pending replacement
+suspends, as it should: it has nothing to show, and the boundary's fallback is
+the specified presentation for a new appearance.
 
 > **Footnote — holding a frame during adoption.** If a specific surface must not
-> risk even that retry, the userland pattern is to keep the outgoing content
-> mounted for one commit while the adopted promise is instrumented (a "flash
-> guard" wrapper around the boundary). Lane ships nothing for this and the lab
-> has not measured a form of it; it is named here so the option is known, not
-> recommended as a default.
+> risk that retry and cannot be served by a `set`, the userland pattern is to
+> keep the outgoing content mounted for one commit while the adopted promise is
+> instrumented (a "flash guard" wrapper around the boundary). Lane ships nothing
+> for this and the lab has not measured a form of it; it is named here so the
+> option is known, not recommended as a default.
 
 ### Announce pending at the start of a mutation, not the end
 

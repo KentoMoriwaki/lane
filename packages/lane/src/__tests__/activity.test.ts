@@ -172,15 +172,20 @@ describe("Activity", () => {
 
     expect(loads.calls).toBe(1);
 
+    const fallbacksBeforeReveal = fallbackRenders;
+
     await app.rerender("visible");
 
     // The reconciliation adopts the published value at the reveal: no loader
     // call, and the superseded v1 is not what the reveal settles on. The
-    // adoption suspends only until React has seen the already-resolved
-    // promise, so the reveal resolves within the same flush.
+    // adoption is a layout-effect setState — a synchronous update with no
+    // microtask to wait in — and it does not suspend, because the promise
+    // `lane.set` handed the store carries its own settlement. The boundary's
+    // fallback is never rendered.
     expect(app.container.textContent).toBe("v2|background:0|transition:0");
     expect(valueElement(app).style.display).toBe("");
     expect(loads.calls).toBe(1);
+    expect(fallbackRenders).toBe(fallbacksBeforeReveal);
   });
 
   it("re-reads at the reveal after a removal missed while hidden", async () => {
@@ -407,17 +412,18 @@ describe("Activity", () => {
       await settlePromiseHandlers();
     });
 
-    // It still converges, through the channel every client-owned read has: the
-    // reveal reconciliation reads the store and finds the published promise —
-    // no loader call, and the superseded server-1 is never what the reveal
-    // settles on. What it does not get is the *structural* guarantee the
-    // external reader above has, and the fallback render is where the two
-    // differ: adopting a promise React has not instrumented yet suspends for a
-    // flush, exactly as a `lane.set` landing behind a hidden reader does.
+    // It converges through the channel every client-owned read has: the reveal
+    // reconciliation reads the store and finds the published promise — no
+    // loader call, and the superseded server-1 is never what the reveal settles
+    // on. It reaches the same first frame as the external reader above by a
+    // different route: that one adopts the seed during its own offscreen
+    // render, this one at the reveal, and the adopted promise carries its own
+    // settlement, so `use()` reads it in that same synchronous render. No
+    // fallback either way.
     await waitForText(container, "server-2|background:0|transition:0");
     expect(valueElement({ container } as RenderedApp).style.display).toBe("");
     expect(loads.calls).toBe(0);
-    expect(fallbackRenders).toBe(fallbacksBeforeReveal + 1);
+    expect(fallbackRenders).toBe(fallbacksBeforeReveal);
   });
 
   it("leaves a hidden client-owned reader alone on an unrelated republish", async () => {

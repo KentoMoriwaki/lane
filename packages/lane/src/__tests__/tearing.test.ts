@@ -12,16 +12,23 @@
  * Tearing needs three things at once:
  *   1. a render-phase read (a fresh mount, or a key / lane / enabled switch),
  *   2. a promise React can read *synchronously* at that moment (nothing suspends),
- *   3. a transition on the same key that cannot commit yet.
+ *   3. readers that disagree — a transition on the same key that cannot commit
+ *      yet, or a store write landing between two reads of one render pass.
  *
- * Condition 2 is the strong one. `use()` tags a thenable on first use and throws,
- * so even a store-settled promise suspends the first reader that touches it —
- * which routes the update through Suspense, where a transition holds the previous
- * screen. Condition 3 therefore has to come from somewhere *else* being stuck;
- * a plain "invalidate -> refetch" cannot produce it on its own.
+ * Condition 2 is what selects the shapes below. A value the store was handed —
+ * `set(key, value)`, a publication seed — comes back as a promise that is
+ * already fulfilled and says so, so `use()` reads it in the render that
+ * receives it. That is what a reveal is built on, and it is equally what leaves
+ * nothing between a render-phase read and a committed frame. A promise the
+ * store merely holds (a loader's result, a `prefetch`) is untouched and
+ * suspends on its first `use()`, which routes the update through Suspense
+ * instead — so every test here writes its values with `set`, because that is
+ * where condition 2 is met.
  *
  * Assertions run against a log of committed DOM snapshots (`useFrames`), not just
  * the final state: a torn frame repaired one commit later is still a torn frame.
+ * A commit is not a paint, though — a repair the reader schedules from its own
+ * layout effect lands in the same task, and the browser does not paint mid-task.
  */
 
 import * as React from "react";
@@ -122,57 +129,6 @@ describe("cross-reader consistency", () => {
       expect(frames.list.some((frame) => frame.includes("superseded"))).toBe(false);
     });
 
-    it("absorbs a store write landing between two render-phase reads", async () => {
-      // The classic interleave: two siblings read in one pass and the store
-      // changes between them. `Interleave` reproduces it deterministically by
-      // writing from a sibling's render body (production equivalent: a timer or
-      // WebSocket firing while React is yielded mid-render).
-      //
-      // It does not tear, and the reason is condition 2. The promise `set`
-      // stores is settled as far as the store is concerned, but React has never
-      // seen it, so the second reader's `use()` suspends and shows a fallback
-      // rather than a value. If a future change ever hands render-phase reads a
-      // synchronously-readable promise, this test is where it surfaces.
-      const lane = createLane({ gcTime: Infinity });
-      lane.set(KEY, "v1");
-
-      // Warm-up mount so React tags v1's promise as fulfilled — without this the
-      // first reader suspends too and there is no interleave to speak of.
-      const warm = newFrames();
-      const warmApp = await render(warm, () =>
-        el(LaneProvider, { lane }, boundary("boot", [
-          el(Reader, { id: "A", frames: warm, key: "A" }),
-        ])),
-      );
-      await settle(warmApp);
-      expect(text(warmApp)).toBe("[A=v1]");
-      unmount(warmApp);
-
-      const frames = newFrames();
-      const app = await render(frames, () =>
-        el(LaneProvider, { lane }, [
-          boundary("B:loading", [el(Reader, { id: "A", frames, key: "A" })], "ba"),
-          el(Interleave, { lane, key: "mut" }),
-          boundary("B:loading", [el(Reader, { id: "B", frames, key: "B" })], "bb"),
-        ]),
-      );
-      await settle(app);
-
-      expect(text(app)).toBe("[A=v2][B=v2]");
-      expect(tornFrames(frames)).toEqual([]);
-      // What the reader that read v2 actually showed in the meantime was its
-      // fallback — a loading state beside a stale value, never a second value.
-      //
-      // Two frames rather than three, and that is the reconciliation being the
-      // *only* correction A schedules. It used to be followed by a passive
-      // catch-up that re-read the store and set the same promise again at
-      // transition priority, which gave A's root a second lane and a retry of
-      // its own: A came back from its fallback one commit ahead of B's first
-      // paint. With the subscription opened in the layout phase there is nothing
-      // left for that catch-up to find, and the two boundaries wake together.
-      expect(frames.list).toEqual(["[A=v1]B:loading", "[A=v2][B=v2]"]);
-    });
-
     it("does not tear when the transition only waits on its own key", async () => {
       // The urgent mount is still there — what is missing is a *second* thing
       // holding the transition back. Every reader ends up waiting on the one
@@ -261,6 +217,45 @@ describe("cross-reader consistency", () => {
     });
   });
 
+  describe("a store write landing mid-render-pass", () => {
+    it("tears between two render-phase reads of one pass", async () => {
+      // The classic interleave: two siblings read in one pass and the store
+      // changes between them. `Interleave` reproduces it deterministically by
+      // writing from a sibling's render body (production equivalent: a timer or
+      // WebSocket firing while React is yielded mid-render).
+      //
+      // Condition 3 without a transition anywhere: A read v1, B read v2, and
+      // both are `set` values, so both are readable on the spot and the pass
+      // commits with one key showing two values. A's own layout reconciliation
+      // is the correction — it reads the store in that same commit and adopts
+      // v2 synchronously, so the repair lands in the same task and no paint
+      // separates the two frames. This is the shape of the trade: a `set` value
+      // being readable without a suspend is what makes a reveal flash-free, and
+      // it is the same property that leaves nothing standing between these two
+      // reads. A loader-produced v2 would suspend B instead, which is the frame
+      // this test used to record.
+      const lane = createLane({ gcTime: Infinity });
+      lane.set(KEY, "v1");
+
+      const frames = newFrames();
+      const app = await render(frames, () =>
+        el(LaneProvider, { lane }, [
+          boundary("B:loading", [el(Reader, { id: "A", frames, key: "A" })], "ba"),
+          el(Interleave, { lane, key: "mut" }),
+          boundary("B:loading", [el(Reader, { id: "B", frames, key: "B" })], "bb"),
+        ]),
+      );
+      await settle(app);
+
+      expect(text(app)).toBe("[A=v2][B=v2]");
+      expect(tornFrames(frames)).toEqual(["[A=v1][B=v2]"]);
+      // Neither boundary ever shows its fallback: both readers had a value to
+      // render on their first pass, and A's correction is a re-render rather
+      // than a re-suspend.
+      expect(frames.list).toEqual(["[A=v1][B=v2]", "[A=v2][B=v2]"]);
+    });
+  });
+
   describe("an urgent render-phase read beside a transition that cannot commit", () => {
     it("tears on a fresh mount, for as long as the transition stays blocked", async () => {
       // The mount is urgent; the store write is inside a transition that a
@@ -289,12 +284,10 @@ describe("cross-reader consistency", () => {
       });
       await settle(app);
 
-      // The urgent mount suspends once on the untagged promise (its own
-      // boundary, so A/B are untouched), then commits v2 on the retry.
-      expect(frames.list).toEqual([
-        "[A=v1][B=v1][X~b1][D~o1][C:loading]",
-        "[A=v1][B=v1][X~b1][D~o1][C=v2]",
-      ]);
+      // One frame, not two: the promise the urgent mount reads is settled and
+      // says so, so `use()` returns v2 in that render and the new boundary is
+      // never a fallback on the way there.
+      expect(frames.list).toEqual(["[A=v1][B=v1][X~b1][D~o1][C=v2]"]);
       // TORN: one key, two values on screen at the same time.
       expect(text(app)).toBe("[A=v1][B=v1][X~b1][D~o1][C=v2]");
       expect(tornFrames(frames)).toContain("[A=v1][B=v1][X~b1][D~o1][C=v2]");
@@ -342,12 +335,10 @@ describe("cross-reader consistency", () => {
       });
       await settle(app);
 
-      // Frame 1 keeps D's previous subtree in the DOM beside its fallback,
-      // which is how React hides content it may still restore.
-      expect(frames.list).toEqual([
-        "[A=v1][B=v1][X~b1][D~o1][D:loading]",
-        "[A=v1][B=v1][X~b1][D=v2]",
-      ]);
+      // D switches key and value in a single frame: the promise it switches
+      // onto is settled and readable, so the switch never passes through the
+      // boundary's fallback.
+      expect(frames.list).toEqual(["[A=v1][B=v1][X~b1][D=v2]"]);
       // TORN: D switched onto KEY and shows v2 while A and B still show v1.
       expect(text(app)).toBe("[A=v1][B=v1][X~b1][D=v2]");
       expect(tornFrames(frames)).toContain("[A=v1][B=v1][X~b1][D=v2]");
@@ -376,17 +367,6 @@ describe("cross-reader consistency", () => {
       const reload = deferred<string>();
       const loader = vi.fn(() => reload.promise);
       lane.set(KEY, "v1");
-
-      // Warm-up so React has tagged v1's promise: without it both readers
-      // suspend, never commit, and no effect runs at all.
-      const warm = newFrames();
-      const warmApp = await render(warm, () =>
-        el(LaneProvider, { lane }, boundary("boot", [
-          el(Reader, { id: "A", frames: warm, loader, key: "A" }),
-        ])),
-      );
-      await settle(warmApp);
-      unmount(warmApp);
 
       const frames = newFrames();
       const app = await render(frames, () =>
@@ -418,15 +398,6 @@ describe("cross-reader consistency", () => {
       const reload = deferred<string>();
       const loader = vi.fn(() => reload.promise);
       lane.set(KEY, "v1");
-
-      const warm = newFrames();
-      const warmApp = await render(warm, () =>
-        el(LaneProvider, { lane }, boundary("boot", [
-          el(Reader, { id: "A", frames: warm, loader, key: "A" }),
-        ])),
-      );
-      await settle(warmApp);
-      unmount(warmApp);
 
       const frames = newFrames();
       const app = await render(frames, () =>
@@ -930,18 +901,6 @@ async function rerender(
   await act(async () => {
     app.root.render(build());
     await settlePromiseHandlers();
-  });
-}
-
-function unmount(app: App): void {
-  const index = roots.indexOf(app.root);
-
-  if (index >= 0) {
-    roots.splice(index, 1);
-  }
-
-  act(() => {
-    app.root.unmount();
   });
 }
 

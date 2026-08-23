@@ -198,6 +198,38 @@ So the demand splits, and each half already has somewhere to go:
   `initialData` is bought for. When a partial value genuinely should appear
   first, the caller has it in hand and `set` publishes it.
 
+## The store states what it knows synchronously, and nothing more
+
+A value that reaches the store as a value — `set(key, value)`, a
+`<LaneHydration>` seed — is wrapped in a promise that is fulfilled before it is
+returned, carrying `status` and `value`: React's promise cache protocol, written
+out in the `use` reference under
+["How to implement a promise cache"](https://react.dev/reference/react/use#how-to-implement-a-promise-cache).
+`use()` reads it in the render that receives it rather than suspending once to
+learn what it holds.
+
+That exists for the one path that cannot wait a microtask. A reveal adopts the
+store's promise from a layout effect, which is a synchronous update: React has
+nowhere to wait, so it commits the boundary's fallback, and the retry runs on a
+lane where fallbacks are throttled for 300ms. A value converged behind a hidden
+tree would spend a third of a second announcing itself as loading — for data
+that was already in hand when the tree was hidden.
+
+**A promise is passed through untouched**, and that is the more important half
+of the rule. A loader's result, `set(key, promise)`, an `update` chained onto
+one, a `prefetch` — each is somebody else's promise, and the store has nothing
+to say about it that it can say synchronously. Writing `"pending"` on one would
+be a claim the store then owes a settlement for; React already writes all three
+fields itself on a promise's first `use()`, and stops doing so the moment
+`status` is a string, so a store that starts the protocol must finish it. Lane
+declines to start. The cost is the ordinary one — a promise nothing has read
+suspends once — and it is only visible where the adoption is synchronous, which
+is the reveal, and where the fix is to hand the store a value instead.
+
+The same principle runs through the rest of the store: no `get`, no `peek`, and
+`update` chains onto the in-flight promise rather than racing it. Nothing here
+answers a question with a value the store had to guess at.
+
 ## Optimistic state is local
 
 React Query-style optimistic updates often write speculative data into the shared

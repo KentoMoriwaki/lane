@@ -53,6 +53,34 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
+- **A value handed to the store comes back as a promise that is already
+  fulfilled.** `set(key, value)` and a `<LaneHydration>` seed return a promise
+  carrying `status` and `value` at creation, with no microtask in between —
+  react.dev's `use` reference calls this
+  ["How to implement a promise cache"](https://react.dev/reference/react/use#how-to-implement-a-promise-cache).
+  `use()` reads it in the render that receives it rather than suspending once to
+  learn what it holds.
+
+  This is what an `<Activity>` reveal was missing. A reveal adopts the store's
+  promise from a layout effect, a synchronous update with nowhere to wait, so an
+  unstamped promise committed the boundary's fallback and came back on a retry
+  React throttles fallbacks on for 300ms — a third of a second of "loading" for
+  data that was already in hand when the tree was hidden. A `set` that converged
+  behind a hidden tree, and a navigation's payload seeding a key that tree never
+  saw, now reveal with no fallback at all.
+
+  **Promises are passed through untouched**: a loader's result, `set(key,
+  promise)`, an `update` chain, `lane.prefetch`. Each is somebody else's promise
+  and there is nothing the store can say about it synchronously, so React stamps
+  it on its first `use()` as it always has. The consequence to know is that
+  warming still does not buy a flash-free *synchronous* reveal — `prefetch` runs
+  a loader, so what the store holds is a promise nothing has read. Hand the key
+  a value with `set`, or have something read it. See
+  [consistency.md](./docs/consistency.md#activity).
+
+  The store budget moves 2.73 → 2.75 kB (+22 B); the other two limits are
+  unchanged.
+
 - **Breaking: `LaneRead.refreshError` is now `error`.** The old name was accurate
   while the field could only appear over a previous value — a *refresh* had
   failed. With `fallback` a first load can serve something too, so the name

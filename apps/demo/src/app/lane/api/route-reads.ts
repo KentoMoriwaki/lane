@@ -140,9 +140,10 @@ export async function readTask(ctx: WorkspaceCtx, taskId: string) {
   try {
     return await fetchTask(ctx, taskId);
   } catch (error) {
-    // A task deleted in the browser is still named by the URL until the client
-    // clears the selection, and the background rerender can reach this read
-    // first. Missing is an ordinary snapshot state here, not a failed read.
+    // A URL can name a task that is gone — a shared link to something deleted
+    // since, or a render that reaches this read while the browser is still
+    // moving off a task it just removed. Missing is an ordinary snapshot state
+    // here, not a failed read.
     if (error instanceof ApiError && error.status === 404) {
       return null;
     }

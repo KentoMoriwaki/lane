@@ -39,8 +39,10 @@ import { TaskList } from "@/app/lane/workspace/task-list";
  *
  * What a rerender costs is not the whole file, though. `readProjects`,
  * `readLabels` and `readMembers` are `"use cache"` (see `api/route-reads.ts`),
- * so a background rerender for stale insights re-reads the tasks, the project
- * counts, the open task and the insights, and nothing else reaches the API.
+ * so a render re-reads the tasks, the project counts, the open task and the
+ * insights, and nothing else reaches the API. Which is a cost worth knowing
+ * and mostly worth not paying: an inline edit converges from the write's own
+ * response and asks for no render at all (`api/hooks.ts`).
  *
  * The last region here belongs to a different route. `TaskDetailRegion` is
  * rendered by `task/[id]/page.tsx` and by its intercepted twin under

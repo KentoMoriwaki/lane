@@ -61,8 +61,9 @@ export function requestOptions(ctx: WorkspaceCtx) {
     // Source work remains the same for every caller. This marker only removes
     // the browser-to-server portion of the artificial latency model — and it is
     // what tells the request log which side a request came from, which is how
-    // the E2E budgets count a background rerender's reads without counting the
-    // browser's mutation.
+    // the E2E budgets count a render's reads apart from the browser's own
+    // requests — which is what lets them assert that an inline edit produces
+    // one of the second kind and none of the first.
     headers[COLOCATED_SERVER_REQUEST_HEADER] = "1";
   }
 

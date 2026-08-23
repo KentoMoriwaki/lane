@@ -573,6 +573,18 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Fixed
 
+- **An ask that was lost is made again while someone is still waiting.** A
+  `router.refresh()` is aborted by a navigation that starts while it is in
+  flight — which is what a mutation that `invalidate`s a published key and then
+  navigates does in one breath. The readers waiting on that key are suspended,
+  a suspended reader does not read again on its own, and nothing else asked: they
+  sat in the boundary's fallback until the wait's 10-second timeout. Now, for
+  as long as a wait that was asked for is unsettled and a committed reader is
+  subscribed to it, Lane asks again every 2 seconds (`REASK_INTERVAL`), one ask
+  per lane per look, until the wait settles or times out. A wait nobody is
+  subscribed to — a hidden tree's — is still asked for by its reveal, not on a
+  timer.
+
 - **A reader keeps its subscription across a republication.** A second
   `<LaneHydration>` payload for the same key — what an App Router navigation
   delivers — left a visible reader subscribed to nothing, so every later

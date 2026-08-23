@@ -20,7 +20,7 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
-import { setExternalRefFactory } from "../core";
+import { REASK_INTERVAL, setExternalRefFactory } from "../core";
 import { readOrCreate } from "./test-utils";
 import {
   createLane,
@@ -725,6 +725,98 @@ describe("the owner-ask", () => {
     await flushMicrotasks();
 
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again while a subscribed reader is still waiting", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    const unsubscribe = subscribe(lane, ["task", "t1"]);
+    lane.invalidate(["task", "t1"]);
+
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // A `router.refresh()` that a navigation aborted leaves the wait unfilled
+    // and the reader suspended — and a suspended reader does not read again on
+    // its own. The lane looks again on an interval for as long as someone is
+    // subscribed to the wait.
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(3);
+
+    // The answer ends it: the publication settles the wait, and the next look
+    // finds nothing waiting.
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published again" }],
+    });
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL * 2);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(3);
+
+    unsubscribe();
+  });
+
+  it("does not ask again for a wait nobody is subscribed to", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    lane.invalidate(["task", "t1"]);
+
+    // A wait with no subscriber is a hidden tree's, or a departed reader's.
+    // Its reveal reads and asks for itself; the lane does not on its behalf.
+    void readOrCreate<string>(lane, ["task", "t1"], external);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL * 3);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops asking again once the wait has timed out", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane({ refresh });
+
+    hydrateMany(lane, {
+      entries: [{ key: ["task", "t1"], data: "published" }],
+    });
+    const unsubscribe = subscribe(lane, ["task", "t1"]);
+    lane.invalidate(["task", "t1"]);
+
+    readOrCreate<string>(lane, ["task", "t1"], external).catch(() => {});
+    await flushMicrotasks();
+
+    await vi.advanceTimersByTimeAsync(EXTERNAL_TIMEOUT);
+    await flushMicrotasks();
+    const asked = refresh.mock.calls.length;
+    expect(asked).toBeGreaterThan(1);
+    expect(asked).toBeLessThanOrEqual(1 + EXTERNAL_TIMEOUT / REASK_INTERVAL);
+
+    // Rejected and cleared: nothing is waiting, so nothing is asked for until
+    // a read makes a fresh wait.
+    await vi.advanceTimersByTimeAsync(REASK_INTERVAL * 2);
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(asked);
+
+    unsubscribe();
   });
 });
 

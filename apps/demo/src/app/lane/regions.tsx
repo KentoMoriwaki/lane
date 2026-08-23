@@ -113,7 +113,8 @@ export async function FilterBarRegion({ searchParams }: RegionProps) {
   const [projects, labels, tasks] = await Promise.all([
     readProjects(ctx),
     readLabels(ctx),
-    readTasks(ctx, state.filters),
+    // Page 1. The browser reads the rest on the same key (`api/lane-reads.ts`).
+    readTasks(ctx, state.filters, { cursor: null }),
   ]);
 
   return (
@@ -132,7 +133,9 @@ export async function FilterBarRegion({ searchParams }: RegionProps) {
 export async function TaskListRegion({ searchParams }: RegionProps) {
   const state = await requested(searchParams);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const tasks = await readTasks(ctx, state.filters);
+  // Page 1, and only ever page 1: what this route publishes is the first page
+  // of the list, and the depth on top of it is the browser's (`api/hooks.ts`).
+  const tasks = await readTasks(ctx, state.filters, { cursor: null });
 
   return (
     <LaneHydration

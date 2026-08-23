@@ -1,14 +1,22 @@
-import { external, laneRead, laneSnapshot } from "use-lane";
+import {
+  external,
+  infiniteLaneRead,
+  infiniteLaneSnapshot,
+  laneRead,
+  laneSnapshot,
+} from "use-lane";
 import type { LaneHydrationSnapshots, LaneSnapshot } from "use-lane";
 import type {
   CurrentUser,
   Insights,
   Task,
+  TaskPage,
   TeamLabel,
   TeamMember,
   TeamSummary,
 } from "@/server/api";
-import type { ProjectTaskCounts, TaskFilters } from "./endpoints";
+import type { WorkspaceCtx } from "@/lib/lane-meta";
+import { fetchTaskPage, type ProjectTaskCounts, type TaskFilters } from "./endpoints";
 import type { ProjectRef } from "./route-reads";
 
 /**
@@ -62,12 +70,53 @@ import type { ProjectRef } from "./route-reads";
  * have to evict them by hand; here the same event that changes the team is the
  * one that republishes them.
  */
+/**
+ * The context for a caller that will never make the call: the route building
+ * `workspaceReads.tasks(filters)` for its key. Empty ids are what this API
+ * reads as "apply your defaults", and nothing on the server ever reaches the
+ * `fetchPage` they would travel on.
+ */
+const NOT_THE_BROWSER: WorkspaceCtx = { teamId: "", userId: "" };
+
 export const workspaceReads = {
   currentUser: () =>
     laneRead<CurrentUser>({ key: ["current-user"], loader: external }),
   teams: () => laneRead<TeamSummary[]>({ key: ["teams"], loader: external }),
-  tasks: (filters: TaskFilters) =>
-    laneRead<Task[]>({ key: ["tasks", filters], loader: external }),
+  /**
+   * **The list whose first page is the route's and whose depth is the
+   * browser's**, on one key.
+   *
+   * `loader: external` says page 1 is published, exactly as on every other read
+   * here; `fetchPage` and `nextCursor` are the browser's half, and they are the
+   * only client fetch anywhere in this workspace's reads. The key holds
+   * `{ pages, params, hasNext }` whoever filled it, and `infiniteLaneSnapshot`
+   * (in `workspaceSnapshots` below) is the one place a page becomes that shape.
+   *
+   * A page is `{ items, nextCursor }` — the endpoint's own envelope — rather
+   * than a bare `Task[]`, so "where the next page starts" travels with the rows
+   * it was computed from and `nextCursor(page)` is a field read, not a guess.
+   *
+   * What a republication does to the depth is the library's rule, not this
+   * app's: an equal page 1 keeps the pages standing behind it, a different one
+   * (or an `invalidate`) resets to one page. See `docs/api-reference.md` §
+   * `useInfiniteLane` → "The first page from the route", and `api/hooks.ts` for
+   * which mutation does which.
+   *
+   * `ctx` is the one argument here that is not part of the key, because it is
+   * not part of the value either — it is who the *browser* says it is when it
+   * asks for page 2, and the team it asks about has to be the team the route
+   * published page 1 for. The hook passes `useWorkspaceCtx()`; the route's own
+   * callers build this read for its `key` and `nextCursor` alone and leave it
+   * out. (It cannot ride on `read.loaderMeta`, the documented per-read
+   * override: the external infinite spec carries no `LaneUseOptions`.)
+   */
+  tasks: (filters: TaskFilters, ctx: WorkspaceCtx = NOT_THE_BROWSER) =>
+    infiniteLaneRead<TaskPage, string | null>({
+      key: ["tasks", filters],
+      loader: external,
+      fetchPage: (cursor) => fetchTaskPage(ctx, filters, { cursor }),
+      nextCursor: (page) => page.nextCursor,
+    }),
   task: (taskId: string) =>
     laneRead<Task>({ key: ["task", taskId], loader: external }),
   projects: () =>
@@ -129,13 +178,32 @@ export const workspaceSnapshots = {
     return { entries: [laneSnapshot(workspaceReads.insights(), insights)] };
   },
 
+  /**
+   * The list's first page, published as the list.
+   *
+   * The key holds `{ pages, params, hasNext }` however deep the browser has
+   * taken it, so the route has to publish that shape — and
+   * `infiniteLaneSnapshot` is **the only place in this app where a page becomes
+   * it**. `null` is the cursor page 1 was fetched with, recorded so a re-read
+   * starts where this one did; `hasNext` comes from the read's own `nextCursor`
+   * applied to the page, so the route and the browser agree there is more
+   * before a single client fetch has run.
+   *
+   * What lands on top of a browser that has already loaded page 2 is the
+   * library's business, not this file's: an equal page 1 keeps the depth
+   * (`docs/api-reference.md` § "The first page from the route").
+   */
   tasks(seeds: {
     filters: TaskFilters;
-    data: Task[];
+    data: TaskPage;
   }): LaneHydrationSnapshots {
     return {
       entries: [
-        laneSnapshot(workspaceReads.tasks(seeds.filters), seeds.data),
+        infiniteLaneSnapshot(
+          workspaceReads.tasks(seeds.filters),
+          seeds.data,
+          null,
+        ),
       ],
     };
   },
@@ -143,13 +211,17 @@ export const workspaceSnapshots = {
   filterBar(seeds: {
     projects: ProjectRef[];
     labels: TeamLabel[];
-    tasks: { filters: TaskFilters; data: Task[] };
+    tasks: { filters: TaskFilters; data: TaskPage };
   }): LaneHydrationSnapshots {
     return {
       entries: [
         laneSnapshot(workspaceReads.projects(), seeds.projects),
         laneSnapshot(workspaceReads.labels(), seeds.labels),
-        laneSnapshot(workspaceReads.tasks(seeds.tasks.filters), seeds.tasks.data),
+        infiniteLaneSnapshot(
+          workspaceReads.tasks(seeds.tasks.filters),
+          seeds.tasks.data,
+          null,
+        ),
       ],
     };
   },

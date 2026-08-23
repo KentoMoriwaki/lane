@@ -383,6 +383,24 @@ test("a reload of a task URL renders the page, not the panel", async ({
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
+test("clicking the open row again leaves the panel and the list alone", async ({
+  page,
+}) => {
+  await gotoWorkspace(page);
+  await openTaskPanel(page, ACME_TASK);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+
+  // Its href *is* the panel's URL, so following it would navigate from the task
+  // route rather than from the list — not the referrer the interception
+  // matches, which leaves the task without the list behind it.
+  await taskLink(page, ACME_TASK).click();
+
+  await expect(page).toHaveURL(new RegExp(escapeRegExp(taskUrl(ACME_TASK_ID))));
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await expect(detailPage(page)).toHaveCount(0);
+});
+
 test("Back closes the panel and leaves the list standing", async ({ page }) => {
   await gotoWorkspace(page);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();

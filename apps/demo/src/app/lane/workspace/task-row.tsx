@@ -124,6 +124,13 @@ export function TaskRow({
         scroll={false}
         aria-label={optimisticTask.title}
         aria-current={isSelected ? "page" : undefined}
+        // Going where you already are is not a navigation, and here it is a
+        // destructive one: this href is the panel's own URL, so a click on the
+        // open row navigates *from* the task route rather than from the list,
+        // which is not the referrer the interception matches — the router
+        // renders the task without the list behind it. Nothing to do instead:
+        // the panel is already open on this task.
+        onClick={isSelected ? (event) => event.preventDefault() : undefined}
         className="absolute inset-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
       />
 

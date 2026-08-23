@@ -177,6 +177,25 @@ async function loadMore(page: Page) {
   await expect(taskRows(page)).not.toHaveCount(before);
 }
 
+/**
+ * Deepen the list until a row is on screen. A task these tests create sorts
+ * behind every seeded open task — and behind every task an earlier test in the
+ * run created — so which page it lands on depends on what ran before; the
+ * list is deepened page by page until it shows, or there is no more to load.
+ */
+async function loadUntilVisible(page: Page, title: string) {
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (await taskRow(page, title).isVisible()) {
+      return;
+    }
+    if ((await loadMoreButton(page).count()) === 0) {
+      break;
+    }
+    await loadMore(page);
+  }
+  await expect(taskRow(page, title)).toBeVisible();
+}
+
 /** The sidebar's count for one project, read out of its nav link. */
 async function projectCount(page: Page, name: string): Promise<number> {
   const text = await page
@@ -465,8 +484,7 @@ test("an edit after an in-app navigation reaches the list", async ({ page }) => 
   // A new task sorts behind every seeded open task, which puts it on the second
   // page. The browser has to have asked for that page before the list can show
   // the rename landing in it.
-  await loadMore(page);
-  await expect(taskRow(page, original)).toBeVisible();
+  await loadUntilVisible(page, original);
 
   await detailTitle(page).fill(renamed);
   await detailTitle(page).press("Enter");
@@ -518,8 +536,7 @@ test("deleting a task drops its row and clears the detail", async ({
   const title = `E2E delete target ${Date.now()}`;
   await createTask(page, title);
   // On the second page, like every task these tests create.
-  await loadMore(page);
-  await expect(taskRow(page, title)).toBeVisible();
+  await loadUntilVisible(page, title);
 
   await resetRequestDiagnostics(request);
   await taskRow(page, title)
@@ -562,8 +579,7 @@ test("creating a task reads the list again and opens the new task", async ({
   // Channel 1: the action's response is the route, so the row arrives where the
   // server sorted it rather than where the client guessed — which for a new task
   // is the second page, and the browser asks for that itself.
-  await loadMore(page);
-  await expect(taskRow(page, title)).toBeVisible();
+  await loadUntilVisible(page, title);
 
   const records = await readRequestDiagnostics(request);
   expect(
@@ -760,8 +776,7 @@ test("a project's count follows a task the browser moved", async ({
   await createTask(page, title);
   // Deep enough to hold the new row, so the delete at the end has a row to take
   // away — and takes it out of the page that holds it, not the first one.
-  await loadMore(page);
-  await expect(taskRow(page, title)).toBeVisible();
+  await loadUntilVisible(page, title);
   const before = await projectCount(page, BILLING_PROJECT);
 
   await resetRequestDiagnostics(request);

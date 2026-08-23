@@ -724,8 +724,15 @@ test("a project's count follows a task the browser moved", async ({
     expect(await projectCount(page, BILLING_PROJECT)).toBe(before);
   }).toPass();
 
+  // A delete from the panel also moves the view back to the list, and that
+  // navigation can abort the `router.refresh()` the marks asked for while it
+  // is in flight. The server may already have rendered for it; the lane asks
+  // again for the readers still waiting (`REASK_INTERVAL`), and that one lands.
+  // So: one or two renders, and the roster is read by neither.
   const afterDelete = await readRequestDiagnostics(request);
-  expect(serverReadsOf(afterDelete, PROJECT_COUNTS_PATH)).toHaveLength(1);
+  const countReads = serverReadsOf(afterDelete, PROJECT_COUNTS_PATH).length;
+  expect(countReads).toBeGreaterThanOrEqual(1);
+  expect(countReads).toBeLessThanOrEqual(2);
   expect(serverReadsOf(afterDelete, "/api/projects")).toHaveLength(0);
 });
 

@@ -181,7 +181,8 @@ export const taskLanes = {
 - **An infinite list is one key too.** The route publishes page 1 with
   [`infiniteLaneSnapshot`](./api-reference.md#infinitelanesnapshotread-firstpage-initialcursor)
   and `useInfiniteLane`'s `loadMore` fetches the rest from the browser; a
-  republication of the same page 1 keeps the depth the user scrolled to — see
+  republication replaces the key at page 1, so the depth the user scrolled to
+  lasts as long as nothing makes the route render again — see
   [the first page from the route](./api-reference.md#the-first-page-from-the-route).
 - **"the same keys" can be the same module.** `use-lane` marks only its React
   modules `"use client"`, so

@@ -1180,36 +1180,35 @@ const snapshots = {
 //                       hasNext: read.nextCursor(firstPage, null) !== null })
 ```
 
-**What a republication does to the depth.** A route republishes page 1 on every
-navigation and every `refresh`, and the list on screen is usually deeper than
-that:
+**A publication replaces the key.** A route republishes page 1 on every
+navigation and every `refresh`, and what it publishes is what the key holds —
+one page, however deep the list on screen was a moment before. The store never
+compares a publication with what it is standing on, and there is no depth it
+carries over.
 
-| When the publication lands | The key holds |
-| --- | --- |
-| the entry holds a settled list whose page 1 is deep-equal to the published one | the published page 1 followed by the pages standing behind it — `params` and `hasNext` from the list that was there |
-| page 1 is a different page | the publication, one page deep |
-| the entry holds nothing (it was invalidated, removed, or collected) | the publication, one page deep |
+Not comparing is the rule, not an omission. A page 1 deep-equal to the one
+already there is no evidence that nothing happened to the list: a row can be
+edited and edited back, a page deleted and restored, between two publications.
+Equality would be the store guessing at a history it cannot see. A publication
+is the owner's whole answer for that key, so Lane takes it whole.
 
-So an explicit `invalidate` always resets to one page, and that is the point:
-saying "this key is stale" says it about pages 2..n too, and they cannot be
-re-derived without walking the cursor chain again.
+**The browser keeps its depth by not having the route render again.** Depth
+survives for exactly as long as nothing republishes the key — a `set` or an
+`update` converging the row a mutation just confirmed, an `invalidate` of some
+*other* key, a navigation that leaves this route standing. That is the lever,
+and it is the one to reach for: on a screen whose list depth matters, converge
+derived data from the mutation's own response with `set` rather than marking it
+stale with `invalidate`. An `invalidate` of anything the route owns is answered
+by [`refresh`](#refresh--the-owner-ask), and a route that renders again
+republishes everything it publishes — this list included, at page 1.
 
-The comparison is this read's, but it runs **in the store, when the publication
-lands** — not in a reader's render or effect. A reader would have to commit the
-shallow list on its way to the deep one (a visible frame of the wrong list), and
-a reader hidden in an [`<Activity>`](./consistency.md#activity) is not there to
-be told at all, so its depth has to be intact by the time it is revealed.
-
-**What the entry holds is the store's own knowledge.** "The entry holds a
-settled list" is answered synchronously from a record the store keeps for every
-external entry the moment a value settles — a publication, a `set`, an
-`update` that has resolved — held weakly, like the rest of the entry. It is
-deliberately not read off the promise's `status` / `value` stamps: React
-writes those only once a reader's `use()` has run, and a concurrent render
-suspended on another key's wait never reaches this reader, so a publication
-landing in that window would find nothing and drop the depth. The one thing that
-cannot be merged into is an append still in flight: a publication landing before
-`loadMore`'s page has arrived starts again at one page.
+`invalidate` on the list itself discards the depth by design: saying "this key
+is stale" says it about pages 2..n too, and they cannot be re-derived without
+walking the cursor chain again. The owner answers with page 1, and the list
+starts again there — as it does for a publication that lands while the reader
+is hidden in an [`<Activity>`](./consistency.md#activity), or one that lands
+before `loadMore`'s page has arrived. There is one rule, and no window in which
+a different one applies.
 
 ### Deferred reads (render first, swap when ready)
 

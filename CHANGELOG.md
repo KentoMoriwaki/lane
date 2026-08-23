@@ -32,19 +32,16 @@ All notable changes to `use-lane` are documented here. The format is based on
   Server-Component-safe module as `laneSnapshot`, and derives `hasNext` from the
   read's own `nextCursor`.
 
-  **A republication of the same page 1 keeps the depth the browser added.** If
-  the entry holds a settled list whose page 1 is deep-equal to the published
-  one, the key ends up holding the published page 1 followed by the pages behind
-  it, with `params` / `hasNext` from the list that was there; a different page 1,
-  or an entry holding nothing, resets to one page — so an explicit `invalidate`
-  always resets, which is right, because pages 2..n may be stale too.
-
-  The comparison is the read's, but it runs **in the store, as the publication
-  lands**: a reader would have to commit the shallow list on its way to the deep
-  one, and a reader hidden in an `<Activity>` is not there to be told at all.
-  The limit that follows: "the entry holds a list" is read off the promise cache
-  protocol's stamps, so a depth appended with `lane.update` that no reader ever
-  rendered is not preserved.
+  **A publication is authoritative: it replaces the key at page 1, whatever
+  depth stood there.** The store never compares a publication with what it
+  holds, because equality proves nothing — a row can be edited and edited back
+  between two publications, so a deep-equal page 1 is not evidence that nothing
+  happened. The browser keeps its depth by not having the route render again:
+  on a screen whose depth matters, converge derived data from the mutation's own
+  response with `set` rather than marking it stale with `invalidate`, since an
+  `invalidate` answered by `refresh` republishes everything the route publishes.
+  `invalidate` on the list itself discards the depth by design — pages 2..n may
+  be stale too, and cannot be re-derived without walking the cursor chain again.
 
 - **`refresh`: how Lane asks the owner of a published key to publish it again.**
   A callback on `createLane` and `<LaneProvider>`, supplied by the app because
@@ -572,16 +569,6 @@ All notable changes to `use-lane` are documented here. The format is based on
   (3.79 kB), and the ceiling 5.58 → 5.41 kB (5.4 kB).
 
 ### Fixed
-
-- **A publication merges into what the store knows it holds, not into a
-  reader's stamp.** `useInfiniteLane`'s depth-preserving merge read "the entry
-  holds a settled list" off the promise's `status` / `value`, which React writes
-  only once a reader's `use()` has run. In a concurrent render suspended on
-  another key's wait that reader is never reached, so a background republish
-  landing ~100 ms after an inline edit found nothing and collapsed a deepened
-  list to one page (measured in the demo). The store now records an external
-  entry's last fulfilled value itself (weakly), cleared with the cache, and the
-  merge reads that; a depth nobody has rendered yet is preserved too.
 
 - **`infiniteLaneRead` is callable from a Server Component.** It lived in the
   hook's module, which carries `"use client"`, so a route building the read it

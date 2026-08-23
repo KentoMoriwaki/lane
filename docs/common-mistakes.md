@@ -525,8 +525,8 @@ const { promise } = useLane({
 The ref and the cache have different lifetimes, so they drift apart the moment
 anything ends one and not the other: remounting (or switching a filter away and
 back) restores six pages from cache with no request — and resets the ref to `1`.
-The screen shows six pages; the reader believes it has one; the next
-invalidation refetches one page and the list silently collapses.
+The screen shows six pages and the reader believes it has one, so the next load
+fetches the wrong thing and nothing says so.
 
 **Do** derive the depth from the value itself, which is what
 [`current`](./api-reference.md#uselaneread) is for — or reach for
@@ -543,8 +543,11 @@ const { promise, loadMore } = useInfiniteLane({
 const { data } = use(promise); // data.pages, data.hasNext
 ```
 
-There is now no second copy to desync: the loader reads the depth out of the
-same value the screen is rendering.
+There is now no second copy to desync: the pages live in the value the screen is
+rendering, and `loadMore` appends to it. (What a *load* produces is that list's
+first page — see
+[`useInfiniteLane`](./api-reference.md#useinfinitelaneread--a-cursor-paginated-list)
+for why the depth is not reproduced for you.)
 
 ## Mutations & local state
 

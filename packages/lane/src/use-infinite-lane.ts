@@ -91,39 +91,37 @@ export function useInfiniteLane<P, C>(
   const keyId = serializeKey(key);
   const loaderMeta = read.loaderMeta ?? laneMeta;
 
-  // The cursor walk, built only when the client owns the first page. `external`
-  // is a real loader whose brand exists to steer the read spec's overloads;
-  // here the choice has already been made, so both are the same thing to make.
+  // The first page, and only ever the first page. `external` is a real loader
+  // whose brand exists to steer the read spec's overloads; here the choice has
+  // already been made, so both are the same thing to make.
+  //
+  // A load is what fills an entry that holds nothing — a first read, a read
+  // after `invalidate`, a read after collection — and this one answers it with
+  // the list as it starts. The depth on top of it belongs to `loadMore`, which
+  // is the browser's alone: nothing but a `loadMore` ever puts a second page
+  // under this key, so nothing but a `loadMore` puts one back.
+  //
+  // Reproducing the depth instead would mean walking the cursor chain, which is
+  // one *sequential* request per page — page N+1's cursor does not exist until
+  // page N is back — on a path that also fires from `refetchOnFocus` and the
+  // rest. An app that wants the pages it is showing read again can say so, in
+  // its own code and at its own cost: `invalidate()`, then `loadMore()` for the
+  // depth it wants back. And the external form could not have joined in either
+  // way: the owner publishes the first page, and that publication replaces the
+  // key. One rule for both, and the expensive thing has a caller.
   const loader: LaneLoader<InfiniteLaneValue<P, C>, InfiniteLaneValue<P, C>> =
     read.loader ??
-    (async ({ current, meta, signal }) => {
-      // A first load is one page deep.
-      const depth = current?.pages.length ?? 1;
-      const pages: P[] = [];
-      const params: C[] = [];
-      // Page 1 re-fetches from its original cursor: a changed `initialCursor`
-      // cannot silently re-anchor an existing list. Absent only on the external
-      // form, which never reaches this loader.
-      let cursor: C = current?.params[0] ?? (initialCursor as C);
-      let next: C | null = null;
+    (async ({ meta, signal }) => {
+      const cursor = initialCursor as C;
+      const page = await fetchPage(cursor, { meta, signal });
 
-      for (let index = 0; index < depth; index += 1) {
-        const page = await fetchPage(cursor, { meta, signal });
-        pages.push(page);
-        params.push(cursor);
-
-        // Only a *derived* cursor can end the walk: `null` is an ordinary
+      return {
+        // Only a *derived* cursor can end the list: `null` is an ordinary
         // initial cursor, so it is never tested before the first fetch.
-        next = nextCursor(page, cursor);
-
-        if (next === null) {
-          break;
-        }
-
-        cursor = next;
-      }
-
-      return { hasNext: next !== null, pages, params };
+        hasNext: nextCursor(page, cursor) !== null,
+        pages: [page],
+        params: [cursor],
+      };
     });
 
   // The pagination fields ride along inert: `useLane` ignores options it does

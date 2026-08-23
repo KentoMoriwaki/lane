@@ -998,10 +998,10 @@ row keeps its own Suspense boundary and pending state.
 ### `useInfiniteLane(read)` — a cursor-paginated list
 
 Read an infinite list as **one key holding the whole accumulated list**, with the
-page depth read back out of the cached value rather than kept in the key or in
-component state. It is `useLane` plus a loader that walks the cursor chain as
-deep as [`current`](#uselaneread) already is — no core machinery,
-nothing an ordinary read does not already do.
+page depth in the value rather than in the key or in component state. It is
+`useLane` plus a loader that reads the first page and a `loadMore` that appends
+the rest through `update` — no core machinery, nothing an ordinary read does not
+already do.
 
 ```ts
 function useInfiniteLane<P, C>(read: {
@@ -1096,14 +1096,18 @@ const items = data.pages.flatMap((page) => page.items);
 
 Two things about this hook are easy to guess wrong.
 
-**A re-read costs one request per page already loaded, and they run
-sequentially.** Any refresh of the key — `invalidate`, focus, mount, a poll —
-re-walks the chain from the first page, because page N+1's cursor does not exist
-until page N has come back. A list five pages deep is five round trips. That is
-inherent to cursor pagination, and the same cost the equivalent React Query list
-pays; see [migrating](./migrating.md#step-6--infinite-lists). What Lane's model
-buys is what the user sees while it happens: the transition holds the list on
-screen, and a failure part-way through keeps it there with `error`.
+**A re-read is the first page, not the pages you have.** A load is what fills an
+entry holding nothing — a first read, a read after `invalidate`, a read after
+collection — and what this list holds when nothing has been loaded is where it
+starts. The depth on top of that was `loadMore`'s, and it goes with the value it
+was appended to. Reproducing it would mean walking the cursor chain, one
+*sequential* request per page (page N+1's cursor does not exist until page N is
+back), on a path `refetchOnFocus` and a poll fire too — so it is left to the
+caller, who knows what it costs: `invalidate()`, then `loadMore()` for the depth
+worth buying back. React Query's `useInfiniteQuery` refetches every loaded page
+instead; see [migrating](./migrating.md#step-6--infinite-lists). The transition
+still holds the list on screen while the shorter one loads, and a failure keeps
+it there with `error`.
 
 **`hasNext` is in the resolved value, not on the hook.** The hook returns a
 promise it never resolves, so it cannot know — and keeping the flag next to the
@@ -1120,9 +1124,6 @@ Notes:
   append path.** A refresh runs as a read and gets the read's abort signal; an
   updater is handed the current value and no controller, so a `loadMore` in
   flight cannot be aborted.
-- **A list can come back shorter.** If a re-derived cursor returns `null` before
-  the walk reaches the old depth, the walk stops there — rows were deleted
-  underneath it, and the shorter list is the truth.
 - **`loadMore`'s identity follows `fetchPage` / `nextCursor`** (a `useCallback`
   over those plus the lane and serialized key) — stable exactly when the
   caller's functions are. Driving it from an effect (a scroll sentinel) is the
@@ -1142,10 +1143,10 @@ Notes:
   a button calling `loadMore` again. A caller can also await `loadMore`: it
   hands back the entry's next promise, which *resolves* with `error` set rather
   than rejecting.
-- **Depth is only as durable as the entry.** Remounting reuses the cached value
-  (no request) and the depth comes back with it. An `invalidate` while *nothing*
-  is mounted drops the entry, so the next mount starts from one page — the same
-  asymmetry described under [`current`](#uselaneread).
+- **Depth is as durable as the value.** Remounting reuses the cached value (no
+  request) and the depth comes back with it; anything that clears the value —
+  `invalidate`, `remove`, collection — takes the depth with it, and the next
+  read starts where the list starts.
 
 #### The first page from the route
 

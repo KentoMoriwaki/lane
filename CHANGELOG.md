@@ -127,6 +127,21 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Changed
 
+- **Breaking: a `useInfiniteLane` load reads the first page, not the pages you
+  have.** A load is what fills an entry holding nothing — a first read, a read
+  after `invalidate`, a read after collection — and what an infinite list holds
+  when nothing has been loaded is where it starts. The depth on top of that is
+  `loadMore`'s, and it goes with the value it was appended to.
+
+  It used to walk the cursor chain as deep as the cached value already was,
+  which is one *sequential* request per page on a path `refetchOnFocus` and a
+  poll fire too, and which the external form could never have joined: the owner
+  publishes the first page, and that publication replaces the key. One rule for
+  both ownerships now, with the expensive thing left to the caller who can see
+  what it costs — `invalidate()`, then `loadMore()` for the depth worth buying
+  back. React Query's `useInfiniteQuery` refetches every loaded page; the
+  difference is called out in [migrating](./docs/migrating.md#step-6--infinite-lists).
+
 - **A value handed to the store comes back as a promise that is already
   fulfilled.** `set(key, value)` and a `<LaneHydration>` seed return a promise
   carrying `status` and `value` at creation, with no microtask in between —

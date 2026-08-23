@@ -146,7 +146,7 @@ describe("useInfiniteLane", () => {
     ]);
   });
 
-  it("re-reads every loaded page, one after the other, on invalidate", async () => {
+  it("reads the first page again on invalidate, and only that", async () => {
     const lane = createLane();
     const fetchPage = pageFetcher(10);
 
@@ -156,26 +156,24 @@ describe("useInfiniteLane", () => {
     await click(() => handle?.loadMore());
     await waitForText(app.container, "0,1,2|more");
 
-    // Re-reading three pages is three requests, each derived from the page
-    // before it — and issued only once that page has come back.
-    const gated = gatedFetcher(10);
+    // A load fills an entry that holds nothing, and what this list holds when
+    // nothing has been loaded is its first page. The depth was `loadMore`'s and
+    // goes with the value it was appended to — reproducing it would be one
+    // sequential request per page, on a path `refetchOnFocus` fires too.
+    const reread = pageFetcher(10);
     await act(async () => {
-      app.root.render(feedApp(lane, gated.fetchPage));
+      app.root.render(feedApp(lane, reread));
       await settlePromiseHandlers();
     });
 
     await click(() => handle?.invalidate());
-    expect(gated.pending()).toEqual([0]);
+    await waitForText(app.container, "0|more");
+    expect(reread).toHaveBeenCalledTimes(1);
+    expect(reread.mock.calls.map(([cursor]) => cursor)).toEqual([0]);
 
-    await gated.resolveNext();
-    expect(gated.pending()).toEqual([1]);
-
-    await gated.resolveNext();
-    expect(gated.pending()).toEqual([2]);
-
-    await gated.resolveNext();
-    await waitForText(app.container, "0,1,2|more");
-    expect(gated.fetchPage).toHaveBeenCalledTimes(3);
+    // And the browser buys the depth back the only way it ever had it.
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1|more");
   });
 
   it("keeps the loaded pages on screen while a re-read converges", async () => {
@@ -194,13 +192,13 @@ describe("useInfiniteLane", () => {
     });
 
     await click(() => handle?.invalidate());
-    // Mid-refresh: the previous pages are still rendered, no fallback.
+    // Mid-refresh: both pages are still rendered, no fallback — the shorter
+    // list only arrives when it is ready to be shown.
     expect(app.container.textContent).toBe("0,1|more");
     expect(handle?.isInvalidationPending).toBe(true);
 
     await gated.resolveNext();
-    await gated.resolveNext();
-    await waitForText(app.container, "0,1|more");
+    await waitForText(app.container, "0|more");
     expect(handle?.isInvalidationPending).toBe(false);
   });
 
@@ -252,27 +250,25 @@ describe("useInfiniteLane", () => {
     expect(fetchPage).toHaveBeenCalledWith(null);
   });
 
-  it("stops early when a re-derived cursor comes back null", async () => {
+  it("reports the end of the list when the first page is the whole of it", async () => {
     const lane = createLane();
-    // A list that is three pages deep…
     const fetchPage = pageFetcher(10);
     const app = await render(feedApp(lane, fetchPage));
     await waitForText(app.container, "0|more");
     await click(() => handle?.loadMore());
-    await click(() => handle?.loadMore());
-    await waitForText(app.container, "0,1,2|more");
+    await waitForText(app.container, "0,1|more");
 
-    // …over a source that has shrunk to two. The walk stops where the chain
-    // ends instead of inventing a third page: the list is genuinely shorter.
-    const shrunk = pageFetcher(2);
+    // The source has shrunk to a single page since. The re-read says so rather
+    // than leaving `hasNext` on from the list it replaced.
+    const shrunk = pageFetcher(1);
     await act(async () => {
       app.root.render(feedApp(lane, shrunk));
       await settlePromiseHandlers();
     });
 
     await click(() => handle?.invalidate());
-    await waitForText(app.container, "0,1|end");
-    expect(shrunk).toHaveBeenCalledTimes(2);
+    await waitForText(app.container, "0|end");
+    expect(shrunk).toHaveBeenCalledTimes(1);
   });
 
   it("reports the end of the list and makes loadMore a no-op there", async () => {
@@ -291,10 +287,9 @@ describe("useInfiniteLane", () => {
     expect(fetchPage).toHaveBeenCalledTimes(2);
   });
 
-  it("re-reads the full depth after a remount over the cached value", async () => {
-    // The regression this hook exists for: depth comes from the cached value, so
-    // a component that remounts over a three-page cache still refreshes three
-    // pages instead of silently truncating the list to one.
+  it("keeps the whole cached list across a remount, without a request", async () => {
+    // Depth lives in the value, not in the component: a reader that remounts
+    // over a three-page cache gets three pages back, and no fetch.
     const lane = createLane();
     const fetchPage = pageFetcher(10);
 
@@ -305,7 +300,6 @@ describe("useInfiniteLane", () => {
     await waitForText(app.container, "0,1,2|more");
     expect(fetchPage).toHaveBeenCalledTimes(3);
 
-    // Unmount the reader, then mount a fresh one over the same lane.
     await act(async () => {
       app.root.render(React.createElement(LaneProvider, { children: null, lane }));
       await settlePromiseHandlers();
@@ -315,17 +309,8 @@ describe("useInfiniteLane", () => {
       await settlePromiseHandlers();
     });
 
-    // The cached value comes back whole, with no request at all.
     await waitForText(app.container, "0,1,2|more");
     expect(fetchPage).toHaveBeenCalledTimes(3);
-
-    // And the depth came back with it.
-    await click(() => handle?.invalidate());
-    await waitForText(app.container, "0,1,2|more");
-    expect(fetchPage).toHaveBeenCalledTimes(6);
-    expect(fetchPage.mock.calls.map(([cursor]) => cursor)).toEqual([
-      0, 1, 2, 0, 1, 2,
-    ]);
   });
 
   it("keeps the pages and reports error when a re-read fails", async () => {
@@ -337,11 +322,8 @@ describe("useInfiniteLane", () => {
     await click(() => handle?.loadMore());
     await waitForText(app.container, "0,1|more");
 
-    const failing = vi.fn(async (cursor: number) => {
-      if (cursor === 1) {
-        throw new Error("offline");
-      }
-      return { index: cursor, next: cursor + 1 };
+    const failing = vi.fn(async () => {
+      throw new Error("offline");
     });
     await act(async () => {
       app.root.render(feedApp(lane, failing));
@@ -349,10 +331,10 @@ describe("useInfiniteLane", () => {
     });
 
     await click(() => handle?.invalidate());
-    // Both pages are still there, the failure rides alongside them, and nothing
-    // was thrown to a boundary.
+    // The list the reader had stays on screen, the failure rides alongside it,
+    // and nothing was thrown to a boundary.
     await waitForText(app.container, "0,1|more|offline");
-    expect(failing).toHaveBeenCalledTimes(2);
+    expect(failing).toHaveBeenCalledTimes(1);
   });
 
   it("throws an initial-load failure to the error boundary", async () => {

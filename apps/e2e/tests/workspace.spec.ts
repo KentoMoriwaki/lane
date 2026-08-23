@@ -279,7 +279,9 @@ test("Back closes the panel and leaves the list standing", async ({ page }) => {
   await page.goBack();
 
   await expect(page).toHaveURL(/\/lane(\?|$)/);
-  await expect(detailPanel(page)).toHaveCount(0);
+  // Hidden, not gone: the router keeps the intercepted tree alive in a hidden
+  // `<Activity>` so reopening it is instant (measured in activity-lab #96).
+  await expect(detailPanel(page)).toBeHidden();
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
@@ -470,7 +472,9 @@ test("deleting a task drops its row and clears the detail", async ({
   // republication in between.
   await expect(taskRow(page, title)).toBeHidden();
   await expect(page).not.toHaveURL(/\/lane\/task\//);
-  await expect(detailPanel(page)).toHaveCount(0);
+  // The intercepted tree stays mounted but hidden after the view moves back to
+  // the list (router keep-alive); what matters is that nothing shows it.
+  await expect(detailPanel(page)).toBeHidden();
 
   const records = await readRequestDiagnostics(request);
   expect(

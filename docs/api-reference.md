@@ -1200,13 +1200,16 @@ shallow list on its way to the deep one (a visible frame of the wrong list), and
 a reader hidden in an [`<Activity>`](./consistency.md#activity) is not there to
 be told at all, so its depth has to be intact by the time it is revealed.
 
-**The limit: a depth nobody has rendered is not preserved.** "The entry holds a
-settled list" is answered synchronously, from the promise cache protocol's
-`status` / `value` stamps — Lane writes them on a value it was handed (a
-publication, `set`), React writes them on a promise a reader has `use()`d. An
-append made with `lane.update` that no reader ever rendered carries neither, so
-a publication landing on it starts again at one page. In a mounted list this
-does not arise: `loadMore`'s result is what the reader renders.
+**What the entry holds is the store's own knowledge.** "The entry holds a
+settled list" is answered synchronously from a record the store keeps for every
+external entry the moment a value settles — a publication, a `set`, an
+`update` that has resolved — held weakly, like the rest of the entry. It is
+deliberately not read off the promise's `status` / `value` stamps: React
+writes those only once a reader's `use()` has run, and a concurrent render
+suspended on another key's wait never reaches this reader, so a publication
+landing in that window would find nothing and drop the depth. The one thing that
+cannot be merged into is an append still in flight: a publication landing before
+`loadMore`'s page has arrived starts again at one page.
 
 ### Deferred reads (render first, swap when ready)
 

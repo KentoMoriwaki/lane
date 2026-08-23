@@ -573,6 +573,16 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Fixed
 
+- **A publication merges into what the store knows it holds, not into a
+  reader's stamp.** `useInfiniteLane`'s depth-preserving merge read "the entry
+  holds a settled list" off the promise's `status` / `value`, which React writes
+  only once a reader's `use()` has run. In a concurrent render suspended on
+  another key's wait that reader is never reached, so a background republish
+  landing ~100 ms after an inline edit found nothing and collapsed a deepened
+  list to one page (measured in the demo). The store now records an external
+  entry's last fulfilled value itself (weakly), cleared with the cache, and the
+  merge reads that; a depth nobody has rendered yet is preserved too.
+
 - **`infiniteLaneRead` is callable from a Server Component.** It lived in the
   hook's module, which carries `"use client"`, so a route building the read it
   publishes page 1 under (`infiniteLaneSnapshot(read, page, cursor)`) failed

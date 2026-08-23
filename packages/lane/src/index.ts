@@ -24,9 +24,10 @@ export { LaneProvider, useLaneInstance } from "./provider";
 export { LaneReadError } from "./read-error";
 export type { LaneProviderProps } from "./provider";
 export { laneRead } from "./read-spec";
-export { laneSnapshot } from "./snapshot";
+export { infiniteLaneSnapshot, laneSnapshot } from "./snapshot";
 export { infiniteLaneRead, useInfiniteLane } from "./use-infinite-lane";
 export type {
+  InfiniteLaneExternalReadSpec,
   InfiniteLaneOptions,
   InfiniteLaneReadSpec,
   InfiniteLaneResult,

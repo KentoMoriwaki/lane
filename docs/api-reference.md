@@ -1022,9 +1022,20 @@ options in one value.
 function infiniteLaneRead<P, C>(
   spec: InfiniteLaneReadSpec<P, C>,
 ): InfiniteLaneReadSpec<P, C> & { key: LaneKeyOf<InfiniteLaneValue<P, C>> };
+// …and the form whose first page the route publishes (see below).
+function infiniteLaneRead<P, C>(
+  spec: InfiniteLaneExternalReadSpec<P, C>,
+): InfiniteLaneExternalReadSpec<P, C> & {
+  key: LaneKeyOf<InfiniteLaneValue<P, C>>;
+};
 
 type InfiniteLaneReadSpec<P, C> = LaneUseOptions &
   InfiniteLaneOptions<P, C> & { key: LaneKey };
+
+type InfiniteLaneExternalReadSpec<P, C> = Omit<
+  InfiniteLaneOptions<P, C>,
+  "initialCursor"
+> & { key: LaneKey; loader: LaneExternalLoader };
 ```
 
 ```ts
@@ -1124,6 +1135,78 @@ Notes:
   (no request) and the depth comes back with it. An `invalidate` while *nothing*
   is mounted drops the entry, so the next mount starts from one page — the same
   asymmetry described under [`current`](#uselaneread).
+
+#### The first page from the route
+
+A list on a server-rendered route usually has one page already: the route loaded
+it. `loader: external` says so — **the first page belongs to the route, the
+depth belongs to the browser**, on one key:
+
+```ts
+export const feedLanes = {
+  list: (filters: Filters) =>
+    infiniteLaneRead<Post, Cursor>({
+      key: ["feed", filters],
+      loader: external,        // page 1 is published; no client first load
+      fetchPage: (cursor, { signal }) => fetchFeed({ cursor, filters, signal }),
+      nextCursor: (page) => page.nextCursor,
+    }),
+};
+```
+
+No `initialCursor` — the published value carries the cursor page 1 was fetched
+with — and no `staleTime` / `refetchOn*`, exactly as on
+[`external`](#external--a-read-the-owner-publishes): freshness is the owner's.
+`fetchPage` and `nextCursor` stay required, because `loadMore` is still the
+browser's. Everything else is unchanged: `loadMore` appends through `update`
+(and the appended list takes the publication's seat, so it lives as long as the
+payload), and `invalidate` asks the owner through
+[`refresh`](#refresh--the-owner-ask).
+
+**`infiniteLaneSnapshot` is where a page becomes the list.** The key holds
+`{ pages, params, hasNext }` whoever filled it, so the route publishes that
+shape — and this helper is the only place the conversion happens. The store
+stores what it is handed and the read reads what is stored; a conversion
+anywhere else would be a second answer to "what is under this key".
+
+```ts
+// page.tsx — a Server Component. Isomorphic, like `laneSnapshot`.
+import { infiniteLaneSnapshot } from "use-lane";
+
+const snapshots = {
+  entries: [infiniteLaneSnapshot(feedLanes.list(filters), firstPage, null)],
+};
+// ≡ laneSnapshot(read, { pages: [firstPage], params: [null],
+//                       hasNext: read.nextCursor(firstPage, null) !== null })
+```
+
+**What a republication does to the depth.** A route republishes page 1 on every
+navigation and every `refresh`, and the list on screen is usually deeper than
+that:
+
+| When the publication lands | The key holds |
+| --- | --- |
+| the entry holds a settled list whose page 1 is deep-equal to the published one | the published page 1 followed by the pages standing behind it — `params` and `hasNext` from the list that was there |
+| page 1 is a different page | the publication, one page deep |
+| the entry holds nothing (it was invalidated, removed, or collected) | the publication, one page deep |
+
+So an explicit `invalidate` always resets to one page, and that is the point:
+saying "this key is stale" says it about pages 2..n too, and they cannot be
+re-derived without walking the cursor chain again.
+
+The comparison is this read's, but it runs **in the store, when the publication
+lands** — not in a reader's render or effect. A reader would have to commit the
+shallow list on its way to the deep one (a visible frame of the wrong list), and
+a reader hidden in an [`<Activity>`](./consistency.md#activity) is not there to
+be told at all, so its depth has to be intact by the time it is revealed.
+
+**The limit: a depth nobody has rendered is not preserved.** "The entry holds a
+settled list" is answered synchronously, from the promise cache protocol's
+`status` / `value` stamps — Lane writes them on a value it was handed (a
+publication, `set`), React writes them on a promise a reader has `use()`d. An
+append made with `lane.update` that no reader ever rendered carries neither, so
+a publication landing on it starts again at one page. In a mounted list this
+does not arise: `loadMore`'s result is what the reader renders.
 
 ### Deferred reads (render first, swap when ready)
 
@@ -1801,6 +1884,28 @@ const snapshots = {
 A plain key carries no type, so — exactly as with [`set`](#set) — the value
 decides it, and `laneSnapshot(["tasks", filters], tasks)` keeps working.
 
+#### `infiniteLaneSnapshot(read, firstPage, initialCursor)`
+
+An infinite key holds the accumulated list, so publishing its first page means
+publishing that shape. This builds it — the one place a page becomes a list; see
+[the first page from the route](#the-first-page-from-the-route).
+
+```ts
+function infiniteLaneSnapshot<P, C>(
+  read: {
+    key: LaneKeyOf<InfiniteLaneValue<P, C>>;
+    nextCursor: (page: P, cursor: C) => C | null;
+  },
+  firstPage: P,
+  initialCursor: C,
+): LaneSnapshot<InfiniteLaneValue<P, C>>;
+```
+
+`hasNext` comes from the read's own `nextCursor`, so the route and the browser
+agree about whether there is more before a single client fetch has run. Like
+`laneSnapshot` it calls no loader and touches no React — it lives in the same
+Server-Component-safe module.
+
 #### What seeding decides
 
 **Everything a publication seeds becomes an external entry**, and stays one for
@@ -1971,7 +2076,7 @@ adds an ask for a payload already in flight.
 
 ## Type exports
 
-`InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
+`InfiniteLaneExternalReadSpec`, `InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
 `Lane`, `LaneClientLoader`, `LaneEntryInfo`, `LaneEventSource`, `LaneExternalLoader`, `LaneExternalReadSpec`, `LaneFallback`, `LaneGatedExternalReadSpec`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidate`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneLoaderMeta`, `LaneLoaderMetaArgs`, `LaneLoaderMetaProp`, `LaneOptions`,
 `LaneKeyOf`, `LanePlainKey`, `LaneProviderProps`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneRegister`,
@@ -1982,7 +2087,7 @@ adds an ask for a payload already in flight.
 Runtime exports beyond the hooks and `createLane`: `external` (see
 [`external`](#external--a-read-the-owner-publishes)), `LaneExternalTimeoutError`,
 `LaneOwnershipError`, `LaneReadError`, `laneRead`,
-`infiniteLaneRead`, `laneKey`, `laneSnapshot` (see
+`infiniteLaneRead`, `infiniteLaneSnapshot`, `laneKey`, `laneSnapshot` (see
 [`laneRead`](#lanereadspec--key--loader-colocation) and
 [`LaneKeyOf`](#lanekeyoft--a-key-that-knows-what-it-holds)),
 `domEventSource`, `noopEventSource`, `createReactNativeEventSource` (see

@@ -4,12 +4,27 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createLane, LaneProvider, useInfiniteLane } from "../index";
+import {
+  createLane,
+  external,
+  infiniteLaneRead,
+  infiniteLaneSnapshot,
+  LaneHydration,
+  LaneProvider,
+  useInfiniteLane,
+} from "../index";
+import { hydrateMany, publishedBy } from "../hydrate";
 import type { InfiniteLaneResult } from "../use-infinite-lane";
-import type { Lane, LaneUseOptions } from "../types";
+import type {
+  Lane,
+  LaneHydrationSnapshots,
+  LaneUseOptions,
+} from "../types";
+import type { InfiniteLaneValue } from "../use-infinite-lane";
 import {
   caughtMessage,
   deferred,
+  readOrCreate,
   resetVitest,
   settlePromiseHandlers,
 } from "./test-utils";
@@ -39,6 +54,20 @@ const roots: Root[] = [];
  */
 let handle: Handle | null = null;
 
+type Mode = "hidden" | "visible";
+
+/**
+ * Where the route-published feed's `loadMore` fetches from. The read is one
+ * module-level value (a route publishes against one definition), so the pages
+ * behind it are what a test swaps.
+ */
+let pageSource: PageFetcher | undefined;
+
+/** Every committed frame of the route-published reader, consecutive dupes dropped. */
+const frames: string[] = [];
+
+let fallbackRenders = 0;
+
 beforeAll(() => {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -53,6 +82,9 @@ afterEach(() => {
   }
 
   handle = null;
+  pageSource = undefined;
+  frames.length = 0;
+  fallbackRenders = 0;
   document.body.innerHTML = "";
   resetVitest();
 });
@@ -339,6 +371,198 @@ describe("useInfiniteLane", () => {
   });
 });
 
+/**
+ * The list the issue is about: page 1 belongs to the route (published through
+ * `<LaneHydration>`), depth belongs to the browser (`loadMore`), one key.
+ */
+describe("an infinite list whose first page the route publishes", () => {
+  it("takes page 1 from the publication, and never fetches it", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const fetchPage = (pageSource = pageFetcher(10));
+    const app = await renderRouteFeed(lane, feedSnapshots(page(0)));
+
+    // No first load at all: `loader: external` builds no cursor walk, so the
+    // only thing that can fill the key is its owner.
+    expect(app.container.textContent).toBe("0|more");
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+
+  it("appends page 2 into the seat the publication holds", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const fetchPage = (pageSource = pageFetcher(10));
+    const snapshots = feedSnapshots(page(0));
+    const app = await renderRouteFeed(lane, snapshots);
+
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1|more");
+
+    // Page 2 is the browser's, fetched from the cursor page 1 carried.
+    expect(fetchPage.mock.calls.map(([cursor]) => cursor)).toEqual([1]);
+
+    // And it sits where the published page 1 sat, so the deepened list lives
+    // exactly as long as the payload it extends.
+    const bucket = publishedBy(snapshots);
+
+    expect(bucket).toHaveLength(1);
+    await expect(bucket?.[0]).resolves.toEqual({
+      revision: expect.any(Number),
+      data: { hasNext: true, pages: [page(0), page(1)], params: [0, 1] },
+    });
+  });
+
+  it("keeps the browser's depth across a republication of the same page 1", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    pageSource = pageFetcher(10);
+    const app = await renderRouteFeed(lane, feedSnapshots(page(0)));
+
+    await click(() => handle?.loadMore());
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1,2|more");
+
+    frames.length = 0;
+
+    // A new payload — a navigation, a `refresh` — carrying a deep-equal page 1.
+    // The pages the browser fetched after it are still the pages after it.
+    await renderRouteFeed(lane, feedSnapshots(page(0)), { app });
+
+    expect(app.container.textContent).toBe("0,1,2|more");
+    // And not one frame of the shallow list on the way there. The merge happens
+    // in the store's write path, so there is no depth-1 value for a reader to
+    // commit — which is the whole reason it is not a reader's job.
+    expect(frames).toEqual(["0,1,2|more"]);
+
+    // The cursors came back with the pages, not from the publication: the next
+    // append continues from where the list actually ends.
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1,2,3|more");
+  });
+
+  it("resets to depth 1 when the published page 1 is a different page", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    pageSource = pageFetcher(10);
+    const app = await renderRouteFeed(lane, feedSnapshots(page(0)));
+
+    await click(() => handle?.loadMore());
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1,2|more");
+
+    // The list starts somewhere else now, so the cursors behind the old page 1
+    // describe nothing. The publication stands alone.
+    await renderRouteFeed(lane, feedSnapshots({ index: 100, next: 101 }), {
+      app,
+    });
+
+    expect(app.container.textContent).toBe("100|more");
+  });
+
+  it("asks the owner on invalidate, and takes the answer at depth 1", async () => {
+    vi.useFakeTimers();
+
+    const refresh = vi.fn();
+    const lane = createLane();
+    pageSource = pageFetcher(10);
+    const app = await renderRouteFeed(lane, feedSnapshots(page(0)), {
+      refresh,
+    });
+
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1|more");
+
+    await click(() => handle?.invalidate());
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // The owner publishes the same page 1 — and this time the depth goes with
+    // the invalidation: saying "this key is stale" says it about pages 2..n too.
+    await renderRouteFeed(lane, feedSnapshots(page(0)), { app, refresh });
+
+    expect(app.container.textContent).toBe("0|more");
+  });
+
+  it("reveals the depth it had when the publication landed while hidden", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    const fetchPage = (pageSource = pageFetcher(10));
+    const first = feedSnapshots(page(0));
+    const app = await renderRouteFeed(lane, first);
+
+    await click(() => handle?.loadMore());
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1,2|more");
+
+    // Hidden: the reader is unsubscribed, so nothing can tell it anything.
+    await renderRouteFeed(lane, first, { app, mode: "hidden" });
+
+    const fetchesBeforePublish = fetchPage.mock.calls.length;
+    const second = feedSnapshots(page(0));
+
+    await renderRouteFeed(lane, second, { app, mode: "hidden" });
+
+    // Measured after the publication has landed: the claim is about the reveal,
+    // and the hidden tree's own hydration boundary suspends like any other.
+    const fallbacksBeforeReveal = fallbackRenders;
+
+    await renderRouteFeed(lane, second, { app, mode: "visible" });
+
+    // Which is the other half of why the merge is the store's: the depth had to
+    // survive a publication nobody was there to receive.
+    expect(app.container.textContent).toBe("0,1,2|more");
+    expect(fallbackRenders).toBe(fallbacksBeforeReveal);
+    expect(fetchPage).toHaveBeenCalledTimes(fetchesBeforePublish);
+  });
+
+  it("does not keep a depth no reader has ever rendered", async () => {
+    vi.useFakeTimers();
+
+    const lane = createLane();
+    pageSource = pageFetcher(10);
+    const app = await renderRouteFeed(lane, feedSnapshots(page(0)));
+
+    // The reader registered the policy; it can leave, the policy stays on the
+    // entry. What leaves with it is anyone to render what comes next.
+    await act(async () => {
+      app.root.render(
+        React.createElement(LaneProvider, { children: null, lane }),
+      );
+      await settlePromiseHandlers();
+    });
+
+    await act(async () => {
+      lane.update(routeFeed.key, (value) => ({
+        hasNext: true,
+        pages: [...value.pages, page(1)],
+        params: [...value.params, 1],
+      }));
+      await settlePromiseHandlers();
+    });
+
+    // Settled, and invisible to the merge: "the entry holds a value" is read
+    // off the promise cache protocol's stamps, and only Lane (for a value it
+    // was handed) and React (for a promise a reader used) write those. The
+    // documented limit — the same append with a reader mounted is kept.
+    hydrateMany(lane, feedSnapshots(page(0)));
+
+    await expect(
+      readOrCreate<InfiniteLaneValue<Page, number>>(
+        lane,
+        routeFeed.key,
+        external,
+      ),
+    ).resolves.toEqual({
+      revision: expect.any(Number),
+      data: { hasNext: true, pages: [page(0)], params: [0] },
+    });
+  });
+});
+
 type PageFetcher = ReturnType<typeof pageFetcher>;
 
 /** Resolves immediately; `total` decides where the cursor chain ends. */
@@ -526,4 +750,131 @@ async function flushReact(): Promise<void> {
   await act(async () => {
     await settlePromiseHandlers();
   });
+}
+
+/** One page of the ten-page feed the route publishes. */
+function page(index: number, total = 10): Page {
+  return { index, next: index + 1 < total ? index + 1 : null };
+}
+
+/**
+ * The route-published list: `loader: external`, so page 1 arrives by
+ * publication and there is no `initialCursor` to give — the published value
+ * carries the cursor it was fetched with. `fetchPage` / `nextCursor` are what
+ * `loadMore` runs on, and nothing else.
+ */
+const routeFeed = infiniteLaneRead<Page, number>({
+  key: ["route-feed"],
+  loader: external,
+  fetchPage: (cursor) => {
+    if (!pageSource) {
+      throw new Error("this test published no page source");
+    }
+
+    return pageSource(cursor);
+  },
+  nextCursor: (feedPage) => feedPage.next,
+});
+
+/**
+ * What a Server Component hands `<LaneHydration>`: one page, converted to the
+ * value the key holds — the one place that conversion happens.
+ */
+function feedSnapshots(first: Page): LaneHydrationSnapshots {
+  return { entries: [infiniteLaneSnapshot(routeFeed, first, 0)] };
+}
+
+function Fallback() {
+  fallbackRenders += 1;
+
+  return React.createElement("span", null, "loading");
+}
+
+function RouteFeedProbe() {
+  const result = useInfiniteLane(routeFeed);
+
+  React.useEffect(() => {
+    handle = result;
+  });
+
+  const { data, error } = React.use(result.promise);
+  const rendered = [
+    data.pages.map((feedPage) => feedPage.index).join(","),
+    data.hasNext ? "more" : "end",
+  ];
+
+  if (error) {
+    rendered.push((error as Error).message);
+  }
+
+  const text = rendered.join("|");
+
+  // What this reader committed, whenever it commits — the log a "never showed
+  // the shallow list" claim has to be made against.
+  React.useLayoutEffect(() => {
+    if (frames[frames.length - 1] !== text) {
+      frames.push(text);
+    }
+  });
+
+  return React.createElement(React.Fragment, null, text);
+}
+
+function routeFeedApp(
+  lane: Lane,
+  snapshots: LaneHydrationSnapshots,
+  mode: Mode,
+  refresh: (() => void) | undefined,
+): React.ReactElement {
+  return React.createElement(LaneProvider, {
+    lane,
+    refresh,
+    children: React.createElement(React.Activity, {
+      children: React.createElement(
+        React.Suspense,
+        { fallback: React.createElement(Fallback) },
+        React.createElement(LaneHydration, {
+          children: React.createElement(RouteFeedProbe, null),
+          snapshots,
+        }),
+      ),
+      mode,
+    }),
+  });
+}
+
+/**
+ * Render the route-published feed and let its publication land: `LaneHydration`
+ * publishes from a macrotask and suspends until it has. Pass `app` to re-render
+ * the same tree — where a new `snapshots` object is a republication.
+ */
+async function renderRouteFeed(
+  lane: Lane,
+  snapshots: LaneHydrationSnapshots,
+  options: { app?: RenderedApp; mode?: Mode; refresh?: () => void } = {},
+): Promise<RenderedApp> {
+  const app = options.app ?? mountApp();
+
+  await act(async () => {
+    app.root.render(
+      routeFeedApp(lane, snapshots, options.mode ?? "visible", options.refresh),
+    );
+    await settlePromiseHandlers();
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1);
+    await settlePromiseHandlers();
+  });
+
+  return app;
+}
+
+function mountApp(): RenderedApp {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+
+  document.body.append(container);
+  roots.push(root);
+
+  return { container, root };
 }

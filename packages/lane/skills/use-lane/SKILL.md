@@ -162,7 +162,12 @@ task touches that rule.
   list's page depth in a ref: it desyncs from the cache the first time a component
   remounts over it, and the next invalidation silently truncates the list. Use
   `useInfiniteLane` for cursor-paginated lists; its `hasNext` is in the resolved
-  value, not on the hook. → `references/common-mistakes.md`, `references/api-reference.md`
+  value, not on the hook. A list whose first page the route loaded takes
+  `loader: external` and is seeded with `infiniteLaneSnapshot(read, firstPage,
+  initialCursor)` — the only place a page becomes the `{ pages, params, hasNext }`
+  the key holds; `loadMore` then adds depth from the browser, and a republication
+  of a deep-equal page 1 keeps that depth (an `invalidate` resets it).
+  → `references/common-mistakes.md`, `references/api-reference.md#the-first-page-from-the-route`
 
 ## Migrating React Query / SWR? Five traps
 

@@ -109,6 +109,12 @@ export const taskLanes = {
 };
 ```
 
+An infinite list splits the same way and stays on one key: the route publishes
+page 1 with
+[`infiniteLaneSnapshot`](./api-reference.md#infinitelanesnapshotread-firstpage-initialcursor)
+and the browser adds depth with `loadMore` — see
+[the first page from the route](./api-reference.md#the-first-page-from-the-route).
+
 What that buys over passing the same data as props: one publication updates every
 reader of every affected key at once — the detail, the lists it appears in, the
 counts derived from it — because one server render produced them all. The

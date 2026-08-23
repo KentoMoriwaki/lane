@@ -570,6 +570,16 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Fixed
 
+- **A reader does not take a notification for the key it just left.** A key
+  switch opens the arriving key's subscription in a layout effect and closes the
+  departing one in the passive cleanup that runs after it, so for the rest of
+  that commit the reader was subscribed to both entries — and a notification for
+  the old key still reached a handler that reads it back, into a reader that is
+  now reading somewhere else. A sibling invalidating the old key from its own
+  layout effect lands exactly there. The switch now releases the old
+  subscription itself, before opening the new one; the cleanup that follows
+  finds it already released and does nothing.
+
 - **`infiniteLaneRead` is callable from a Server Component.** It lived in the
   hook's module, which carries `"use client"`, so a route building the read it
   publishes page 1 under (`infiniteLaneSnapshot(read, page, cursor)`) failed

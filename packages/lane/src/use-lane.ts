@@ -54,13 +54,25 @@ type LaneAnyReadSpec<T, C> = LaneUseOptions & {
  * A reader's subscription: opened in a layout effect, closed in a passive one
  * (see the two effects below for why the halves are split). The handle carries
  * one half to the other; `lane`/`keyId` let the opening half recognise a
- * subscription it already owns.
+ * subscription it already owns. `closed` makes releasing it idempotent, since
+ * a key switch closes it early and the passive cleanup still runs after.
  */
 type LaneReaderSubscription = {
   close: () => void;
+  closed: boolean;
   keyId: string;
   lane: Lane;
 };
+
+/** Release a subscription once, whichever half of the pair gets there first. */
+function releaseSubscription(subscription: LaneReaderSubscription): void {
+  if (subscription.closed) {
+    return;
+  }
+
+  subscription.closed = true;
+  subscription.close();
+}
 
 /**
  * An external read (`loader: external`) returns the same {@link LaneResult} a
@@ -344,6 +356,16 @@ export function useLane<T, C = T>(
       return;
     }
 
+    // A different entry from here on, so the old subscription is released
+    // *now* rather than by its own passive cleanup, which runs after this
+    // effect. In between, a notification for the key this reader has left
+    // would still reach a handler that reads that key back — into this reader,
+    // which is reading somewhere else. The cleanup still runs; it finds the
+    // subscription already released and does nothing.
+    if (open) {
+      releaseSubscription(open);
+    }
+
     // Live from here, including for notifications fired from this same
     // commit's layout effects — a sibling that mounted a commit earlier would
     // take them regardless, so deferring to the passive phase would only be
@@ -362,7 +384,7 @@ export function useLane<T, C = T>(
     });
 
     // oxlint-disable-next-line react/react-compiler
-    subscriptionRef.current = { close, keyId, lane };
+    subscriptionRef.current = { close, closed: false, keyId, lane };
   }, [enabled, lane, keyId, sourceKey]);
 
   // The *closing* half — deliberately passive. A re-suspension tears down
@@ -385,8 +407,9 @@ export function useLane<T, C = T>(
 
     return () => {
       // This instance's own subscription, never whatever the ref holds now: a
-      // key switch opens the next one and puts it there before this cleanup.
-      subscription.close();
+      // key switch opens the next one and puts it there before this cleanup —
+      // and released this one on the way, which is why this is idempotent.
+      releaseSubscription(subscription);
 
       if (subscriptionRef.current === subscription) {
         // oxlint-disable-next-line react/react-compiler

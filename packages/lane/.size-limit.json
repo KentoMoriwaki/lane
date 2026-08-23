@@ -17,7 +17,7 @@
       "react",
       "react-dom"
     ],
-    "limit": "4.33 kB"
+    "limit": "4.35 kB"
   },
   {
     "name": "everything (ceiling)",
@@ -27,6 +27,6 @@
       "react",
       "react-dom"
     ],
-    "limit": "5.97 kB"
+    "limit": "6.00 kB"
   }
 ]

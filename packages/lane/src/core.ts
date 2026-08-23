@@ -216,6 +216,17 @@ type LaneEntry = {
    * declares none leaves what is there, since nothing else can answer for it.
    */
   merge: LaneMergePublication | undefined;
+  /**
+   * What an external entry last fulfilled with — the value a publication is
+   * merged into — known to the store itself the moment it settles, and held
+   * weakly like the rest of an external entry. Not read off the promise's
+   * `status` / `value` stamps: React writes those only when a reader's `use()`
+   * has run, and a concurrent render suspended on another key's wait never
+   * reaches this reader, so a publication landing in that window would find
+   * nothing and discard the depth. Cleared with the cache (`invalidate`,
+   * `remove`, a timed-out wait): an entry holding no value has nothing to merge.
+   */
+  held: LaneWeakSlot<object> | undefined;
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
@@ -404,11 +415,10 @@ function mergePublication<T>(
     return published;
   }
 
-  const stamped = cachedPromise(entry, cache) as
-    | LaneThenable<LaneRead<unknown>>
-    | undefined;
-  const held =
-    stamped?.status === "fulfilled" ? stamped.value?.data : undefined;
+  // The store's own record of what the entry holds (see `LaneEntry.held`),
+  // not the promise's stamps: a reader that has not rendered yet has not
+  // stamped anything, and the publication does not wait for it.
+  const held = entry.held?.deref();
 
   return held === undefined
     ? published
@@ -971,6 +981,7 @@ function createEntry(state: LaneState, key: LaneKey, keyId: string): LaneEntry {
     key,
     keyId,
     lastFulfilled: undefined,
+    held: undefined,
     merge: undefined,
     published: false,
     revision: 0,
@@ -1119,6 +1130,7 @@ function setEntryCache<T>(
       // being handed back a rejection that has already been reported.
       if (entry.external && entry.cache === cache) {
         entry.cache = undefined;
+        entry.held = undefined;
       }
 
       // This throw unmounts the reader, so wrap the error to carry the key to
@@ -1297,6 +1309,11 @@ function rememberFulfilled(
   if (entry.external) {
     entry.published = true;
     entry.revision = ++state.revisionCounter;
+    // Weakly, like the slot: the value lives as long as its promise does.
+    entry.held =
+      typeof value === "object" && value !== null
+        ? externalRef(value)
+        : undefined;
     return;
   }
 
@@ -1328,6 +1345,9 @@ function shareWithLastFulfilled<T>(entry: LaneEntry, value: T): T {
 function removeEntryCache(entry: LaneEntry): void {
   entry.cache?.controller?.abort();
   entry.cache = undefined;
+  // An entry holding no value has nothing for a publication to merge into:
+  // an invalidated list comes back at the depth the owner publishes.
+  entry.held = undefined;
 }
 
 /** A read's `gcTime`, defaulting to the lane's (a default, not a floor or ceiling). */

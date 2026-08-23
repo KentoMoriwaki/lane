@@ -1,11 +1,13 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { TASK_PAGE_LIMIT_MAX, TASK_PAGE_SIZE } from "@/lib/team-api";
 import {
   DEFAULT_USER_ID,
   addTaskLabel,
   createLabel,
   createProject,
   createTask,
+  decodeTaskCursor,
   deleteTask,
   getCurrentUser,
   getInsights,
@@ -16,7 +18,7 @@ import {
   listMembers,
   listProjectTaskCounts,
   listProjects,
-  listTasks,
+  listTaskPage,
   listTeamsForUser,
   removeTaskLabel,
   updateTask,
@@ -134,23 +136,51 @@ export const teamRoutes = team
   .get("/teams", async (context) => {
     return context.json(await listTeamsForUser(context.get("userId")), 200);
   })
+  /**
+   * The task list, one page at a time.
+   *
+   * `limit` defaults to {@link TASK_PAGE_SIZE} and `cursor` continues strictly
+   * after the row it names, so the response is always an envelope — the rows
+   * and where the next ones start. A caller that wants the list entire says so
+   * by asking for {@link TASK_PAGE_LIMIT_MAX}; every route in this demo except
+   * `/lane` does exactly that, which keeps one shape for one endpoint instead
+   * of a response that changes with its query string.
+   */
   .get(
     "/tasks",
     zValidator("query", listTasksQuerySchema, validationHook),
     async (context) => {
       const query = context.req.valid("query");
+      const cursor = query.cursor ? decodeTaskCursor(query.cursor) : null;
+
+      if (query.cursor && !cursor) {
+        return context.json(
+          { error: "Cursor could not be decoded", code: "invalid_cursor" },
+          400,
+        );
+      }
+
+      const requested = Number.parseInt(query.limit ?? "", 10);
+      const limit = Number.isFinite(requested)
+        ? Math.min(Math.max(requested, 1), TASK_PAGE_LIMIT_MAX)
+        : TASK_PAGE_SIZE;
 
       return context.json(
-        await listTasks(context.get("teamId"), context.get("userId"), {
-          q: query.q,
-          scope: query.scope,
-          status: query.status,
-          priority: query.priority,
-          projectId: query.projectId,
-          labelId: query.labelId,
-          due: query.due,
-          ids: query.ids,
-        }),
+        await listTaskPage(
+          context.get("teamId"),
+          context.get("userId"),
+          {
+            q: query.q,
+            scope: query.scope,
+            status: query.status,
+            priority: query.priority,
+            projectId: query.projectId,
+            labelId: query.labelId,
+            due: query.due,
+            ids: query.ids,
+          },
+          { cursor, limit },
+        ),
         200,
       );
     },

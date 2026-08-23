@@ -18,8 +18,7 @@ type InsightCard = {
 
 export function InsightStrip() {
   const { filters, viewHref } = useWorkspaceHrefs();
-  const { promise, isInvalidationPending } = useInsights();
-  const { data } = React.use(promise);
+  const { data } = React.use(useInsights().promise);
 
   const cards: InsightCard[] = [
     { key: "in_progress", label: "In progress", value: data.inProgress, tone: "amber", view: { status: ["in_progress"] } },
@@ -32,15 +31,13 @@ export function InsightStrip() {
 
   return (
     <div className="border-b border-border">
-      {/* No chip here. A refresh that never reached the owner is reported once,
-          beside the list. What this strip does show is its own convergence:
-          these counters are the key a task mutation marks stale, so they are
-          the numbers that are briefly behind the row the user just edited, and
-          they dim until the publication that recomputes them arrives. */}
-      <div
-        className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3 transition-opacity"
-        style={{ opacity: isInvalidationPending ? 0.6 : 1 }}
-      >
+      {/* No chip here, and nothing to dim. A refresh that never reached the
+          owner is reported once, beside the list. These counters used to be
+          marked stale by every task edit and to fade while a publication went
+          and recomputed them; the mutation's own response carries them now
+          (`api/hooks.ts`), so they change in the same commit as the row that
+          moved them and there is no in-between state to draw. */}
+      <div className="scrollbar-calm flex items-stretch gap-2 overflow-x-auto px-4 py-3">
         {cards.map((card) => (
           <InsightCardButton
             key={card.key}

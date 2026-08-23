@@ -55,10 +55,15 @@ export function WorkspaceProvider({
   const router = useRouter();
 
   // The owner-ask. Lane calls this when a reader needs an external key that has
-  // been marked stale — `invalidate(insights())` after a task mutation is the
-  // one that fires here — and `router.refresh()` is what "publish again" means
-  // in this router. Out of render and coalesced to one call per tick by Lane,
-  // so three invalidated keys are still one rerender.
+  // been marked stale, and `router.refresh()` is what "publish again" means in
+  // this router. Out of render and coalesced to one call per tick by Lane, so
+  // several invalidated keys are still one rerender.
+  //
+  // One mutation fires it: an edit made on the task page, which marks the list
+  // entries stale because where a row now sorts is the one thing a response
+  // cannot carry (`api/hooks.ts`). The ask waits until a list is revealed —
+  // a marked key with no reader stays marked — so this is the traverse back,
+  // not the edit.
   const askOwnerToPublish = React.useCallback(() => {
     router.refresh();
   }, [router]);

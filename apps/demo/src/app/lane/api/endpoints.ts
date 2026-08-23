@@ -5,10 +5,13 @@ import type {
   CurrentUser,
   Insights,
   Project,
+  ProjectTaskCounts,
   Task,
   TaskPage,
   TaskPriority,
   TaskScope,
+  TaskMutationResult,
+  TaskRemovalResult,
   TaskStatus,
   TeamLabel,
   TeamMember,
@@ -152,51 +155,69 @@ export async function createTask(
   return (await response.json()) as Task;
 }
 
+/**
+ * **The four writes that answer with what they changed.**
+ *
+ * Each of these returns the task as it now is *and* the two numbers derived
+ * from it — the insights and the per-project counts, recomputed by the handler
+ * after the row landed (`server/team/routes.ts`). The envelope is what lets
+ * `/lane` converge an inline edit without asking the route to render again:
+ * every key the edit moves is in the response (`api/hooks.ts`).
+ *
+ * `/app-router` calls the same functions through `api/actions.ts` and uses the
+ * `task` alone — its channel is a rerender, so the derivations arrive with the
+ * publication instead.
+ */
 export async function updateTask(
   ctx: WorkspaceCtx,
   id: string,
   input: UpdateTaskInput,
-): Promise<Task> {
+): Promise<TaskMutationResult> {
   const response = await client.api.tasks[":id"].$patch(
     { param: { id }, json: input },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return (await response.json()) as TaskMutationResult;
 }
 
-export async function deleteTask(ctx: WorkspaceCtx, id: string): Promise<void> {
+/** The delete answers with the derivations alone: there is no row left. */
+export async function deleteTask(
+  ctx: WorkspaceCtx,
+  id: string,
+): Promise<TaskRemovalResult> {
   const response = await client.api.tasks[":id"].$delete(
     { param: { id } },
     requestOptions(ctx),
   );
   await assertOk(response);
+  return (await response.json()) as TaskRemovalResult;
 }
 
 export async function addTaskLabel(
   ctx: WorkspaceCtx,
   taskId: string,
   labelId: string,
-): Promise<Task> {
+): Promise<TaskMutationResult> {
   const response = await client.api.tasks[":id"].labels.$post(
     { param: { id: taskId }, json: { labelId } },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return (await response.json()) as TaskMutationResult;
 }
 
 export async function removeTaskLabel(
   ctx: WorkspaceCtx,
   taskId: string,
   labelId: string,
-): Promise<Task> {
+): Promise<TaskMutationResult> {
   const response = await client.api.tasks[":id"].labels[":labelId"].$delete(
     { param: { id: taskId, labelId } },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task;
+  return (await response.json()) as TaskMutationResult;
 }
 
 /* ------------------------------ Reference ------------------------------ */
@@ -210,8 +231,12 @@ export async function fetchProjects(ctx: WorkspaceCtx): Promise<Project[]> {
   return (await response.json()) as Project[];
 }
 
-/** How many tasks are in each project, keyed by project id. */
-export type ProjectTaskCounts = Record<string, number>;
+/**
+ * How many tasks are in each project, keyed by project id — the server's own
+ * type, re-exported here so the reads and the mutation envelope that carry it
+ * cannot drift apart.
+ */
+export type { ProjectTaskCounts };
 
 export async function fetchProjectTaskCounts(
   ctx: WorkspaceCtx,

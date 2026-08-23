@@ -17,10 +17,11 @@ Whatever the host, an integration comes down to five decisions:
 | Concern | How |
 | --- | --- |
 | **Identity** | Derive each Lane key from durable route/URL state — `key = f(URL)`. Revisiting a route re-reads the same key. |
-| **Ownership** | Per key: publish it from the host's data layer with [`LaneHydration`](./api-reference.md#lanehydration) and read it with [`external`](./api-reference.md#external--a-read-the-owner-publishes), or let the client own it and fetch on first read. Not both — a published key is read-only from the client. |
+| **Ownership** | Per key: publish it from the host's data layer with [`LaneHydration`](./api-reference.md#lanehydration) and read it with [`external`](./api-reference.md#external--a-read-the-owner-publishes), or let the client own it and fetch on first read. Not both — two loaders for one key is the one pairing that has no answer. |
 | **Navigation** | Commit route changes inside a React transition so a suspending read keeps the current screen instead of flashing a Suspense fallback. |
-| **Convergence** | Client-owned: `invalidate` (re-read) or publish confirmed data with `set` / `update`. Published: mutate the source and let the host revalidate — the republication is the convergence. |
+| **Convergence** | Client-owned: `invalidate` (re-read) or publish confirmed data with `set` / `update`. Published: the same `set` / `update` for data the mutation returned, `invalidate` for what derives from it — Lane then asks the host through [`refresh`](./api-reference.md#refresh--the-owner-ask) — or mutate the source and let the host revalidate, in which case the republication is the convergence. |
 | **Retention** | For client-owned keys, a Lane policy — `gcTime`, on the lane or on the read — not the router. For published keys, [reachability](./api-reference.md#external-retention): the host's payload and committed readers decide, and `gcTime` does not apply. |
+| **The ask** | Give the lane a [`refresh`](./api-reference.md#refresh--the-owner-ask) that means "render again" to the host — `() => router.refresh()`, `() => revalidator.revalidate()`. Without it, a published key that was invalidated or collected waits out its timeout. |
 
 The glue that connects the router's data to Lane (e.g. a `withHydration` HOC) lives
 in *your app*: neither Lane nor the router ships it, because neither knows about
@@ -136,6 +137,19 @@ const snapshots = { entries: [laneSnapshot(taskLanes.list(filters), tasks)] };
 </LaneProvider>;
 ```
 
+```tsx
+// The ask, wired once in a client component that holds the provider.
+"use client";
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+
+  return (
+    <LaneProvider refresh={() => router.refresh()}>{children}</LaneProvider>
+  );
+}
+```
+
 ```ts
 // The read both halves import. `external` says: the route fills this.
 export const taskLanes = {
@@ -151,11 +165,15 @@ export const taskLanes = {
   segment from cache (mirroring bfcache) rather than refetching, so there is no
   suspend and no flash. Lane only needs matching keys; a republication on
   navigation overwrites and mounted readers converge.
-- **Mutations** are Server Actions that mutate the source and `updateTag` for the
-  affected Cache Component coherence domains; the action's response carries the
-  re-rendered payload, which republishes every seeded key at once. Do not reach for `lane.set` or
-  `lane.invalidate` afterwards — on a published key they
-  [throw](./api-reference.md#laneownershiperror). Cover the round trip with
+- **Mutations** come in two shapes, and the axis is *"do I want the screen read
+  again?"* — see [the two mutation channels](#the-two-mutation-channels).
+  A **Server Action that revalidates** (`revalidatePath` / `updateTag`) answers
+  with the re-rendered payload, which republishes every seeded key at once;
+  nothing is left for Lane to do. A **Route Handler** answers with the new value
+  and nothing else: `lane.set` / `lane.update` land what it returned in place,
+  `lane.invalidate` marks what derives from it, and the next reader of an
+  invalidated key gets `refresh` fired for it — one `router.refresh()` for
+  however many keys one run invalidated. Cover whatever round trip is left with
   `useOptimistic` over the read value.
 - **Client-only** surfaces (no publication) just call `useLane` with their own
   loader and fetch on first read — that is `/lane-spa`, and a single route can
@@ -170,6 +188,25 @@ export const taskLanes = {
 
 You do not add React Router here — Next already owns navigation, route data, and the
 back/forward cache.
+
+### The two mutation channels
+
+Both are supported and they mix on one route. The choice is behavioural, not
+stylistic:
+
+| | Server Action + revalidate | Route Handler + Lane writes |
+| --- | --- | --- |
+| Round trips | One — the action's response carries the re-rendered route | One for the mutation; a second only if something was invalidated and a reader needs it |
+| Concurrency | Serialized in the client's action queue (a navigation discards a pending action's router result) | Parallel — better for a control users click repeatedly |
+| Scope | Always re-renders the current route, even when revalidating a different path | Touches exactly the keys you name |
+| "Make another screen stale without touching this one" | Not expressible | `lane.invalidate(key)` — nothing happens until that screen is revealed |
+
+One constraint ties them together: a Route Handler cannot bump the client
+router's cache, and a `"use cache"` segment is served from the prefetch for its
+`cacheLife` `stale` window. So **do not put data you mutate through a Route
+Handler behind `"use cache"`** — a navigation would render the pre-mutation
+segment and republish over your write. Data that must be both cached and mutated
+goes through a Server Action with `updateTag`.
 
 ## React Router v7 / v8
 
@@ -209,8 +246,9 @@ indicator.
 `createBrowserRouter` + loaders. **This is the server-owned shape with no server
 in it**: `LaneHydration` is not RSC-specific, it applies a payload of snapshots to
 a lane, and a client router's loader data is exactly such a payload. The loader is
-the owner; Lane is the read-only distribution layer that gets the data to
-components the router's `useLoaderData` cannot reach.
+the owner; Lane is the distribution layer that gets the data to components the
+router's `useLoaderData` cannot reach, and the channel for asking the loader to
+run again.
 
 ```tsx
 export async function usersLoader({ request }) {
@@ -250,15 +288,18 @@ createBrowserRouter([
 - React Router **re-runs loaders on back/forward** by default (unlike Next, which
   restores from cache). To make back instant, return `false` from `shouldRevalidate`
   for POP, or have the loader read through Lane's cache.
-- **Refreshing and mutating both go through the router.** `useRevalidator()`
-  re-runs the loaders, which produces a new snapshots object and republishes;
-  a mutation changes the source and then revalidates. React Router has no direct
-  loader-data write (no `setQueryData` equivalent), and Lane does not offer one
-  behind its back — `set` / `update` / `invalidate` on a published key
-  [throw](./api-reference.md#laneownershiperror). What you get in exchange is that
-  an edit made this way survives navigating away and back, because it was never a
-  local edit: the loader publishes the source's current state every time it runs.
-  The demo's `/lane-router` is exactly this shape.
+- **Wire the ask to the revalidator.**
+  `<LaneProvider refresh={useRevalidator().revalidate}>` — then
+  `lane.invalidate(key)` on a published key re-runs the loaders when a reader
+  next needs it, which produces a new snapshots object and republishes.
+- **Refreshing and mutating go through the router, unless the mutation returns
+  the value.** `useRevalidator()` re-runs the loaders; a mutation changes the
+  source and then revalidates. That route is the one to take when you want the
+  loader's whole answer, and what you get for it is an edit that survives
+  navigating away and back, because it was never a local edit. When the mutation
+  hands you the new value, `lane.set` / `lane.update` land it in place without a
+  loader run — and the next loader run states at least as much, so the two do not
+  disagree. The demo's `/lane-router` is exactly this shape.
 
 ## TanStack Router
 

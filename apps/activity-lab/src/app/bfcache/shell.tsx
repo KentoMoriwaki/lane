@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState, type ReactNode } from "react";
-import { LaneOwnershipError, LaneProvider } from "use-lane";
+import { LaneProvider } from "use-lane";
 import { FrameStrip, useFrameRecorder } from "@/lab/frame-recorder";
 import { labLog } from "@/lab/log";
 import { Timeline } from "@/lab/timeline";
@@ -11,10 +11,11 @@ import { PathnameProbe } from "./pathname-probe";
 import { bfClient, bfPublished } from "./reads";
 import { bfcacheLane } from "./shared-lane";
 
-// Both ownerships are selectable, and the published half is deliberately left
-// operable: pressing `set` on a key the server owns and reading REFUSED in the
-// Timeline is one of the things this HUD is for. Only the client-owned half can
-// actually be written from here, which is the whole distinction.
+// Both ownerships are selectable and both are writable — the client mutation
+// surface is the same on either. What differs is who answers an `invalidate`:
+// on a published key the lane's `refresh` asks the route to render again, on a
+// client-owned one the reader's own loader runs. Watching the two side by side
+// is what this HUD is for.
 const TARGETS = [
   { label: "shared", owner: "published", read: bfPublished.shared() },
   { label: "list", owner: "published", read: bfPublished.list() },
@@ -61,24 +62,7 @@ export function BfcacheShell({
 
   const op = (name: string, run: () => void) => {
     labLog.push("bfcache:op", "lane-op", `${name} ${target.label}`);
-
-    try {
-      run();
-    } catch (error) {
-      if (error instanceof LaneOwnershipError) {
-        // The store refusing a client write to a key the server publishes. It
-        // is a result, not a crash — recorded on the same channel as the op it
-        // answers, so the Timeline shows the attempt and the refusal adjacent.
-        labLog.push(
-          "bfcache:op",
-          "lane-op",
-          `${name} ${target.label} REFUSED — published key`,
-        );
-        return;
-      }
-
-      throw error;
-    }
+    run();
   };
 
   return (
@@ -128,8 +112,8 @@ export function BfcacheShell({
             }
           >
             {target.owner === "published"
-              ? "server-owned — writes refused"
-              : "client-owned — writes apply"}
+              ? "published — invalidate asks the owner"
+              : "client-owned — invalidate re-runs the loader"}
           </span>
           <button
             type="button"

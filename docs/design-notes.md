@@ -332,10 +332,11 @@ server-confirmed data and wants to avoid an immediate duplicate read — a creat
 response seeding a detail key, or an update response publishing the confirmed
 entity while broader derived reads are invalidated.
 
-`set` is not optimistic UI. It publishes data the app actually has — and only
-into a key the client owns. On a published key it throws; the equivalent there is
-to mutate the source and let the republication carry the confirmed value, which
-is the same idea with the ownership rearranged.
+`set` is not optimistic UI. It publishes data the app actually has. That holds on
+a published key too, and there it is the *same* operation: a client write of
+confirmed data is not a fork of the truth, because the next publication states at
+least what the write anticipated. Writing it locally only skips the wait for the
+owner to say so.
 
 ## Hydration overwrites — and what that implies about ownership
 
@@ -360,19 +361,36 @@ runtime, because the guard would have to be either a content hash (which
 breaks authoritative re-seeding of unchanged data) or a dev-only warning in a
 core measured in bytes.
 
-**Authoritative is the whole argument for closing the write side.** If a
-publication overwrites whatever it finds — which navigation requires — then a
-client write to a seeded key is a value with a scheduled deletion; and a key
-that stops being republished keeps the local edit forever. Neither outcome
-announces itself, which is why the pairing is refused at the write: seeded
-entries are external, and the client mutation surface throws on them
-([`LaneOwnershipError`](./api-reference.md#laneownershiperror)).
+**Authoritative is why a client write to a seeded key is safe, not why it is
+refused.** A publication overwrites whatever it finds — which navigation
+requires — so a local write's worst case is being restated. And the write the
+client makes is a write of *confirmed* data: the mutation it came from has
+already happened at the source, so the next publication states at least what the
+write anticipated. Last publication wins, and the publication agrees.
 
-The enforcement is at runtime rather than in the key's type: a plain
-`["task", id]` literal — which every app writes somewhere — would slip past a
-branded key with no error at all. The type layer does the part it is good at (an
-external read spec accepts no loader options, and its result has no `invalidate`
-to call), and the store does the part that cannot be evaded.
+What the client does not have is the rest of the answer. A change it made has
+consequences it is not holding — a count, a re-sorted list, an insight derived
+from three tables — and for those it says `invalidate`, which is a request, not a
+value: the entry is emptied, and the next reader to need it asks the owner
+through [`refresh`](./api-reference.md#refresh--the-owner-ask). That is the whole
+of the client's authority over a published key: it may state what it has
+confirmed, and it may say that something is no longer true. It may not decide
+*when* the key goes stale — no `staleTime`, no `refetchOn*` — because that is a
+second freshness policy over one key, which is exactly the shape this design
+exists to avoid.
+
+Two things follow about where the ask goes. It is fired by a **read**, not by
+the invalidation: a router that discards a pending refresh when a navigation
+starts (Next's does) would otherwise leave a wait nobody will ever fill, and a
+key invalidated for a screen nobody is looking at would re-render a route for
+nothing. And it is fired only for a key that has **held a value before** — a
+first mount is waiting for a payload already on its way, and asking for it would
+be asking twice.
+
+The one pairing still refused at the read is a key that is both seeded and read
+with a *client* loader. That is not about writes: it is two loaders for one key,
+and whichever ran last decides what is stored. It warns in development, where
+both halves of the mistake are visible.
 
 ## Key matching: exact vs scoped
 

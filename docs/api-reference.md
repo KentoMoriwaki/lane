@@ -34,7 +34,7 @@ Provides a `Lane` instance to the tree and wires focus / reconnect revalidation
 from a pluggable event source.
 
 ```tsx
-<LaneProvider lane?={Lane} focusThrottleInterval?={number} eventSource?={LaneEventSource}>
+<LaneProvider lane?={Lane} refresh?={() => void} focusThrottleInterval?={number} eventSource?={LaneEventSource}>
   {children}
 </LaneProvider>
 ```
@@ -42,6 +42,7 @@ from a pluggable event source.
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
 | `lane` | `Lane` | a fresh `createLane()` | The Lane instance to provide. Omit to let the provider create and own one. |
+| `refresh` | `() => void` | — | How Lane asks the owner of an [`external`](#external--a-read-the-owner-publishes) key to publish it again — `() => router.refresh()`, `() => useRevalidator().revalidate`. Installed on the lane above, so this and `createLane({ refresh })` are the same setting; an absent prop leaves whatever `createLane` was given. See [`refresh`](#refresh--the-owner-ask). |
 | `loaderMeta` | `LaneRegister["loaderMeta"]` | — | **Required only if you declare it** (see [`LaneRegister`](#laneregister--what-loaders-are-handed-besides-the-key)). What every loader on this lane is handed as `meta`. Absent from the props entirely when nothing is declared. |
 | `focusThrottleInterval` | `number` | `5000` | Focus and `visibilitychange` both fire on a tab switch; focus revalidations within this window are coalesced into one. Reconnect is not throttled. |
 | `eventSource` | `LaneEventSource` | `domEventSource` | Where focus / reconnect signals originate. Defaults to browser DOM events. Pass `noopEventSource` (CLI), `createReactNativeEventSource(...)` (React Native), or your own — see [Event sources](#event-sources) and [Environments](./environments.md). Use a stable reference. |
@@ -104,6 +105,7 @@ const lane = createLane({ gcTime: 5 * 60_000 });
 type LaneOptions = {
   gcTime?: number;
   warmTime?: number;
+  refresh?: () => void;
 };
 ```
 
@@ -111,6 +113,46 @@ type LaneOptions = {
 | --- | --- | --- |
 | `gcTime` | `300000` (5 min) | How long (ms) an entry is kept **after its last reader leaves** — the default for reads that do not set their own. Idle-time based, unrelated to `staleTime`/freshness. `Infinity` opts out. |
 | `warmTime` | `60000` (1 min) | How long a settled entry **nobody has ever held** waits for its first reader — the default for reads that do not set their own. Shorter than `gcTime`'s and unrelated to it: this is spent on an arrival that has not happened (a hover prefetch, a render that suspended and went away), that one on a reader who was there and may return. |
+| `refresh` | — | The owner-ask for [`external`](#external--a-read-the-owner-publishes) keys. See [`refresh`](#refresh--the-owner-ask). |
+
+#### `refresh` — the owner-ask
+
+An external read has no loader of its own to re-run, so what it does about a
+value it has not got is ask the owner to render again. `refresh` is that ask,
+and the app supplies it because only the app knows what "render again" means:
+
+```tsx
+// Next.js App Router
+const router = useRouter();
+<LaneProvider refresh={() => router.refresh()}>
+
+// React Router, data mode
+const revalidator = useRevalidator();
+<LaneProvider refresh={revalidator.revalidate}>
+```
+
+Lane calls it when a reader reads an external key that has held a value before
+and has none now — after `invalidate`, after `remove`, after the value was
+collected with its payload. The rules:
+
+- **Out of render, once per tick per lane.** Reads run during render and
+  `router.refresh()` dispatches a React update, so the call is deferred to a
+  microtask; N readers of N keys invalidated in one run are one ask.
+- **On the read, not on the wait.** Next's router discards a pending
+  `router.refresh()` when a navigation starts, so an ask made once and never
+  repeated would leave a wait unfilled. Every read of an unfilled wait asks
+  again, which is how a reveal after a navigation repairs itself.
+- **Never before the first publication.** A reader mounting under streaming SSR,
+  or outside every `<LaneHydration>` boundary, is waiting for a payload that is
+  already on its way. It waits in silence.
+- **No in-flight tracking.** `refresh` returns `void`, so there is no completion
+  to observe, and inferring one from the next publication is wrong — a
+  navigation's payload need not carry the key at all. Repeated asks across ticks
+  cost round trips, not correctness.
+
+Without a `refresh`, a reader whose external key was invalidated or collected
+waits out [`LaneExternalTimeoutError`](#laneexternaltimeouterror) — which is
+what the timeout's message says to do about it.
 
 ## Reading data
 
@@ -535,12 +577,10 @@ not.
   — the caller has not changed the source yet. Converge inside the action,
   however the change needs it: `invalidate`, `set`, `update`, a prefix scope —
   all land in the same transition.
-- **External reads do not have it.** The announcement promises that an
-  invalidation is coming, and a published key's reader cannot make it; the
-  owner's own transition (a Server Action, a router revalidation) is already the
-  pending signal. Announcing a published key throws
-  [`LaneOwnershipError`](#laneownershiperror), checked over the whole scope
-  before anything is announced.
+- **External reads have it too.** A published key's reader can be told an
+  invalidation is coming exactly like any other, and the invalidation it is
+  waiting for is real: the value goes and the owner is asked for a new one. A
+  scope that mixes published and client-owned keys announces to both.
 - **`lane.startInvalidationTransition` outside any transition is close to a
   no-op** — each reader opens an empty transition that commits immediately.
   There is no way to ask React whether a transition is in progress, so it is
@@ -751,15 +791,19 @@ to the last fulfilled value with no `error` beside it.
 
 [`external`](#external--a-read-the-owner-publishes) reads take no `fallback`.
 Their only failure is [`LaneExternalTimeoutError`](#laneexternaltimeouterror),
-which says nobody published the key — a wiring bug, and serving something in its
-place would hide a missing publisher behind a plausible screen.
+which says the ask went unanswered — a wiring bug, and serving something in its
+place would hide it behind a plausible screen.
 
 ### `external` — a read the owner publishes
 
-Some keys are not the client's to fetch. An RSC route already loaded the data and
-[publishes](#lanehydration) it; a router loader did the same. The read still has
-to say where its value comes from, and `external` is that declaration — a real
-loader that **waits for the publication** instead of going after the data itself:
+> An external read is an ordinary read whose loader the owner holds: the value
+> arrives by publication, and a re-read asks the owner to publish again.
+
+Some keys are not the client's to *fetch*. An RSC route already loaded the data
+and [publishes](#lanehydration) it; a router loader did the same. The read still
+has to say where its value comes from, and `external` is that declaration — a
+real loader that **waits for the publication** instead of going after the data
+itself:
 
 ```ts
 import { external, laneRead } from "use-lane";
@@ -783,9 +827,16 @@ option is a type error at the `laneRead` call:
 
 | Absent option | Why |
 | --- | --- |
-| `staleTime`, `gcTime` | Freshness and retention are the publisher's decision. Nothing local can re-read this key, so "stale" has no action attached to it. |
-| `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` | Each one triggers a re-fetch, which is exactly the ownership violation this read exists to prevent. |
+| `staleTime` | Freshness is the owner's. A client-side freshness policy on this key would be a second authority over when it changes — the line this design keeps. The client says *"this is stale now"* explicitly with [`invalidate`](#invalidate--invalidateall); it never says *"consider it stale after 30 seconds"*. |
+| `gcTime` | Retention follows the payload, not a timer — see [what seeding decides](#what-seeding-decides). |
+| `refetchOnMount` / `refetchOnFocus` / `refetchOnReconnect` | Each is a freshness policy in trigger form, and would re-render the owner's whole route on a tab switch. |
 | `loaderMeta` | Nothing here is handed to a loader. |
+
+**Everything the client *can* say about the key, it says the ordinary way.**
+`set` / `update` write a value the client is holding (a mutation's own
+response); `invalidate` / `remove` say the value is gone; both notify readers
+through the channels every other key uses. See
+[writing to a published key](#writing-to-a-published-key).
 
 #### What it does while it waits
 
@@ -795,17 +846,23 @@ installed, so a reader suspended on it converges immediately — including one
 that has not committed yet, which has no subscription for a notification to
 reach.
 
-- **Before the first publication**, a read suspends: boundary fallback, no
-  request. "Read a key some ancestor boundary will publish" is a supported
-  pattern — including from a component the publisher cannot pass props to.
+- **Before the first publication**, a read suspends in silence: boundary
+  fallback, no request, and no ask — the payload is already on its way. "Read a
+  key some ancestor boundary will publish" is a supported pattern, including
+  from a component the publisher cannot pass props to.
+- **After the key has held a value and lost it** — `invalidate`, `remove`, or
+  the payload being collected — the read asks the owner through the lane's
+  [`refresh`](#refresh--the-owner-ask), out of render and once per tick, and
+  waits for the publication that answers.
 - **On publication**, the wait resolves with the published value, and the
   store's own promise holds the same value. A reader inside a hidden
-  `<Activity>` converges the same way when its tree is revealed — see
+  `<Activity>` converges the same way when its tree is revealed — and a key
+  invalidated while hidden asks nothing until that reveal. See
   [under `<Activity>` and router keep-alive](./consistency.md#activity).
 - **After ~10 seconds with no publication**, it rejects with
   [`LaneExternalTimeoutError`](#laneexternaltimeouterror) to your Error
-  Boundary. A read nobody publishes is a typo or a missing boundary, and failing
-  loudly is the point.
+  Boundary, and the entry keeps no cache — the next read is a fresh wait with a
+  fresh ask, so an error boundary's retry is a real retry.
 
 **A key holds its latest publication, wherever it is read.** If two routes
 publish the same key and the user navigates back to the first, its readers show
@@ -817,18 +874,20 @@ belongs to one route, put the route in the key.
 
 `loader: cond ? external : undefined` gates an external read exactly as an absent
 client loader does — nothing is stored or awaited while disabled, and the result
-widens to [`LaneGatedResult`](#lanegatedresultt) minus `invalidate`.
+widens to [`LaneGatedResult`](#lanegatedresultt).
 
-#### What the result does not have
+#### What the result has
 
-`useLane` of an external read returns a `LaneExternalResult<T>` — a
-[`LaneResult`](#laneresultt) without `invalidate`. There is no loader to re-run,
-so invalidating could only empty a key its owner is expected to refill; the store
-throws on the attempt, and the type removes the call before you can make it.
+The same [`LaneResult<T>`](#laneresultt) a client-owned read returns —
+`invalidate` and `startInvalidationTransition` included. `invalidate` on an
+external key drops the value and, at the next read of it, asks the owner; a
+mounted reader re-reads in its transition and keeps showing what it has until
+the publication lands.
 
-`lane.prefetch` rejects an external read for the same reason, at the type level
-and at runtime: prefetching is loader execution, and warming this key would start
-a wait whose only outcome is the timeout.
+The one operation an external read still refuses is `lane.prefetch`, at the type
+level and at runtime ([`LaneOwnershipError`](#laneownershiperror)): prefetching
+is loader execution, and the only "loader" here is the owner's whole route —
+re-rendering it for a key nothing is reading yet is not warming, it is work.
 
 #### `LaneExternalTimeoutError`
 
@@ -848,13 +907,13 @@ the message against what the publisher seeds.
 
 Two runtime behaviors worth knowing:
 
-- **The rejection is the entry's state, not the reader's.** A reader mounted
-  after the timeout receives the same rejection immediately; the next
-  publication clears it.
+- **The rejection is reported and dropped.** The readers holding the wait are
+  rejected; the entry is then left with no cache, so the next read of it starts
+  a fresh wait and a fresh ask instead of being handed the failure again.
 - **An errored reader does not heal itself.** React error boundaries stay on
-  their error UI after a later publication revives the key, so a screen that can
-  hit this error needs a reset path (a retry button that remounts the boundary,
-  or a boundary keyed on the route).
+  their error UI once they have caught, so a screen that can hit this error
+  needs a reset path (a retry button that remounts the boundary, or a boundary
+  keyed on the route). The retry itself will ask and can succeed.
 
 ### `useLanesAll(reads, options?)` — a batch read
 
@@ -1168,6 +1227,12 @@ the read describes what a *reader* does with the value (`staleTime` / `gcTime` /
 `refetchOn*`), and warming is not the read, so those stay the eventual reader's
 call.
 
+It refuses an [`external`](#external--a-read-the-owner-publishes) read, at the
+type level and at runtime
+([`LaneOwnershipError`](#laneownershiperror)) — that read's loader is the
+owner's route, and re-rendering it for a key nothing reads yet is work, not
+warming.
+
 `prefetch` is a method on the
 [`Lane` instance](#mutation-convergence--the-lane-instance)
 (`useLaneInstance().prefetch(...)`). The canonical use is intent-driven warming —
@@ -1319,14 +1384,16 @@ data](./design-notes.md#the-store-returns-promises-never-data) for the reasoning
 and [there is no cache getter](./migrating.md#there-is-no-cache-getter) for where
 each react-query `getQueryData` use goes instead.
 
-> **These are the client-owned half of the API.** Every method on this page
-> writes to an entry, and a key whose value was **published** — read with
-> [`external`](#external--a-read-the-owner-publishes), or seeded by
-> [`LaneHydration`](#lanehydration) — is not the client's to write. `set`,
-> `update`, `updateAll`, `invalidate`, `invalidateAll`, `remove`, `removeAll` and
-> `prefetch` all throw [`LaneOwnershipError`](#laneownershiperror) on one. See
-> [mutating a server-owned key](#mutating-a-server-owned-key) for what to do
-> instead.
+> **These work on every entry, published or not.** `set`, `update`, `updateAll`,
+> `invalidate`, `invalidateAll`, `remove`, `removeAll` and
+> `startInvalidationTransition` do the same thing to a key read with
+> [`external`](#external--a-read-the-owner-publishes) as to one the client
+> loads; what differs is who answers an invalidation — for a published key,
+> the owner, asked through [`refresh`](#refresh--the-owner-ask). `prefetch` is
+> the exception and throws
+> [`LaneOwnershipError`](#laneownershiperror) on an external read, because it is
+> the one method that runs a loader. See
+> [writing to a published key](#writing-to-a-published-key).
 
 ### `LaneReadError`
 
@@ -1377,11 +1444,12 @@ and a method would have to answer questions the error has no business answering:
 invalidate or remove, and whether it also clears the boundary's own state. A key
 answers nothing and composes with everything.
 
-**A published key is not wrapped.** `invalidate` and `remove` both throw
-[`LaneOwnershipError`](#laneownershiperror) on one, so an external failure would
-be handing out a recovery that cannot be performed; those keep their own shape
-(and [`LaneExternalTimeoutError`](#laneexternaltimeouterror) already carries the
-same `key` for identification).
+**A published key's failure is not wrapped.** The client did not start that
+load, and the failure it can get —
+[`LaneExternalTimeoutError`](#laneexternaltimeouterror) — already carries the
+same `key` for identification, so wrapping would only add a layer to unwrap.
+Recovery is a re-read: the entry keeps no cache after a timeout, so remounting
+the boundary starts a fresh wait and a fresh ask.
 
 **It does not survive the server.** React replaces an error thrown while
 rendering on the server with a digest before the client sees it, so a fallback
@@ -1407,20 +1475,19 @@ class LaneOwnershipError extends Error {
 }
 ```
 
-Thrown synchronously — in production as well as development — when a client
-mutation reaches an entry whose value came from outside. An entry becomes
-externally owned when it is read with [`external`](#external--a-read-the-owner-publishes)
-**or when a publication seeds it**, and it stays that way for as long as the
-entry lives; the second reader of a key does not get to decide nobody owns it.
+Thrown synchronously — in production as well as development — by
+[`lane.prefetch`](#prefetch) on an [`external`](#external--a-read-the-owner-publishes)
+read. That is the only operation it is left for: every other client operation
+(`set`, `update`, `updateAll`, `invalidate`, `invalidateAll`, `remove`,
+`removeAll`, `startInvalidationTransition`) works on an external entry exactly
+as on a client-owned one.
 
-The message names the serialized key and the operation. It is not a lint: the
-write it stops is one that silently loses — either the next publication
-overwrites it, or no publication comes and the local edit outlives the truth.
-
-`invalidate` is checked after its `onlyIf` gate, so a conditional invalidation
-that would not have done anything (a `refetchOnMount` trigger over a fresh
-published value, say) is a no-op rather than a crash. One that *would* discard
-the owner's value throws.
+The message names the serialized key and the operation. What it refuses is not a
+write but a *load*: `prefetch` runs a loader, and the loader of an external key
+is the owner's whole route. Warming one key that way is a route re-render for
+something nothing is reading yet. Let the read ask instead — a reader that
+needs the value asks through [`refresh`](#refresh--the-owner-ask), and a reader
+that does not, does not.
 
 ### `invalidate` / `invalidateAll`
 
@@ -1538,6 +1605,12 @@ A plain key carries no type, so the value decides it, exactly as before.
 
 `set` is **not** an optimistic-update mechanism. Optimistic state belongs in
 component-local `useOptimistic`.
+
+On a [published](#external--a-read-the-owner-publishes) key it is the same
+write, and the entry stays external: the value is held weakly, so a `set` no
+committed reader is holding may be collected along with the payload it replaced
+— at which point the next read asks the owner, which is the same recovery as for
+a collected publication.
 
 ### `update` / `updateAll`
 
@@ -1729,33 +1802,54 @@ decides it, and `laneSnapshot(["tasks", filters], tasks)` keeps working.
 
 #### What seeding decides
 
-**Everything a publication seeds becomes server-owned.** The value is a copy of
-something the publisher holds, so from the client's side the key is read-only:
-`set` / `update` / `invalidate` / `remove` on it throw
-[`LaneOwnershipError`](#laneownershiperror), and `useLane` hands back no
-`invalidate` when the read declares itself
-[`external`](#external--a-read-the-owner-publishes). The pairing is refused at
-the point of the write rather than failing later somewhere else.
+**Everything a publication seeds becomes an external entry**, and stays one for
+as long as the shell lives. Three things follow, and only three:
 
-Two consequences worth planning for:
+- **Freshness is the owner's.** The read carries no `staleTime` and no
+  `refetchOn*` — see [`external`](#external--a-read-the-owner-publishes).
+- **Retention follows the payload, not `gcTime`.** The value is held weakly and
+  kept alive by the publisher's payload object and by every committed reader,
+  so it lives exactly as long as the framework keeps the payload. The shell —
+  and with it the fact that an owner fills this key — outlives the value, so a
+  later read knows to ask rather than to wait in silence.
+- **`prefetch` is refused.** There is no loader here but the owner's route; see
+  [`LaneOwnershipError`](#laneownershiperror).
 
-- **Seed only what the client will not write to.** A key the client controls
-  should be [client-owned](./architectures.md#client-owned-reads) and never appear
-  in a snapshot. Mixing is the one configuration Lane rejects.
-- **Mutations go back through the publisher.** See
-  [mutating a server-owned key](#mutating-a-server-owned-key).
+What does *not* follow is a closed write side. `set`, `update`, `invalidate`,
+and `remove` all work on a seeded key — see
+[writing to a published key](#writing-to-a-published-key).
 
-### Mutating a server-owned key
+Reading a seeded key with a *client* loader is still a mistake, and warns in
+development: two loaders for one key means whichever ran last decides what is
+stored, with none of a client-owned entry's guarantees behind it. Read it with
+`external`, or stop seeding it.
 
-There is one channel, and it does not pass through Lane:
+### Writing to a published key
 
-```txt
-mutate the source  ->  revalidate  ->  the payload re-streams  ->  republish  ->  readers converge
-```
+A client write to a published key is not a fork of the truth. It states what the
+client has just confirmed — a mutation's own response — and the next publication
+states at least as much. So the channel is the ordinary one:
 
-In the App Router that is a Server Action:
+| The client… | Does |
+| --- | --- |
+| has the new value (the mutation returned it) | `lane.set(key, value)` / `lane.update(key, fn)` — lands with no round trip and no fallback, visible or hidden |
+| knows a key is now wrong but not what it should be (counts, insights, a re-sorted list) | `lane.invalidate(key)` — the value goes, and the next reader to need it asks the owner through [`refresh`](#refresh--the-owner-ask) |
+| wants the owner's whole answer | mutate the source and revalidate; the payload re-streams and republishes |
 
 ```ts
+// A Route Handler mutation: the response is the new task.
+const task = await updateTask(id, input);
+
+lane.set(taskLanes.detail(id).key, task);          // exact, in place
+lane.update(taskLanes.list(filters).key, (tasks) =>  // exact, in place
+  tasks.map((row) => (row.id === task.id ? task : row)),
+);
+lane.invalidate(insightLanes.summary().key);       // derived — ask the owner
+```
+
+```ts
+// A Server Action that revalidates: the response already carries the re-rendered
+// route, so the publication is the convergence. Nothing to do on the Lane side.
 "use server";
 
 export async function updateTaskAction(id: string, input: UpdateTaskInput) {
@@ -1765,7 +1859,12 @@ export async function updateTaskAction(id: string, input: UpdateTaskInput) {
 }
 ```
 
-In a client router it is the router's own revalidation — see
+Which to use is not a matter of taste — see
+[the two mutation channels](./integrations.md#the-two-mutation-channels) for the
+behavioural differences (one round trip vs. parallelism, and what a revalidating
+Server Action always re-renders).
+
+In a client router the revalidation channel is the router's own — see
 [Data mode](./integrations.md#data-mode--loaders-publish-into-lane).
 
 What that buys is agreement: one publication updates the entity, every list it
@@ -1786,11 +1885,14 @@ async function changeStatus(status: Status) {
 }
 ```
 
-Two anti-patterns, because both look reasonable: **`lane.set` for optimism**
-(publishes a guess to every reader, no rollback; on a published key it throws)
-and **`lane.invalidate` after the action** (asks the client to re-fetch a key it
-does not fetch; the revalidation inside the action already brings the new
-payload, and the call throws).
+Two things to keep apart, because both look like the same tool:
+**`lane.set` is for a value you have**, never for a guess — it publishes to
+every reader of the key with no rollback, which is right for a mutation's
+response and wrong for optimism (`useOptimistic` is local to the component and
+reverts itself). And **`lane.invalidate` after a revalidating Server Action** is
+redundant rather than wrong: the action's own response already carries the
+re-rendered route, so the publication is on its way and the invalidation only
+adds an ask for a payload already in flight.
 
 ## Lifecycle behavior
 
@@ -1842,19 +1944,23 @@ payload, and the call throws).
   shorter `warmTime` instead.
 - **Retention of published entries.** <a id="external-retention"></a> An
   [external](#external--a-read-the-owner-publishes) entry is **exempt from
-  `gcTime`** — Lane does not time out a value it did not fetch and cannot
-  re-fetch. It holds the value weakly instead, so it lives exactly as long as
-  something else keeps it reachable: the publisher's payload (the snapshots
-  object is tethered to what it published) or any committed reader — including
-  one inside a hidden `<Activity>`, which is [why keep-alive needs no `gcTime`
+  `gcTime`** — Lane does not time out a value it did not fetch. It holds the
+  value weakly instead, so it lives exactly as long as something else keeps it
+  reachable: the publisher's payload (the snapshots object is tethered to what
+  it published) or any committed reader — including one inside a hidden
+  `<Activity>`, which is [why keep-alive needs no `gcTime`
   tuning](./consistency.md#activity). A key whose payload *and* readers are both
-  gone reads as absent, and its next read waits for the next publication.
-  Client-owned entries are untouched by any of this.
+  gone reads as absent, and its next read waits — and asks the owner through
+  [`refresh`](#refresh--the-owner-ask), because the shell remembers that this
+  key was filled once. The **shell** is what is never collected: `invalidate`,
+  `remove`, and the sweep all leave it standing, so a key that has been
+  published stays a key an owner fills. Client-owned entries are untouched by
+  any of this.
 
 ## Type exports
 
 `InfiniteLaneOptions`, `InfiniteLaneReadSpec`, `InfiniteLaneResult`, `InfiniteLaneValue`,
-`Lane`, `LaneClientLoader`, `LaneEntryInfo`, `LaneEventSource`, `LaneExternalLoader`, `LaneExternalReadSpec`, `LaneExternalResult`, `LaneFallback`, `LaneGatedExternalReadSpec`, `LaneGatedExternalResult`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidate`, `LaneInvalidateOptions`,
+`Lane`, `LaneClientLoader`, `LaneEntryInfo`, `LaneEventSource`, `LaneExternalLoader`, `LaneExternalReadSpec`, `LaneFallback`, `LaneGatedExternalReadSpec`, `LaneGatedReadSpec`, `LaneGatedResult`, `LaneHydrationSnapshots`, `LaneInvalidate`, `LaneInvalidateOptions`,
 `LaneKey`, `LaneLoader`, `LaneLoaderContext`, `LaneLoaderMeta`, `LaneLoaderMetaArgs`, `LaneLoaderMetaProp`, `LaneOptions`,
 `LaneKeyOf`, `LanePlainKey`, `LaneProviderProps`, `LaneRead`, `LaneReadSpec`, `LaneRefetchOnFocus`, `LaneRefetchOnMount`, `LaneRefetchOnReconnect`, `LaneRegister`,
 `LaneResult`, `LaneRevalidateHandlers`,

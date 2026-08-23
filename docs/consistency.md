@@ -173,7 +173,12 @@ Per ownership, in one line each:
 
 - **[Published keys](./api-reference.md#external--a-read-the-owner-publishes)** —
   a reveal that carries a republication converges in that render; one that does
-  not shows what the tree held. Retention needs no `gcTime` tuning because it is
+  not shows what the tree held. If the value is *gone* — invalidated while the
+  tree was hidden, or collected with its payload — the reveal's re-read
+  suspends and asks the owner through
+  [`refresh`](./api-reference.md#refresh--the-owner-ask); nothing was asked
+  while the tree was hidden, which is the point of deferring the ask to the
+  read. Retention needs no `gcTime` tuning because it is
   [reachability](./api-reference.md#external-retention): as long as the framework
   holds the payload or a committed reader holds the promise, the value is there.
 - **Client-owned keys** — converge through notifications while visible, and
@@ -222,9 +227,10 @@ the specified presentation for a new appearance.
 
 ### Announce pending at the start of a mutation, not the end
 
-*(Client-owned keys. A published key converges when its owner republishes, so the
-mutation's own transition — the Server Action, the router revalidation — is
-already the pending signal.)*
+*(Every key, published or not. On a published key `invalidate` is what asks the
+owner, so announcing it early buys the same thing it does anywhere else — except
+after a revalidating Server Action, whose own transition is already the pending
+signal and whose response already carries the new payload.)*
 
 ```ts
 await saveTodo(patch);
@@ -273,9 +279,11 @@ outlives them all. Neither is wrong, and both are hard to predict from any one
 component. Share the options object, or derive it from one place.
 
 A [published key](./api-reference.md#external--a-read-the-owner-publishes) cannot
-have this problem: its read spec carries no freshness options at all, so every
-reader of it agrees by construction, and the publication is what changes the
-value for all of them at once.
+have this problem: its read spec carries no freshness options at all — freshness
+is the owner's — so every reader of it agrees by construction, and the
+publication is what changes the value for all of them at once. What a reader
+*can* say is "this is stale now", explicitly, with `invalidate`; that is an
+event, not a policy, and every reader of the key sees the same one.
 
 ## What not to reach for
 

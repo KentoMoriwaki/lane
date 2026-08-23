@@ -21,9 +21,14 @@ export class LaneExternalTimeoutError extends Error {
       // for why the condition wraps the literal directly.
       typeof process !== "undefined" && process.env.NODE_ENV !== "production"
         ? `No publication arrived for ${keyId} within ${timeout}ms. A read ` +
-            "with `loader: external` waits for its owner to publish the key — " +
-            "check that a `<LaneHydration>` boundary (or whatever publishes " +
-            "this lane) seeds exactly this key."
+            "with `loader: external` waits for its owner to publish the key. " +
+            "Either the key was never published — check that a " +
+            "`<LaneHydration>` boundary (or whatever publishes this lane) " +
+            "seeds exactly this key — or it was invalidated or collected and " +
+            "nobody published it again. For the second: give `createLane` / " +
+            "`<LaneProvider>` a `refresh` (`() => router.refresh()`, " +
+            "`() => revalidator.revalidate()`) so Lane can ask the owner to " +
+            "publish again, or have the owner publish again itself."
         : `No publication arrived for ${keyId} within ${timeout}ms.`,
     );
 
@@ -43,10 +48,12 @@ export class LaneExternalTimeoutError extends Error {
  * suspended render when the promise it suspended on settles, so the value must
  * arrive through this promise; the store delivers it via the abort it fires
  * when replacing the read ({@link publicationReason}). After
- * {@link EXTERNAL_TIMEOUT} it rejects with {@link LaneExternalTimeoutError}.
+ * {@link EXTERNAL_TIMEOUT} it rejects with {@link LaneExternalTimeoutError}
+ * and the store drops the wait, so the next read starts a fresh one.
  * A non-publication abort (cancel, eviction) leaves the promise unsettled —
- * rejecting a discarded read would be an unhandled rejection. It never falls
- * back to fetching: that would be the ownership violation it exists to remove.
+ * rejecting a discarded read would be an unhandled rejection. It never fetches:
+ * the loader is the owner's, and the ask for it is the lane's `refresh` (see
+ * `askOwner` in core.ts), fired by the read rather than from in here.
  */
 const externalLoader = (
   context: LaneLoaderContext<unknown>,

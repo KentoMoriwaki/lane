@@ -552,35 +552,49 @@ Writing data, and the local React state that lives around a read.
 
 ### Mutating a key you were given
 
-Before any of the advice below: **which half of the API applies depends on who
-owns the key.** A key a publication seeded — an RSC payload through
-[`LaneHydration`](./api-reference.md#lanehydration), a router loader's data — or
-one read with [`external`](./api-reference.md#external--a-read-the-owner-publishes)
-is not the client's to write.
+Everything below applies whoever fills the key. A key a publication seeded — an
+RSC payload through [`LaneHydration`](./api-reference.md#lanehydration), a router
+loader's data — takes the same `set` / `update` / `invalidate` a client-owned
+one does; what differs is *who answers an invalidation*.
 
-**Don't** seed a key and then converge it locally:
+**Don't** invalidate a published key for data you are holding:
 
 ```tsx
-// page.tsx publishes ["task", id] …
-await updateTask(id, patch);
-lane.set(["task", id], updated);   // ✗ throws: LaneOwnershipError
-lane.invalidate(["tasks"]);        // ✗ same
+await updateTaskAction(id, patch);  // a Server Action that revalidates
+lane.invalidate(["task", id]);      // ✗ the payload is already on its way
 ```
 
-That pairing has two sources of truth, and Lane refuses it at the point of the
-write. **Do** send the change through the owner, and cover the round trip with
-`useOptimistic`:
+**Don't** write a *guess* to one either — that is the same mistake as on a
+client-owned key, and [`set` is not optimistic UI](#set-is-not-optimistic-ui).
+
+**Do** pick by what you have in hand:
 
 ```tsx
-// A Server Action: mutate the source, revalidate, let the payload republish.
+// A Route Handler answered with the new task: write what you were given …
+const task = await updateTask(id, patch);
+lane.set(taskLanes.detail(id).key, task);
+lane.update(taskLanes.list(filters).key, (rows) =>
+  rows.map((row) => (row.id === task.id ? task : row)),
+);
+// … and mark what derives from it. Lane asks the owner when a reader needs it.
+lane.invalidate(insightLanes.summary().key);
+```
+
+```tsx
+// A Server Action that revalidates: nothing else to do. The action's response
+// carries the re-rendered route, and every seeded key updates from it.
 await updateTaskAction(id, patch);
-// …nothing else. Every seeded key updates from the one re-render.
 ```
 
-Everything below is about **client-owned** keys — the ones no publication seeds.
-See [the ownership rule](./architectures.md#the-ownership-rule) for choosing, and
-[mutating a server-owned key](./api-reference.md#mutating-a-server-owned-key) for
-the full pattern.
+See [the ownership rule](./architectures.md#the-ownership-rule) for choosing
+where a key lives, [writing to a published
+key](./api-reference.md#writing-to-a-published-key) for the full pattern, and
+[the two mutation channels](./integrations.md#the-two-mutation-channels) for why
+the two shapes above are not interchangeable.
+
+The one pairing that has no answer is still refused: a key that is both **seeded
+and read with a client loader** has two loaders, and whichever ran last decides
+what is stored. That warns in development.
 
 ### Patching state after a mutation
 
@@ -620,10 +634,11 @@ rollback.
 `useActionState`. `set` is for data you *already have* (server-confirmed); the
 rest of the app keeps rendering confirmed data until invalidation or `set`.
 
-This is the whole answer for a published key too — there, `set` is not merely the
-wrong tool but a
-[refused](./api-reference.md#laneownershiperror) one, and `useOptimistic` over the
-read value is how a server-owned screen still feels immediate.
+This is the whole answer for a published key too. `set` works there — but on
+what the mutation *returned*, never on a guess: a published key's readers may be
+several screens, and a guess written to the store has no rollback. `useOptimistic`
+over the read value stays local to the component that made the change, and is
+what covers a round trip that has not come back yet.
 
 ```tsx
 const { data } = use(promise);
@@ -705,10 +720,11 @@ This makes **remote updates win**: an in-flight refresh replaces the draft. To
 the form is not dirty). To reset *all* local state when switching records,
 re-key the component (`<EditUser key={id} />`).
 
-**Either way, converge on save:** for a client-owned key, write to the API and
-then `lane.set(key, confirmed)` or `lane.invalidate(key)`; for a published one,
-submit through the owner and let the republication arrive. **Never** write the
-draft *into* Lane to "share" it.
+**Either way, converge on save:** write to the API, then `lane.set(key,
+confirmed)` with what came back, or `lane.invalidate(key)` when you do not have
+it — on a published key that second one asks the owner. Submitting through a
+revalidating Server Action instead needs nothing from Lane at all. **Never**
+write the draft *into* Lane to "share" it.
 
 ## Reimplementing refetching
 

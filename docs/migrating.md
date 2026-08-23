@@ -209,10 +209,11 @@ See [key changes that flash](./common-mistakes.md#key-changes-that-flash-filters
 
 Drop `useMutation`. Call the API from an action, then re-point the source.
 
-*(This step is about **client-owned** keys — the ones your loaders fetch, which is
-what a React Query migration starts with. If a key is instead published into Lane
-by an RSC route or a router loader, its mutations go back through that owner and
-these calls throw; see [the ownership
+*(Written for **client-owned** keys — the ones your loaders fetch, which is what
+a React Query migration starts with. The same calls work on a key published into
+Lane by an RSC route or a router loader; the difference is who answers the
+`invalidate` — there, the owner, asked through
+[`refresh`](./api-reference.md#refresh--the-owner-ask). See [the ownership
 rule](./architectures.md#the-ownership-rule).)*
 
 ```tsx

@@ -52,15 +52,21 @@ lane.invalidate(["user", id]); // mounted readers re-read inside a transition
 | The key… | Put it | Reads with | Changes through |
 | --- | --- | --- | --- |
 | is not read reactively by a client component | not in the lane — RSC props | — | a new render |
-| is read by the client, truth lives outside | in the lane, **published** (`LaneHydration`) | `loader: external` | mutate source → revalidate → republish |
+| is read by the client, truth lives outside | in the lane, **published** (`LaneHydration`) | `loader: external` | `set` / `update` for what a mutation returned; `invalidate` for what derives from it (Lane asks the owner via `refresh`); or mutate source → revalidate → republish |
 | is the client's to control | in the lane, **client-owned** (never seeded) | a normal loader | `invalidate` / `set` / `update` / `remove` |
 
-**Seeding a key the client then mutates is refused at runtime.** A published entry
-throws `LaneOwnershipError` on `set` / `update` / `invalidate` / `remove` /
-`prefetch`, and `useLane` of an `external` read returns no `invalidate`. Optimism
-on a published key is `useOptimistic` over the read value — never a write.
+**An external read is an ordinary read whose loader the owner holds:** the value
+arrives by publication, and a re-read asks the owner to publish again. `useLane`
+returns the same `LaneResult` it does anywhere, and the whole client mutation
+surface works. Two things stay different: the read spec takes **no freshness
+options** (`staleTime` / `refetchOn*` — freshness is the owner's), and
+`lane.prefetch` throws `LaneOwnershipError` (there is no loader to run but the
+owner's route). Give the lane the ask: `<LaneProvider refresh={() =>
+router.refresh()}>`. Optimism is still `useOptimistic` over the read value —
+`set` is for a value you have, never a guess.
 → `references/architectures.md#the-ownership-rule`,
-`references/api-reference.md#external--a-read-the-owner-publishes`
+`references/api-reference.md#external--a-read-the-owner-publishes`,
+`references/api-reference.md#refresh--the-owner-ask`
 
 ## Core rules (skim before writing code)
 
@@ -97,14 +103,16 @@ task touches that rule.
   literal's `key` is an untyped `LaneKey`, so a mismatched pair compiles and seeds
   every reader of that key with the wrong shape; `laneSnapshot` infers the type
   from the read's key and checks `data` against it. Everything seeded becomes
-  server-owned — read it with `laneRead<T>({ key, loader: external })` (explicit
-  `T`; the spec accepts no `staleTime` / `whenStale` / `refetchOn*`,
-  because each one instructs a loader this read does not have). An external read
-  suspends until the publication arrives, and fails loudly with
-  `LaneExternalTimeoutError` after 10s if nothing publishes the key.
+  external — read it with `laneRead<T>({ key, loader: external })` (explicit `T`;
+  the spec accepts no `staleTime` / `refetchOn*`, because freshness is the
+  owner's). An external read suspends until the publication arrives; once the key
+  has held a value and lost it, a read asks the owner through the lane's
+  `refresh` and fails with `LaneExternalTimeoutError` after 10s if nothing
+  answers (the entry then keeps no cache, so a retry really retries).
   `LaneHydration` is not server-specific: a client router's loader data is a
   payload too. Published entries are exempt from `gcTime` — they live as long as
-  the publisher's payload or a committed reader keeps them reachable.
+  the publisher's payload or a committed reader keeps them reachable, while the
+  *shell* is never collected, so a later read knows to ask.
   → `references/api-reference.md#external--a-read-the-owner-publishes`
 - **One owner per key per subtree.** Dedupe makes re-reading a key in a child
   free in requests, but each reader is another subscription, pending flag, and
@@ -121,12 +129,16 @@ task touches that rule.
   on one commit. Lane never touches the action: converge inside it, and catch its
   failure there (a failed save is not `error`).
   → `references/api-reference.md#startinvalidationtransition--pending-from-the-start-of-an-action`
-- **Converge by invalidating the source**, not by patching a cache — for
-  **client-owned** keys. Use `set` / `update` only to publish data you *already
-  have* (e.g. a mutation response); use `remove` to drop entries on sign-out /
-  team switch. For a **published** key none of these apply (they throw): mutate
-  the source, revalidate, and the republication converges every seeded key at
-  once. → `references/api-reference.md`, `references/api-reference.md#mutating-a-server-owned-key`
+- **Converge by invalidating the source**, not by patching a cache. Use `set` /
+  `update` only to publish data you *already have* (e.g. a mutation response);
+  use `remove` to drop entries on sign-out / team switch. All of it works on a
+  **published** key too — there `invalidate` empties the entry and the next
+  reader to need it asks the owner. The alternative on a published key is to
+  mutate the source and revalidate: the response carries the re-rendered route,
+  so the republication converges every seeded key at once and nothing is left for
+  Lane to do. → `references/api-reference.md`,
+  `references/api-reference.md#writing-to-a-published-key`,
+  `references/integrations.md#the-two-mutation-channels`
 - **Wrap key changes and navigation in a transition** (or drive the key from
   `useDeferredValue`) so the current screen stays live. Initial loads with no
   prior value still suspend to a Suspense fallback. → `references/integrations.md`
@@ -200,4 +212,4 @@ exact signatures you can also read the package's bundled `dist/index.d.ts`.
 | Type-checked `set` / `update` from a key (react-query's `DataTag`) | `references/api-reference.md#lanekeyoft--a-key-that-knows-what-it-holds` |
 | Prefetch / warm the cache on intent (hover, focus) | `references/api-reference.md#prefetch` |
 | RSC / loader publication with `LaneHydration`, and reading it with `external` | `references/api-reference.md#hydration-rsc-seeding`, `#external--a-read-the-owner-publishes` |
-| Mutating a server-owned key (Server Action → revalidate → republish; `useOptimistic`) | `references/api-reference.md#mutating-a-server-owned-key` |
+| Writing to a published key (`set` / `update` / `invalidate`, and the `refresh` ask) | `references/api-reference.md#writing-to-a-published-key`, `references/api-reference.md#refresh--the-owner-ask` |

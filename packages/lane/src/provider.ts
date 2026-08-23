@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { createLane } from "./core";
+import { createLane, setLaneRefresh } from "./core";
 import { domEventSource } from "./event-source";
 import type { LaneEventSource } from "./event-source";
 import type { Lane, LaneLoaderMeta, LaneLoaderMetaProp } from "./types";
@@ -64,6 +64,15 @@ export type LaneProviderProps = {
    * dependency (the shipped sources are stable).
    */
   eventSource?: LaneEventSource;
+  /**
+   * How Lane asks the owner of an external key to publish it again —
+   * `() => router.refresh()` in Next's App Router,
+   * `() => revalidator.revalidate()` in React Router's data mode. Installed on
+   * the lane below, so this and `createLane({ refresh })` are the same setting;
+   * the provider wins for a lane it is given. See {@link LaneOptions.refresh}
+   * for when it is called.
+   */
+  refresh?: () => void;
   children: React.ReactNode;
 } & LaneLoaderMetaProp;
 
@@ -72,11 +81,27 @@ export function LaneProvider({
   focusThrottleInterval = DEFAULT_FOCUS_THROTTLE_INTERVAL,
   eventSource = domEventSource,
   loaderMeta,
+  refresh,
   children,
 }: LaneProviderProps) {
   // Both created once, never re-created: refs, not state.
   const defaultLaneRef = React.useRef<Lane>(undefined);
   const lane = providedLane ?? (defaultLaneRef.current ??= createLane());
+
+  // The ask is the lane's, not a reader's — one pending flag per lane, fired
+  // from the store's read path — so the prop is installed on the lane rather
+  // than carried in the context below. Written during render, and deliberately:
+  // a read runs during render too, and the first one of a revealed subtree must
+  // find the ask already there. Idempotent, so a discarded or double render
+  // writes the same thing. Only when given: an absent prop means "the lane
+  // keeps what `createLane` gave it", not "unset it", so the two ways of
+  // supplying a `refresh` compose. A lane handed to two providers that both
+  // supply one takes the last to render — give a shared lane its `refresh` at
+  // `createLane` instead.
+  if (refresh !== undefined) {
+    // oxlint-disable-next-line react/react-compiler
+    setLaneRefresh(lane, refresh);
+  }
 
   const registryRef = React.useRef<ReturnType<typeof createRegistry>>(undefined);
   const { revalidators, revalidation } = (registryRef.current ??= createRegistry());

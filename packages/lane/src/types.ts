@@ -100,12 +100,17 @@ export type LaneExternalLoader = LaneLoader<never, unknown> & {
 };
 
 /**
- * A read whose value arrives from outside: the owner publishes it (an RSC
- * payload through `<LaneHydration>`, a router's loader data) and the client
- * only reads. No freshness options and no `fallback` — there is no client
- * loader to instruct, and the only failure is {@link LaneExternalTimeoutError}
- * (nobody published the key). `T` cannot be inferred from `external`, so
- * annotate: `laneRead<Task>({ key, loader: external })`.
+ * A read whose loader its owner holds: the value arrives by publication (an RSC
+ * payload through `<LaneHydration>`, a router's loader data), and a re-read asks
+ * the owner to publish again through the lane's {@link LaneOptions.refresh}.
+ * Everything else is an ordinary read — `invalidate`, `set` and `update` all
+ * work on it.
+ *
+ * No freshness options (`staleTime`, `refetchOn*`) and no `fallback`: freshness
+ * is the owner's, there is no client loader to instruct, and the only failure
+ * of the read itself is {@link LaneExternalTimeoutError} (the ask went
+ * unanswered). `T` cannot be inferred from `external`, so annotate:
+ * `laneRead<Task>({ key, loader: external })`.
  */
 export type LaneExternalReadSpec<T> = {
   key: LaneKeyMaybeOf<T>;
@@ -255,7 +260,8 @@ export type Lane = {
    * (`staleTime`, `gcTime`, `refetchOn*`) do not apply. This is the one read
    * outside React, so `loaderMeta` is passed by hand — and only when
    * {@link LaneRegister} declares one. Throws {@link LaneOwnershipError} for
-   * an external read: there is nothing to warm.
+   * an external read: warming one would mean asking its owner to render the
+   * whole route for a key nothing is reading yet.
    */
   prefetch<T, C = T>(
     read: LaneReadSpec<T, C>,
@@ -266,9 +272,7 @@ export type Lane = {
    * the scoped form of {@link LaneResult.startInvalidationTransition}, for a
    * mutation helper to announce the keys it touches. Nothing is stored and no
    * read is scheduled: converging is still the action's job. Must be called
-   * inside a transition; outside one it is effectively a no-op. Throws
-   * {@link LaneOwnershipError} if the scope reaches a published key, checked
-   * over the whole match first.
+   * inside a transition; outside one it is effectively a no-op.
    */
   startInvalidationTransition(scope: LaneScope): void;
   invalidate(key: LaneKey, options?: LaneInvalidateOptions): void;
@@ -386,24 +390,6 @@ export type LaneGatedResult<T> = Omit<LaneResult<T>, "promise" | "invalidate"> &
 };
 
 /**
- * What `useLane` returns for an external read: {@link LaneResult} without
- * `invalidate` or `startInvalidationTransition`. An external entry has no
- * loader to re-run — invalidating one throws at runtime, and omitting it here
- * makes that a compile error. The owner decides when the key changes;
- * optimistic UI belongs in `useOptimistic` over the read value.
- */
-export type LaneExternalResult<T> = Omit<
-  LaneResult<T>,
-  "invalidate" | "startInvalidationTransition"
->;
-
-/** {@link LaneExternalResult} for a gated external read. */
-export type LaneGatedExternalResult<T> = Omit<
-  LaneGatedResult<T>,
-  "invalidate" | "startInvalidationTransition"
->;
-
-/**
  * A revalidation trigger, off by default. `true` refreshes the value once it
  * is stale — which `staleTime` defines, so the two go together. There is no
  * "refresh regardless of freshness" form: use `staleTime: 0`, or
@@ -474,4 +460,22 @@ export type LaneOptions = {
    * {@link LaneUseOptions.warmTime}. Default 1 minute.
    */
   warmTime?: number;
+  /**
+   * The owner-ask: how Lane says "render again" when a reader needs an external
+   * key whose value the owner has not supplied. In Next's App Router
+   * `() => router.refresh()`; in React Router's data mode
+   * `() => revalidator.revalidate()`.
+   *
+   * Called out of render, at most once per tick per lane however many keys and
+   * readers asked. Nothing is tracked beyond that tick — it returns `void`, so
+   * there is no completion to wait for, and the answer arrives as a publication
+   * like any other. Asked only for a key an owner has already filled once: on a
+   * first mount the payload is already on its way. Without one, a reader of a
+   * key nobody publishes again waits out
+   * {@link LaneExternalTimeoutError}'s timeout.
+   *
+   * Also settable per provider — `<LaneProvider refresh={…}>` installs it on
+   * the lane it holds or creates.
+   */
+  refresh?: () => void;
 };

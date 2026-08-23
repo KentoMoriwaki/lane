@@ -173,13 +173,14 @@ function RenameButton({ userId }: { userId: string }) {
 - **Authoritative publication.** `set` / `update` publish server-confirmed data
   to exact keys the client owns; `LaneHydration` publishes RSC- or router-loaded
   data and overwrites authoritatively on navigation.
-- **Ownership is decided per key, and enforced.** A key the client fetches is
-  client-owned. A key a publication seeds is not: read it with
-  `laneRead<T>({ key, loader: external })` — a loader that waits for the
-  publication instead of fetching — and the client mutation surface (`set` /
-  `update` / `invalidate` / `remove`) throws on it. Mutations go back through the
-  owner (Server Action → revalidate → republish); immediacy is `useOptimistic`
-  over the read value.
+- **Ownership is decided per key.** A key the client fetches is client-owned. A
+  key a publication seeds is read with `laneRead<T>({ key, loader: external })` —
+  a loader that waits for the publication instead of fetching. It is an ordinary
+  read otherwise: `set` / `update` write what a mutation returned, `invalidate`
+  says the value is stale, and Lane asks the owner to publish again through the
+  lane's `refresh` (`() => router.refresh()`) when a reader next needs it. What
+  the client never gets is a freshness *policy* on the key — `staleTime` and the
+  `refetchOn*` triggers are the loader's, and the loader is the owner's.
 - **Lifecycle built in.** Garbage collection (`gcTime`, default 5 min) and
   `refetchOnFocus` / `refetchOnMount` / `refetchOnReconnect` revalidation.
   Polling is userland — a self-scheduled `invalidate`.
@@ -208,16 +209,18 @@ function RenameButton({ userId }: { userId: string }) {
 | `laneSnapshot(read, data)` | One hydration entry, type-checked: `T` comes from the read's key, so a seed can't pair a key with the wrong data. |
 | `useInfiniteLane(read)` | A cursor-paginated list under one key. Returns `{ promise, loadMore, … }`; `use(promise)` yields `{ pages, params, hasNext }`. Colocate it with `infiniteLaneRead`. |
 | `useLaneInstance()` | The current Lane instance, for `invalidate` / `set` / `update` / `remove` from event handlers. |
-| `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime }`. |
+| `createLane(options?)` | Create a Lane instance manually (e.g. to share one across providers or seed on the server); accepts `{ gcTime, warmTime, refresh }`. |
 | `LaneHydration` | Publish a payload of snapshots as authoritative values — RSC props or a client router's loader data. |
 | `external` | The loader for a key its owner publishes: waits for the publication, never fetches. `laneRead<T>({ key, loader: external })`. |
+| `refresh` | The owner-ask, on `createLane` or `<LaneProvider refresh={() => router.refresh()}>`: how Lane says "publish this again" when a reader needs an external key whose value is gone. Deferred out of render, once per tick. |
 
 `Lane` instance methods: `invalidate` / `invalidateAll`, `set`, `update` /
 `updateAll`, `remove` / `removeAll` — all keyed; `set` / `update` are checked
 when given a typed key. `useLane` options: `staleTime`, `gcTime`,
 `refetchOnFocus`, `refetchOnMount`, `refetchOnReconnect`.
-`createLane` options: `gcTime`. Loaders receive `{ key, signal, current }`, where
-`current` is the entry's last fulfilled value.
+`createLane` options: `gcTime`, `warmTime`, `refresh`. Loaders receive
+`{ key, signal, current, meta }`, where `current` is the entry's last fulfilled
+value.
 
 See the **[API reference](https://github.com/KentoMoriwaki/lane/blob/main/docs/api-reference.md)**
 for full signatures and semantics.

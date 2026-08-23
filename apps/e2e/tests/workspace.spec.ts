@@ -99,11 +99,20 @@ function escapeRegExp(value: string) {
 }
 
 /**
- * A task list row: a `<Link>` to the task's own route, named by its title
- * alone. It used to be a button that toggled a `?task=` parameter.
+ * A task list row: the container, found by the link it carries. The link is
+ * laid behind the row rather than wrapped around it — controls are siblings of
+ * it, not children — so the row is what holds both, and
+ * `taskRow(...).getByRole("button", …)` still reaches a control.
  */
 function taskRow(page: Page, title: string) {
-  return page.getByRole("link", { name: title, exact: true });
+  return page
+    .locator("[data-task-id]")
+    .filter({ has: page.getByRole("link", { name: title, exact: true }) });
+}
+
+/** The way into the task from its row. */
+function taskLink(page: Page, title: string) {
+  return taskRow(page, title).getByRole("link", { name: title, exact: true });
 }
 
 /** Every row in the list, in the order the list decided to draw them. */
@@ -152,7 +161,7 @@ function taskUrl(taskId: string) {
 
 /** Open a task the way the demo intends it to be opened: click its row. */
 async function openTaskPanel(page: Page, title: string) {
-  await taskRow(page, title).click();
+  await taskLink(page, title).click();
   await expect(detailTitle(page)).toHaveValue(title);
 }
 
@@ -339,7 +348,7 @@ test("opening a task is a navigation to its own URL", async ({ page }) => {
   await expect(page).toHaveURL(/q=billing/);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
-  await taskRow(page, ACME_TASK).click();
+  await taskLink(page, ACME_TASK).click();
 
   // The selection is a path, not a parameter — and the view travels with it, so
   // the list behind the panel still reads the key it was published under.
@@ -879,7 +888,7 @@ test("opening a task paints the panel's shell before the read lands", async ({
   // The intercepted route makes the same claim the list does: its shell is
   // static, so the navigation produces UI without waiting for the server.
   await instant(page, async () => {
-    await taskRow(page, ACME_TASK).click();
+    await taskLink(page, ACME_TASK).click();
     await expect(page.getByTestId("task-panel-skeleton")).toBeVisible();
   });
 

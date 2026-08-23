@@ -2,7 +2,7 @@ import type { LaneKey, LaneKeyOf, LanePlainKey, LaneSnapshot } from "./types";
 // Type-only, so nothing of the hook's module (or its `"use client"`) comes
 // with it: `infiniteLaneSnapshot` lives here to stay callable from a Server
 // Component, which is the whole point of it.
-import type { InfiniteLaneValue } from "./use-infinite-lane";
+import type { InfiniteLaneValue } from "./infinite-read";
 
 /**
  * Pair an entry with the value seeded under it, checked — one entry of the

@@ -573,6 +573,14 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ### Fixed
 
+- **`infiniteLaneRead` is callable from a Server Component.** It lived in the
+  hook's module, which carries `"use client"`, so a route building the read it
+  publishes page 1 under (`infiniteLaneSnapshot(read, page, cursor)`) failed
+  with "Attempted to call infiniteLaneRead() from the server". It is identity at
+  runtime, like `laneRead`, and now lives with the other isomorphic builders
+  (`infinite-read.ts`, no directive); the spec types moved with it and are
+  re-exported unchanged. A test pins which modules carry the directive.
+
 - **An ask that was lost is made again while someone is still waiting.** A
   `router.refresh()` is aborted by a navigation that starts while it is in
   flight — which is what a mutation that `invalidate`s a published key and then

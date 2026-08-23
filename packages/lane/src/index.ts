@@ -25,14 +25,18 @@ export { LaneReadError } from "./read-error";
 export type { LaneProviderProps } from "./provider";
 export { laneRead } from "./read-spec";
 export { infiniteLaneSnapshot, laneSnapshot } from "./snapshot";
-export { infiniteLaneRead, useInfiniteLane } from "./use-infinite-lane";
+// `infiniteLaneRead` is isomorphic like `laneRead` — a Server Component builds
+// the read it publishes page 1 under — so it comes from the module with no
+// `"use client"`, not from the hook's.
+export { infiniteLaneRead } from "./infinite-read";
+export { useInfiniteLane } from "./use-infinite-lane";
 export type {
   InfiniteLaneExternalReadSpec,
   InfiniteLaneOptions,
   InfiniteLaneReadSpec,
-  InfiniteLaneResult,
   InfiniteLaneValue,
-} from "./use-infinite-lane";
+} from "./infinite-read";
+export type { InfiniteLaneResult } from "./use-infinite-lane";
 export { useLane, useLanePromise } from "./use-lane";
 export { useLanesAll } from "./use-lanes-all";
 export type {

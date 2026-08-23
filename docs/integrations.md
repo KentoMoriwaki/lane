@@ -215,6 +215,15 @@ Handler behind `"use cache"`** — a navigation would render the pre-mutation
 segment and republish over your write. Data that must be both cached and mutated
 goes through a Server Action with `updateTag`.
 
+One more, about order: a mutation that `invalidate`s a key and then **navigates
+in the same breath** — a delete that moves the view back to the list — has its
+`router.refresh()` aborted by that navigation ("Navigations take priority over
+any pending actions"). The readers waiting on the key are suspended and never
+read again on their own, so Lane keeps asking every `REASK_INTERVAL` (2 s) for as
+long as a subscribed reader is still waiting, and the screen converges on the
+next answer. It costs one render the aborted ask already paid for. Navigating
+first and marking after avoids it where the order is yours to choose.
+
 ## React Router v7 / v8
 
 *Demonstrated by the demo's `/lane-router` route (Data mode, hash-routed island).*

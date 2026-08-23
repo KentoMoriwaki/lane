@@ -40,7 +40,7 @@ export default function LaneInfiniteLabPage() {
 }
 
 const SUMMARY =
-  "use-lane · useInfiniteLane. One key holds the whole accumulated list; the page depth is read back out of the cached value, load-more is a lane.update, and a re-read walks the cursor chain from the start.";
+  "use-lane · useInfiniteLane. One key holds the whole accumulated list; load-more is a lane.update that appends to it, and a re-read loads the first page — the depth belongs to whoever appended it.";
 
 function LaneInfiniteLab() {
   const { settings, update } = useLabSettings();

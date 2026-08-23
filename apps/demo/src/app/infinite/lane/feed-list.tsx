@@ -39,9 +39,10 @@ const FEED_STALE_TIME = 5_000;
  * What is *not* here any more is the bookkeeping. An earlier version of this
  * file kept the page depth in a ref, incremented it after each successful
  * append, and reset it when the key changed — and still desynced whenever the
- * component remounted over a cache that outlived it. `useInfiniteLane` reads the
- * depth out of the cached value instead, so the component holds no state about
- * the list at all.
+ * component remounted over a cache that outlived it. The pages live in the
+ * value instead, so the component holds no state about the list at all: a
+ * remount renders whatever depth the cache still has, and an invalidate takes
+ * the list back to its first page.
  */
 export function FeedList({
   feed,

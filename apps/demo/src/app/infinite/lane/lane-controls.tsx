@@ -42,7 +42,7 @@ export function LaneCacheControls({
   return (
     <ControlGroup
       title="Lane convergence"
-      note="One key holds the whole accumulated list; the depth lives in the reader. Operated through the Lane instance."
+      note="One key holds the whole accumulated list; the depth is in the value, and an invalidate reads the first page again. Operated through the Lane instance."
     >
       <ControlRow
         label="refetchOnMount"

@@ -34,7 +34,7 @@ export const LAB_VARIANTS: LabVariantInfo[] = [
     name: "use-lane",
     badge: "useInfiniteLane",
     tagline:
-      "One key holds the accumulated list and the depth is read back out of the cached value: load-more is a lane.update, a re-read walks the cursor chain from the start, and the list is held on screen by transitions rather than a status object.",
+      "One key holds the accumulated list: load-more is a lane.update, a re-read is the first page (the depth is the browser's to buy back), and the list is held on screen by transitions rather than a status object.",
     available: true,
   },
 ];

@@ -91,6 +91,9 @@ export const taskSchema = z.object({
   updatedAt: z.string(),
 });
 
+/** How many tasks are in each project, keyed by project id. */
+export const projectTaskCountsSchema = z.record(z.string(), z.number());
+
 export const insightsSchema = z.object({
   total: z.number(),
   open: z.number(),
@@ -102,6 +105,35 @@ export const insightsSchema = z.object({
   assignedToMe: z.number(),
   dueSoon: z.number(),
   byStatus: z.record(taskStatusSchema, z.number()),
+});
+
+/* --------------------------- Mutation results --------------------------- */
+
+/**
+ * **What a task write answers with: the row, and the two numbers derived from
+ * it.**
+ *
+ * A caller that edits a task and then reads `/insights` and `/projects/counts`
+ * back is asking the same source three times about one change. The write knows
+ * what it changed, so it recomputes both derivations after the row lands and
+ * ships them in the same response — the client converges everything the edit
+ * touched without asking anything again.
+ *
+ * `insights` is exactly what `GET /insights` returns and `projectCounts`
+ * exactly what `GET /projects/counts` returns, and both endpoints stay: a
+ * route rendering the workspace still reads them, and this envelope is for the
+ * caller that has just written.
+ */
+export const taskMutationResultSchema = z.object({
+  task: taskSchema,
+  insights: insightsSchema,
+  projectCounts: projectTaskCountsSchema,
+});
+
+/** The same, for the write that leaves no row behind. */
+export const taskRemovalResultSchema = z.object({
+  insights: insightsSchema,
+  projectCounts: projectTaskCountsSchema,
 });
 
 /* ------------------------------- Inputs -------------------------------- */
@@ -214,6 +246,9 @@ export type TaskPage = {
   nextCursor: string | null;
 };
 export type Insights = z.infer<typeof insightsSchema>;
+export type ProjectTaskCounts = z.infer<typeof projectTaskCountsSchema>;
+export type TaskMutationResult = z.infer<typeof taskMutationResultSchema>;
+export type TaskRemovalResult = z.infer<typeof taskRemovalResultSchema>;
 export type TaskScope = z.infer<typeof taskScopeSchema>;
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;
 export type UpdateTaskInput = z.infer<typeof updateTaskInputSchema>;

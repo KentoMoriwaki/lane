@@ -40,6 +40,13 @@ import {
  * derived read" implicit — a mutation changes the source, the next render reads
  * the source — which is a table nobody has to maintain.
  *
+ * **When these render is a separate question from what they hold.** A task edit
+ * on the list screen does not ask for a render at all: the write's response
+ * carries the row and both derivations, and the lane is `set` from it
+ * (`api/hooks.ts`). These reads answer the renders that do happen — a load, a
+ * navigation, a filter change, a create — and they answer them with the source,
+ * which is what keeps a publication authoritative.
+ *
  * Projects, labels and members are the other kind: reference data, changed only
  * by the Server Actions in `api/actions.ts`, which name the tag. They are the
  * three reads a background republication does not have to repeat.
@@ -52,8 +59,9 @@ import {
  * says what to do instead, so the count is split off into `readProjectTaskCounts`
  * and read dynamically, and `readProjects` is the roster alone: id, name, key,
  * colour — reference data, cached for hours, with no field in it that a task
- * can move. What the browser changes is marked (`lane.invalidate` in
- * `api/hooks.ts`) and read again on the next publication.
+ * can move. What the browser changes it converges from the write's own response
+ * (`lane.set` in `api/hooks.ts`); this read is how the count arrives on a render
+ * that was going to happen anyway.
  *
  * `cacheComponents` stays on either way. It is what extracts each route's
  * reusable shell; it does not require these reads to be cached, only that they

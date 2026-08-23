@@ -8,7 +8,9 @@ import type {
   Insights,
   Project,
   Task,
+  TaskPage,
   TaskPriority,
+  TaskSortKey,
   TaskStatus,
   TeamLabel,
   TeamMember,
@@ -1111,22 +1113,121 @@ export async function listTasks(
     );
   }
 
-  return tasks.sort((a, b) => {
-    const closedDiff = Number(isClosed(a.status)) - Number(isClosed(b.status));
-    if (closedDiff !== 0) {
-      return closedDiff;
-    }
-    const priorityDiff =
-      priorityOrder[a.priority] - priorityOrder[b.priority];
-    if (priorityDiff !== 0) {
-      return priorityDiff;
-    }
-    const statusDiff = statusOrder[a.status] - statusOrder[b.status];
-    if (statusDiff !== 0) {
-      return statusDiff;
-    }
+  return tasks.sort(compareTasks);
+}
+
+/* --------------------------- The list's order --------------------------- */
+
+/**
+ * The sort every listing of tasks uses, as a value: closed last, then priority,
+ * then status, then age, and finally the id — see {@link TaskSortKey}.
+ */
+function sortKeyOf(task: Task): TaskSortKey {
+  return {
+    createdAt: task.createdAt,
+    id: task.id,
+    priority: task.priority,
+    status: task.status,
+  };
+}
+
+function compareSortKeys(a: TaskSortKey, b: TaskSortKey): number {
+  const closedDiff = Number(isClosed(a.status)) - Number(isClosed(b.status));
+  if (closedDiff !== 0) {
+    return closedDiff;
+  }
+  const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+  if (priorityDiff !== 0) {
+    return priorityDiff;
+  }
+  const statusDiff = statusOrder[a.status] - statusOrder[b.status];
+  if (statusDiff !== 0) {
+    return statusDiff;
+  }
+  if (a.createdAt !== b.createdAt) {
     return a.createdAt < b.createdAt ? -1 : 1;
-  });
+  }
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+function compareTasks(a: Task, b: Task): number {
+  return compareSortKeys(sortKeyOf(a), sortKeyOf(b));
+}
+
+/* ---------------------------- Cursor paging ----------------------------- */
+
+/**
+ * The cursor: the sort key of the last row served, base64url'd.
+ *
+ * It is opaque to the client and never parsed there. What matters is that it
+ * names a *position in the ordering* rather than an offset — the next page is
+ * "every row that sorts strictly after this key", so a task created, edited, or
+ * deleted somewhere else in the list cannot slide a row across the boundary or
+ * make one appear twice. A row that itself moves (a status change) moves out of
+ * the window it was in; that is the truth of the new ordering, not a paging bug.
+ */
+type TaskCursorPayload = TaskSortKey & { v: 1 };
+
+function encodeTaskCursor(task: Task): string {
+  const payload: TaskCursorPayload = { v: 1, ...sortKeyOf(task) };
+
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+export function decodeTaskCursor(cursor: string): TaskSortKey | null {
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as Partial<TaskCursorPayload>;
+
+    if (
+      parsed.v !== 1 ||
+      typeof parsed.id !== "string" ||
+      typeof parsed.createdAt !== "string" ||
+      typeof parsed.status !== "string" ||
+      typeof parsed.priority !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      createdAt: parsed.createdAt,
+      id: parsed.id,
+      priority: parsed.priority,
+      status: parsed.status,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One page of {@link listTasks}, continuing strictly after `cursor`.
+ *
+ * The filtering and the sort are the same code the unpaginated list runs — a
+ * page is a window onto that list, not a second query with its own opinion —
+ * so a client that walks every page sees exactly what a client that asked for
+ * all of them would.
+ */
+export async function listTaskPage(
+  teamId: string,
+  currentUserId: string,
+  filters: TaskFilters,
+  page: { limit: number; cursor: TaskSortKey | null },
+): Promise<TaskPage> {
+  const tasks = await listTasks(teamId, currentUserId, filters);
+  const after = page.cursor;
+  const remaining = after
+    ? tasks.filter((task) => compareSortKeys(sortKeyOf(task), after) > 0)
+    : tasks;
+  const items = remaining.slice(0, Math.max(page.limit, 1));
+  const last = items[items.length - 1];
+
+  return {
+    items,
+    nextCursor:
+      last && remaining.length > items.length ? encodeTaskCursor(last) : null,
+  };
 }
 
 export async function getTask(

@@ -119,6 +119,15 @@ export const listTasksQuerySchema = z.object({
   due: z.enum(["overdue", "today", "week"]).optional(),
   /** Comma-separated task IDs — used to resolve dependency edges. */
   ids: z.string().optional(),
+  /**
+   * How many rows to serve. Absent means the endpoint's own page size; a
+   * caller that wants the whole list asks for the ceiling. Kept as a string so
+   * the RPC client's query type stays the plain `Record<string, string>` every
+   * caller already builds — the route parses it.
+   */
+  limit: z.string().optional(),
+  /** Where to continue from: an opaque cursor from a previous page. */
+  cursor: z.string().optional(),
 });
 
 export const createTaskInputSchema = z.object({
@@ -181,6 +190,29 @@ export type TeamMember = z.infer<typeof memberSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type TeamLabel = z.infer<typeof labelSchema>;
 export type Task = z.infer<typeof taskSchema>;
+
+/**
+ * The sort key a task occupies in every listing of tasks: closed last, then
+ * priority, then status, then age, and finally the id.
+ *
+ * The id is not decoration. Two tasks created in the same millisecond used to
+ * compare "after" in both directions, which is a comparator without a total
+ * order — fine for painting a screen, useless as the thing a cursor names. With
+ * it, "the row after this one" has exactly one answer, and that is what a page
+ * cursor continues from.
+ */
+export type TaskSortKey = {
+  status: TaskStatus;
+  priority: TaskPriority;
+  createdAt: string;
+  id: string;
+};
+
+/** One page of the task list, and where the next one starts. */
+export type TaskPage = {
+  items: Task[];
+  nextCursor: string | null;
+};
 export type Insights = z.infer<typeof insightsSchema>;
 export type TaskScope = z.infer<typeof taskScopeSchema>;
 export type CreateTaskInput = z.infer<typeof createTaskInputSchema>;

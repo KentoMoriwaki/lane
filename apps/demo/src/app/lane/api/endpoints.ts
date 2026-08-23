@@ -6,6 +6,7 @@ import type {
   Insights,
   Project,
   Task,
+  TaskPage,
   TaskPriority,
   TaskScope,
   TaskStatus,
@@ -14,6 +15,7 @@ import type {
   TeamSummary,
   UpdateTaskInput,
 } from "@/server/api";
+import { ALL_TASKS_LIMIT } from "@/lib/team-api";
 import { assertOk, client, requestOptions, type WorkspaceCtx } from "./client";
 
 export type TaskFilters = {
@@ -64,16 +66,50 @@ export async function fetchTeams(ctx: WorkspaceCtx): Promise<TeamSummary[]> {
 
 /* -------------------------------- Tasks -------------------------------- */
 
+/**
+ * The whole list, in one request.
+ *
+ * `GET /api/tasks` always answers with a page — the rows, plus the cursor the
+ * next ones start at — so a caller that wants every row says so with the
+ * endpoint's ceiling and unwraps the envelope here. `/lane` is the one route
+ * that reads the list a page at a time.
+ */
 export async function fetchTasks(
   ctx: WorkspaceCtx,
   filters: TaskFilters,
 ): Promise<Task[]> {
   const response = await client.api.tasks.$get(
-    { query: toTaskQuery(filters) },
+    { query: { ...toTaskQuery(filters), limit: ALL_TASKS_LIMIT } },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task[];
+  return ((await response.json()) as TaskPage).items;
+}
+
+/**
+ * One page of the list — the form `/lane` reads it in.
+ *
+ * The route reads the first page (`cursor: null`) and publishes it; the browser
+ * reads every page after that with the cursor the page before it handed back.
+ * Same endpoint, same filters, same wrapper for both callers — the only thing
+ * that differs is which side of the wire the call is made from, which is what
+ * `requestOptions` stamps.
+ */
+export async function fetchTaskPage(
+  ctx: WorkspaceCtx,
+  filters: TaskFilters,
+  page: { cursor: string | null; limit?: number },
+): Promise<TaskPage> {
+  const query: Record<string, string> = { ...toTaskQuery(filters) };
+  if (page.cursor) query.cursor = page.cursor;
+  if (page.limit !== undefined) query.limit = String(page.limit);
+
+  const response = await client.api.tasks.$get(
+    { query },
+    requestOptions(ctx),
+  );
+  await assertOk(response);
+  return (await response.json()) as TaskPage;
 }
 
 export async function fetchTask(
@@ -97,11 +133,11 @@ export async function fetchTasksByIds(
   }
 
   const response = await client.api.tasks.$get(
-    { query: { ids: ids.join(",") } },
+    { query: { ids: ids.join(","), limit: ALL_TASKS_LIMIT } },
     requestOptions(ctx),
   );
   await assertOk(response);
-  return (await response.json()) as Task[];
+  return ((await response.json()) as TaskPage).items;
 }
 
 export async function createTask(

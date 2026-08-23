@@ -71,7 +71,10 @@ export function Sidebar() {
   const { signOut } = useWorkspace();
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
+    <aside
+      data-testid="sidebar"
+      className="hidden w-60 shrink-0 flex-col border-r border-border bg-sidebar md:flex"
+    >
       <div className="flex h-14 items-center gap-2 px-4">
         <WorkspaceBrand />
       </div>

@@ -199,7 +199,29 @@ async function loadUntilVisible(page: Page, title: string) {
 /** The sidebar's count for one project, read out of its nav link. */
 async function projectCount(page: Page, name: string): Promise<number> {
   const text = await page
+    .getByTestId("sidebar")
     .getByRole("link", { name: new RegExp(`^${escapeRegExp(name)}`) })
+    .innerText();
+  return Number(text.match(/\d+/)?.[0]);
+}
+
+/**
+ * The same number in the two places the response has to reach: the strip above
+ * the list and the nav down the side. Both read `insights`, which a task write
+ * now answers with — so both are watched, and neither may cost a read.
+ */
+async function insightCardCount(page: Page, label: string): Promise<number> {
+  const text = await page
+    .getByTestId("insight-strip")
+    .getByRole("link", { name: new RegExp(escapeRegExp(label)) })
+    .innerText();
+  return Number(text.match(/\d+/)?.[0]);
+}
+
+async function sidebarCount(page: Page, label: string): Promise<number> {
+  const text = await page
+    .getByTestId("sidebar")
+    .getByRole("link", { name: new RegExp(`^${escapeRegExp(label)}`) })
     .innerText();
   return Number(text.match(/\d+/)?.[0]);
 }
@@ -234,6 +256,16 @@ async function chooseAnotherStatus(
   await page.getByRole("button", { name: next, exact: true }).click();
 
   return next;
+}
+
+/** Change the status to a named one, for a test that cares which. */
+async function chooseStatus(
+  page: Page,
+  control: ReturnType<Page["getByRole"]>,
+  status: string,
+) {
+  await control.click();
+  await page.getByRole("button", { name: status, exact: true }).click();
 }
 
 test("a cold server-owned publication skips browser transport latency", async ({
@@ -396,7 +428,7 @@ test("a rerender re-reads what the browser can change and nothing else", async (
   request,
 }) => {
   // A filter is a navigation, which renders the whole route — the same work a
-  // mutation's rerender does. What it may not do is read the three sources
+  // create's rerender does. What it may not do is read the three sources
   // behind `"use cache"`: nothing that changes them has happened.
   await gotoWorkspace(page);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
@@ -452,12 +484,11 @@ test("an inline status change lands in the row where it already was", async ({
       (entry) => entry.origin === "browser" && entry.method === "PATCH",
     ),
   ).toHaveLength(1);
-  // And exactly one rerender behind it: the two marked keys — the insights and
-  // the project counts — were marked in the same tick, so Lane asked once.
-  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(1);
-  expect(serverReadsOf(records, "/api/insights")).toHaveLength(1);
-  expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(1);
-  // Whatever the rerender that follows reads, it is never one of these.
+  // And nothing behind it. The response carried the row and both derivations,
+  // so the lane was `set` from it and no rerender was asked for at all.
+  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(0);
+  expect(serverReadsOf(records, "/api/insights")).toHaveLength(0);
+  expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(0);
   for (const path of CACHED_READ_PATHS) {
     expect(
       serverReadsOf(records, path),
@@ -495,33 +526,50 @@ test("an edit after an in-app navigation reaches the list", async ({ page }) => 
   await expect(taskRow(page, original)).toBeHidden();
 });
 
-test("a task edit asks the owner for the counters exactly once", async ({
-  page,
-  request,
-}) => {
+/**
+ * **The claim this route is now making**: an inline edit asks the owner for
+ * nothing.
+ *
+ * The two counters are derived from the tasks table, so a client cannot compute
+ * them — but the handler that just wrote the row can, and does, in the same
+ * response. Every key the edit moves is `set` from that answer, `invalidate`
+ * is not used, and the owner is never asked to render. What proves it is not
+ * the count of renders but their absence: zero server-origin reads of any of
+ * the three dynamic sources, while both places that draw the number move.
+ */
+test("a task edit asks the owner for nothing", async ({ page, request }) => {
   await gotoWorkspace(page);
   const title = `E2E counter task ${Date.now()}`;
   await createTask(page, title);
 
-  const inProgressCard = page.getByRole("link", { name: /In progress/ });
-  const before = Number((await inProgressCard.innerText()).match(/\d+/)?.[0]);
+  // "Completed" is the one number a status change moves that the strip *and*
+  // the sidebar both draw, which is what makes it the number worth watching.
+  const beforeCard = await insightCardCount(page, "Completed");
+  const beforeNav = await sidebarCount(page, "Completed");
 
   await resetRequestDiagnostics(request);
-  await chooseAnotherStatus(
+  await chooseStatus(
     page,
     detailPanel(page).getByRole("button", { name: /^Status:/ }),
+    "Done",
   );
   await expect(page.getByText("Saved")).toBeVisible();
 
   await expect(async () => {
-    const text = await inProgressCard.innerText();
-    expect(Number(text.match(/\d+/)?.[0])).toBe(before + 1);
+    expect(await insightCardCount(page, "Completed")).toBe(beforeCard + 1);
+    expect(await sidebarCount(page, "Completed")).toBe(beforeNav + 1);
   }).toPass();
 
-  // One ask, one rerender: the insights are read once and the three cached
-  // sources are not read at all.
+  // The numbers moved and the server was not asked a single question.
   const records = await readRequestDiagnostics(request);
-  expect(serverReadsOf(records, "/api/insights")).toHaveLength(1);
+  expect(
+    records.filter(
+      (entry) => entry.origin === "browser" && entry.method === "PATCH",
+    ),
+  ).toHaveLength(1);
+  expect(serverReadsOf(records, "/api/insights")).toHaveLength(0);
+  expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(0);
+  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(0);
   for (const path of CACHED_READ_PATHS) {
     expect(serverReadsOf(records, path)).toHaveLength(0);
   }
@@ -558,6 +606,13 @@ test("deleting a task drops its row and clears the detail", async ({
       (entry) => entry.origin === "browser" && entry.method === "DELETE",
     ),
   ).toHaveLength(1);
+  // And no rerender at all. The delete answered with the two counters, so
+  // nothing was marked stale, nothing asked the owner to publish, and the
+  // navigation back to the list reuses the segment the router already has.
+  expect(serverReadsOf(records, "/api/tasks"), "tasks after a delete")
+    .toHaveLength(0);
+  expect(serverReadsOf(records, "/api/insights"), "insights after a delete")
+    .toHaveLength(0);
   for (const path of CACHED_READ_PATHS) {
     expect(serverReadsOf(records, path), `${path} after a delete`).toHaveLength(
       0,
@@ -763,8 +818,9 @@ test("an edit on the task page is read again only when the list is", async ({
  * The count that used to ride inside the cached roster.
  *
  * A project's task count is changed by the browser channel — a move, a delete —
- * which cannot expire a tag. It is its own dynamic read now, so the number
- * follows the edit while the roster it sits beside stays cached.
+ * which cannot expire a tag. It is its own dynamic read now, and the write that
+ * moves it answers with it, so the number follows the edit without the roster
+ * beside it being touched and without the count itself being read back.
  */
 test("a project's count follows a task the browser moved", async ({
   page,
@@ -789,10 +845,11 @@ test("a project's count follows a task the browser moved", async ({
     expect(await projectCount(page, BILLING_PROJECT)).toBe(before + 1);
   }).toPass();
 
-  // The number moved through the dynamic read, and the roster beside it was not
-  // read at all: no tag was expired, because none needed to be.
+  // The number came back with the write that moved it, so it cost no read of
+  // its own — and the roster beside it was not read either: no tag was
+  // expired, because none needed to be.
   const records = await readRequestDiagnostics(request);
-  expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(1);
+  expect(serverReadsOf(records, PROJECT_COUNTS_PATH)).toHaveLength(0);
   expect(serverReadsOf(records, "/api/projects")).toHaveLength(0);
 
   // And back down when the task goes away.
@@ -804,15 +861,12 @@ test("a project's count follows a task the browser moved", async ({
     expect(await projectCount(page, BILLING_PROJECT)).toBe(before);
   }).toPass();
 
-  // A delete from the panel also moves the view back to the list, and that
-  // navigation can abort the `router.refresh()` the marks asked for while it
-  // is in flight. The server may already have rendered for it; the lane asks
-  // again for the readers still waiting (`REASK_INTERVAL`), and that one lands.
-  // So: one or two renders, and the roster is read by neither.
+  // A delete from the panel also moves the view back to the list, and there is
+  // no refresh in flight for that navigation to abort: the delete answered with
+  // the counters too. The old allowance for a re-asked render goes with the ask
+  // that needed it — zero reads, on the nose, for the count and the roster.
   const afterDelete = await readRequestDiagnostics(request);
-  const countReads = serverReadsOf(afterDelete, PROJECT_COUNTS_PATH).length;
-  expect(countReads).toBeGreaterThanOrEqual(1);
-  expect(countReads).toBeLessThanOrEqual(2);
+  expect(serverReadsOf(afterDelete, PROJECT_COUNTS_PATH)).toHaveLength(0);
   expect(serverReadsOf(afterDelete, "/api/projects")).toHaveLength(0);
 });
 
@@ -887,7 +941,8 @@ test("an inline edit keeps the pages the browser loaded", async ({
   await expect(taskRow(page, ACME_PAGE_TWO_TASK)).toBeVisible();
 
   // Opened from a row, which is a navigation and therefore a republication of
-  // page 1 — the first of two this test puts the depth through.
+  // page 1 — the one this test puts the depth through, since the edit that
+  // follows produces none.
   await openTaskPanel(page, ACME_PAGE_TWO_TASK);
   const before = await rowOrder(page);
   expect(before.length).toBeGreaterThan(PAGE_SIZE);
@@ -914,12 +969,14 @@ test("an inline edit keeps the pages the browser loaded", async ({
       (entry) => entry.origin === "browser" && entry.method === "PATCH",
     ),
   ).toHaveLength(1);
-  // One rerender, for the two counters the edit marked. The page 1 it
-  // republishes is the page 1 already standing there, so the pages behind it
-  // stay — and the browser does not re-fetch a single one of them.
-  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(1);
-  expect(serverReadsOf(records, "/api/insights")).toHaveLength(1);
+  // The depth survives for the simplest reason available: nothing republishes.
+  // The edit converged from its own response, so no page 1 lands on top of the
+  // pages the browser paid for — and neither half of the list is read again.
+  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(0);
+  expect(serverReadsOf(records, "/api/insights")).toHaveLength(0);
   expect(browserReadsOf(records, "/api/tasks")).toHaveLength(0);
+  // Both pages are still standing.
+  expect((await rowOrder(page)).length).toBe(before.length);
 });
 
 test("an edit on the task page resets the list to one page when it is looked at again", async ({

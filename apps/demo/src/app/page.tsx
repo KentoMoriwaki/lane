@@ -33,7 +33,7 @@ const PRIMARY_GROUPS: VariantGroup[] = [
         name: "use-lane",
         badge: "Next → external reads",
         tagline:
-          "The same reads and latency as the baseline, distributed through keyed external reads. A task edit lands from the API response in place; only what derives from it asks the route for another publication.",
+          "The same reads and latency as the baseline, distributed through keyed external reads. A task edit lands from the API response in place — the row, and the counters derived from it — and asks the route for nothing.",
       },
       {
         href: "/react-query-rsc",

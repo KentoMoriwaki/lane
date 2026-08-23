@@ -238,8 +238,9 @@ freshness policy they follow:
   route streams rather than waiting on its slowest read — and then converges
   both ways: creating something calls an action and reads again, while editing a
   task calls the API from the browser, `set`s what came back, patches the row in
-  place, and invalidates only the counters, which costs one background rerender
-  of the three reads that are not cached. Optimistic UI covers the round trip.
+  place, and sets the counters from the response too — the write recomputes them
+  server-side, so an inline edit costs one round trip and no rerender at all.
+  Optimistic UI covers the round trip.
 - **Browser-owned:** `/lane-spa` and `/react-query` ship no workspace data in
   SSR. Browser loaders fetch every key, mutation results patch the entries they
   can determine, and targeted invalidation converges derived data.

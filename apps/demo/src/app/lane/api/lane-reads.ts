@@ -121,9 +121,8 @@ export const workspaceReads = {
     laneRead<Task>({ key: ["task", taskId], loader: external }),
   projects: () =>
     laneRead<ProjectRef[]>({ key: ["projects"], loader: external }),
-  // Its own key because it has its own freshness: the roster of projects is
-  // cached for hours, the number of tasks in each is read through on every
-  // render. One key, one lifetime — see `api/route-reads.ts`.
+  // Its own key so a task mutation can publish the confirmed derived counts
+  // without replacing the project roster beside them.
   projectCounts: () =>
     laneRead<ProjectTaskCounts>({ key: ["project-counts"], loader: external }),
   labels: () => laneRead<TeamLabel[]>({ key: ["labels"], loader: external }),
@@ -149,8 +148,8 @@ export const workspaceSnapshots = {
    * three pickers read members, projects, the counts and labels. The detail
    * used to publish those as a region of this route; it is its own route now,
    * so the list route has to carry them itself or the pickers wait for a
-   * publication that never comes. All four are `"use cache"` reads or the one
-   * dynamic count, so saying so here costs the frame nothing.
+   * publication that never comes. They are all dynamic route reads; publishing
+   * them here is about reachability, not persistent data caching.
    */
   sidebar(seeds: {
     currentUser: CurrentUser;

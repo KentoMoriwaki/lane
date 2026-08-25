@@ -63,8 +63,8 @@ export function Sidebar() {
   const user = React.use(useCurrentUser().promise).data;
   const insights = React.use(useInsights().promise).data;
   // Two reads for one row of the nav: the project's name and colour come from
-  // the cached roster, the number beside it from a read that goes through to
-  // the source every time. A task edit marks only the second.
+  // the roster, while the task-derived number has its own key so a confirmed
+  // mutation response can update it independently.
   const projects = React.use(useProjects().promise).data;
   const projectCounts = React.use(useProjectCounts().promise).data;
   const labels = React.use(useLabels().promise).data;

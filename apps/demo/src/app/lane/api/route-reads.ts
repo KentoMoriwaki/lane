@@ -1,4 +1,3 @@
-import { cacheLife, cacheTag } from "next/cache";
 import type { Project } from "@/server/api";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
 import { ApiError } from "./client";
@@ -18,27 +17,13 @@ import {
 } from "./endpoints";
 
 /**
- * Everything the server-owned route reads, and the line between what is cached
- * and what is not.
+ * Everything the server-owned route reads, deliberately uncached.
  *
- * That line is not "expensive versus cheap". It is **which channel mutates the
- * data** (`docs/integrations.md` § The two mutation channels):
- *
- * > A read whose data the browser changes through the Route Handler channel
- * > stays dynamic. A Route Handler cannot bump the client router's cache, and a
- * > `"use cache"` segment is served straight from the prefetch for its
- * > `cacheLife` `stale` window — so a navigation would paint the pre-mutation
- * > copy and republish it over the write that already landed, and the edit
- * > would disappear from the screen. Data that is both cached and mutable is
- * > changed by a Server Action calling `updateTag`, which expires the entry and
- * > bumps the router's copy in the same response.
- *
- * So the tasks, the selected task, the insights and the session read through to
- * the source on every render: every one of them is written, or derived from
- * what is written, by the browser channel in `api/hooks.ts`. Reading a
- * derivation through also keeps the answer to "which mutation changes which
- * derived read" implicit — a mutation changes the source, the next render reads
- * the source — which is a table nobody has to maintain.
+ * This demo is focused on the fully dynamic App Router shape: every route
+ * generation reads its source, and every publication therefore describes that
+ * generation's current data. That keeps the answer to "which mutation changes
+ * which derived read" implicit — a mutation changes the source, and the next
+ * render reads the source — instead of maintaining a parallel tag graph.
  *
  * **When these render is a separate question from what they hold.** A task edit
  * on the list screen does not ask for a render at all: the write's response
@@ -47,43 +32,21 @@ import {
  * navigation, a filter change, a create — and they answer them with the source,
  * which is what keeps a publication authoritative.
  *
- * Projects, labels and members are the other kind: reference data, changed only
- * by the Server Actions in `api/actions.ts`, which name the tag. They are the
- * three reads a background republication does not have to repeat.
+ * Project metadata and task-derived project counts remain separate reads and
+ * separate Lane keys. The split lets a task mutation publish the confirmed
+ * count it received without replacing the roster, while a route generation
+ * still reads both dynamically from the same source.
  *
- * **A derivation does not get to ride along.** A project used to carry the
- * number of tasks in it, inside the cached read — a value the browser channel
- * changes on every status change and every delete, and cannot expire a tag for.
- * The compromise was a shorter `cacheLife`, which is to say a window in which
- * the server answered with a number it knew to be wrong. The rule above already
- * says what to do instead, so the count is split off into `readProjectTaskCounts`
- * and read dynamically, and `readProjects` is the roster alone: id, name, key,
- * colour — reference data, cached for hours, with no field in it that a task
- * can move. What the browser changes it converges from the write's own response
- * (`lane.set` in `api/hooks.ts`); this read is how the count arrives on a render
- * that was going to happen anyway.
- *
- * `cacheComponents` stays on either way. It is what extracts each route's
- * reusable shell; it does not require these reads to be cached, only that they
- * resolve below a Suspense boundary, which is where the regions put them.
+ * `cacheComponents` stays on. It extracts each route's reusable shell without
+ * making these data reads persistent cache entries; they resolve below the
+ * Suspense boundaries in `regions.tsx`.
  */
 
 /**
- * A project without its task count — what a cached read of the roster can
- * honestly return. The count comes from {@link readProjectTaskCounts}.
+ * A project without its task count. The count is published through its own
+ * read so a task mutation can converge that derived value independently.
  */
 export type ProjectRef = Omit<Project, "taskCount">;
-
-/**
- * The tags the cached reads below declare, and the only names `api/actions.ts`
- * may expire. Team-scoped, because the reads are: the active team travels in
- * request headers, so it has to travel in the cache key too.
- */
-export const workspaceCacheTags = {
-  projects: (teamId: string) => `projects:${teamId}`,
-  labels: (teamId: string) => `labels:${teamId}`,
-  members: (teamId: string) => `members:${teamId}`,
-};
 
 export async function readCurrentUser(userId: string) {
   return fetchCurrentUser({ userId, teamId: "" });
@@ -94,18 +57,10 @@ export async function readTeams(userId: string) {
 }
 
 export async function readMembers(ctx: WorkspaceCtx) {
-  "use cache";
-  cacheLife("hours");
-  cacheTag(workspaceCacheTags.members(ctx.teamId));
-
   return fetchMembers(ctx);
 }
 
 export async function readLabels(ctx: WorkspaceCtx) {
-  "use cache";
-  cacheLife("hours");
-  cacheTag(workspaceCacheTags.labels(ctx.teamId));
-
   return fetchLabels(ctx);
 }
 
@@ -152,21 +107,17 @@ export async function readTask(ctx: WorkspaceCtx, taskId: string) {
 }
 
 export async function readProjects(ctx: WorkspaceCtx): Promise<ProjectRef[]> {
-  "use cache";
-  cacheLife("hours");
-  cacheTag(workspaceCacheTags.projects(ctx.teamId));
-
-  // The count is dropped here rather than left unread. A cached read that
-  // carries a field the browser channel changes is a stale value waiting for
-  // someone to render it; not returning it is what makes that impossible.
+  // The count travels through its own read and Lane key, so this one publishes
+  // only the project roster even though the endpoint returns both.
   return (await fetchProjects(ctx)).map(
     ({ taskCount: _count, ...project }) => project,
   );
 }
 
 /**
- * The task counts, read through on every render like the tasks they are
- * counted from. Cheap, one query, and always the number the list would give.
+ * The task counts, read dynamically on every route generation like the tasks
+ * they are counted from. Cheap, one query, and always the number the list would
+ * give.
  */
 export async function readProjectTaskCounts(
   ctx: WorkspaceCtx,

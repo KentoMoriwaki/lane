@@ -55,7 +55,7 @@ const emptyDraft: Draft = {
  * lifetime is the open state rather than the frame's.
  */
 export function CreateTaskDialog({ closeAction }: { closeAction: () => void }) {
-  const { taskHref } = useWorkspaceUrl();
+  const { fixedProjectId, taskHref } = useWorkspaceUrl();
   const router = useRouter();
   const open = true;
   const onOpenChange = (next: boolean) => {
@@ -67,7 +67,11 @@ export function CreateTaskDialog({ closeAction }: { closeAction: () => void }) {
 
   const createTask = useCreateTask();
   const [isCreating, startCreateTransition] = React.useTransition();
-  const [draft, setDraft] = React.useState<Draft>(emptyDraft);
+  const initialDraft = React.useMemo<Draft>(
+    () => ({ ...emptyDraft, projectId: fixedProjectId }),
+    [fixedProjectId],
+  );
+  const [draft, setDraft] = React.useState<Draft>(initialDraft);
   const [formError, setFormError] = React.useState<string | null>(null);
 
   function patch(values: Partial<Draft>) {
@@ -77,7 +81,7 @@ export function CreateTaskDialog({ closeAction }: { closeAction: () => void }) {
   function handleOpenChange(next: boolean) {
     // Closing resets the draft; the form is only preserved across failures.
     if (!next) {
-      setDraft(emptyDraft);
+      setDraft(initialDraft);
       setFormError(null);
     }
     onOpenChange(next);
@@ -106,7 +110,7 @@ export function CreateTaskDialog({ closeAction }: { closeAction: () => void }) {
         });
 
         toast.success("Task created");
-        setDraft(emptyDraft);
+        setDraft(initialDraft);
         onOpenChange(false);
         createAction(task.id);
       } catch (error) {

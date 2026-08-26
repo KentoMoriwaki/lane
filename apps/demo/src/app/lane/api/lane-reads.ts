@@ -173,8 +173,16 @@ export const workspaceSnapshots = {
     };
   },
 
-  insights(insights: Insights): LaneHydrationSnapshots {
-    return { entries: [laneSnapshot(workspaceReads.insights(), insights)] };
+  projectHeader(seeds: {
+    projects: ProjectRef[];
+    projectCounts: ProjectTaskCounts;
+  }): LaneHydrationSnapshots {
+    return {
+      entries: [
+        laneSnapshot(workspaceReads.projects(), seeds.projects),
+        laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
+      ],
+    };
   },
 
   /**
@@ -208,14 +216,10 @@ export const workspaceSnapshots = {
   },
 
   filterBar(seeds: {
-    projects: ProjectRef[];
-    labels: TeamLabel[];
     tasks: { filters: TaskFilters; data: TaskPage };
   }): LaneHydrationSnapshots {
     return {
       entries: [
-        laneSnapshot(workspaceReads.projects(), seeds.projects),
-        laneSnapshot(workspaceReads.labels(), seeds.labels),
         infiniteLaneSnapshot(
           workspaceReads.tasks(seeds.tasks.filters),
           seeds.tasks.data,

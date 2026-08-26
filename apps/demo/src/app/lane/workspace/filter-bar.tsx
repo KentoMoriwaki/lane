@@ -1,11 +1,16 @@
 "use client";
 
-import { Check, ChevronDown, ListFilter, RotateCw, X } from "lucide-react";
-import Link, { useLinkStatus } from "next/link";
-import { useWorkspaceHrefs } from "./use-workspace-hrefs";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Check,
+  ChevronDown,
+  Group,
+  RotateCw,
+} from "lucide-react";
 import * as React from "react";
-import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
-import { useLabels, useProjects, useTasks } from "@/app/lane/api/hooks";
+import { useTasks } from "@/app/lane/api/hooks";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,185 +20,76 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { accent } from "@/lib/accent";
-import {
-  PRIORITY_META,
-  PRIORITY_ORDER,
-  STATUS_META,
-  STATUS_ORDER,
-} from "@/lib/task-meta";
 import { cn } from "@/lib/utils";
+import {
+  type TaskGroupBy,
+  type TaskSortBy,
+  useTaskView,
+} from "./use-task-view";
+import { useWorkspaceUrl } from "./use-workspace-url";
 
+const GROUP_OPTIONS: Array<{ value: TaskGroupBy; label: string }> = [
+  { value: "priority", label: "Priority" },
+  { value: "status", label: "Status" },
+  { value: "project", label: "Project" },
+  { value: "assignee", label: "Assignee" },
+  { value: "none", label: "None" },
+];
+
+const SORT_OPTIONS: Array<{ value: TaskSortBy; label: string }> = [
+  { value: "default", label: "Default" },
+  { value: "due", label: "Due date" },
+  { value: "priority", label: "Priority" },
+  { value: "updated", label: "Updated" },
+  { value: "created", label: "Created" },
+  { value: "title", label: "Title" },
+];
+
+/** Presentation controls only: neither control changes the task read key. */
 export function FilterBar() {
-  const {
-    filters,
-    filterHref,
-    resetFiltersHref: resetHref,
-  } = useWorkspaceHrefs();
-  const [optimisticFilters, addOptimisticFilterPatch] = React.useOptimistic(
-    filters,
-    (current, patch: Partial<TaskFilters>) => ({ ...current, ...patch }),
-  );
-  const projectsResult = useProjects();
-  const labelsResult = useLabels();
+  const { filters, fixedProjectId } = useWorkspaceUrl();
   const tasksResult = useTasks(filters);
-  const projects = React.use(projectsResult.promise).data;
-  const labels = React.use(labelsResult.promise).data;
-  // The list is paginated, so what this bar can honestly count is what has been
-  // loaded — page 1 from the route plus whatever the browser has added. The
-  // total is not a number anyone here holds, and inventing one would be worse
-  // than saying "so far".
   const list = React.use(tasksResult.promise).data;
   const loaded = list.pages.reduce((count, page) => count + page.items.length, 0);
-
-  const project = projects?.find(
-    (item) => item.id === optimisticFilters.projectId,
-  );
-  const label = labels?.find((item) => item.id === optimisticFilters.labelId);
-  const dueLabel =
-    optimisticFilters.due === "overdue"
-      ? "Overdue"
-      : optimisticFilters.due === "week"
-        ? "Due this week"
-        : optimisticFilters.due === "today"
-          ? "Due today"
-          : null;
-
-  const hasActiveFilters =
-    optimisticFilters.scope !== "all" ||
-    optimisticFilters.status.length > 0 ||
-    optimisticFilters.priority.length > 0 ||
-    Boolean(optimisticFilters.projectId) ||
-    Boolean(optimisticFilters.labelId) ||
-    Boolean(optimisticFilters.due) ||
-    optimisticFilters.q.trim().length > 0;
-
-  const hrefForPatch = React.useCallback(
-    (patch: Partial<TaskFilters>) =>
-      filterHref({ ...optimisticFilters, ...patch }),
-    [filterHref, optimisticFilters],
-  );
-
-  const applyPatch = React.useCallback(
-    (patch: Partial<TaskFilters>) => {
-      React.startTransition(() => {
-        addOptimisticFilterPatch(patch);
-      });
-    },
-    [addOptimisticFilterPatch],
-  );
+  const { group, sort, order, updateView } = useTaskView();
+  const groups = fixedProjectId
+    ? GROUP_OPTIONS.filter((option) => option.value !== "project")
+    : GROUP_OPTIONS;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-      <div className="inline-flex h-8 items-center gap-1 rounded-lg bg-muted p-1 text-muted-foreground">
-        <ScopeLink
-          href={hrefForPatch({ scope: "all" })}
-          isActive={optimisticFilters.scope === "all"}
-          navigateAction={() => applyPatch({ scope: "all" })}
-        >
-          All
-        </ScopeLink>
-        <ScopeLink
-          href={hrefForPatch({ scope: "mine" })}
-          isActive={optimisticFilters.scope === "mine"}
-          navigateAction={() => applyPatch({ scope: "mine" })}
-        >
-          My tasks
-        </ScopeLink>
-        <ScopeLink
-          href={hrefForPatch({ scope: "unassigned" })}
-          isActive={optimisticFilters.scope === "unassigned"}
-          navigateAction={() => applyPatch({ scope: "unassigned" })}
-        >
-          Unassigned
-        </ScopeLink>
-      </div>
-
-      <FilterDropdown
-        label="Status"
-        count={optimisticFilters.status.length}
-        icon={<ListFilter className="size-3.5" />}
-      >
-        <DropdownMenuLabel>Filter by status</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {STATUS_ORDER.map((status) => {
-          const meta = STATUS_META[status];
-          const Icon = meta.icon;
-          const nextStatus = toggleValue(optimisticFilters.status, status);
-          return (
-            <FilterOptionLink
-              key={status}
-              checked={optimisticFilters.status.includes(status)}
-              href={hrefForPatch({ status: nextStatus })}
-              icon={<Icon className={cn("size-4", accent(meta.accent).text)} />}
-              label={meta.label}
-              navigateAction={() => applyPatch({ status: nextStatus })}
-            />
-          );
-        })}
-      </FilterDropdown>
-
-      <FilterDropdown label="Priority" count={optimisticFilters.priority.length}>
-        <DropdownMenuLabel>Filter by priority</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {PRIORITY_ORDER.map((priority) => {
-          const meta = PRIORITY_META[priority];
-          const Icon = meta.icon;
-          const nextPriority = toggleValue(
-            optimisticFilters.priority,
-            priority,
-          );
-          return (
-            <FilterOptionLink
-              key={priority}
-              checked={optimisticFilters.priority.includes(priority)}
-              href={hrefForPatch({ priority: nextPriority })}
-              icon={<Icon className={cn("size-4", accent(meta.accent).text)} />}
-              label={meta.label}
-              navigateAction={() => applyPatch({ priority: nextPriority })}
-            />
-          );
-        })}
-      </FilterDropdown>
-
-      {project ? (
-        <Chip
-          dotClass={accent(project.color).dot}
-          label={project.name}
-          removeHref={hrefForPatch({ projectId: null })}
-          navigateAction={() => applyPatch({ projectId: null })}
-        />
-      ) : null}
-      {label ? (
-        <Chip
-          dotClass={accent(label.color).dot}
-          label={label.name}
-          removeHref={hrefForPatch({ labelId: null })}
-          navigateAction={() => applyPatch({ labelId: null })}
-        />
-      ) : null}
-      {dueLabel ? (
-        <Chip
-          label={dueLabel}
-          removeHref={hrefForPatch({ due: null })}
-          navigateAction={() => applyPatch({ due: null })}
-        />
-      ) : null}
-
-      {hasActiveFilters ? (
+    <div
+      data-testid="view-toolbar"
+      className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2"
+    >
+      <ViewMenu
+        icon={<Group className="size-3.5" />}
+        label="Group"
+        valueLabel={labelFor(GROUP_OPTIONS, group)}
+        options={groups}
+        value={group}
+        selectAction={(value) => updateView({ group: value as TaskGroupBy })}
+      />
+      <ViewMenu
+        icon={<ArrowUpDown className="size-3.5" />}
+        label="Sort"
+        valueLabel={labelFor(SORT_OPTIONS, sort)}
+        options={SORT_OPTIONS}
+        value={sort}
+        selectAction={(value) => updateView({ sort: value as TaskSortBy })}
+      />
+      {sort !== "default" ? (
         <Button
-          asChild
-          variant="ghost"
-          size="xs"
-          className="text-muted-foreground"
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          aria-label={order === "asc" ? "Sort descending" : "Sort ascending"}
+          onClick={() => updateView({ order: order === "asc" ? "desc" : "asc" })}
         >
-          <Link
-            href={resetHref}
-            scroll={false}
-            onClick={() => applyPatch(EMPTY_FILTERS)}
-          >
-            <ClearLabel />
-          </Link>
+          {order === "asc" ? (
+            <ArrowUp className="size-3.5" />
+          ) : (
+            <ArrowDown className="size-3.5" />
+          )}
         </Button>
       ) : null}
 
@@ -204,7 +100,7 @@ export function FilterBar() {
             Updating
           </span>
         ) : tasksResult.isBackgroundPending ? (
-          <span className="inline-flex items-center gap-1 text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
             <RotateCw className="size-3 animate-spin" />
             Syncing
           </span>
@@ -218,182 +114,62 @@ export function FilterBar() {
   );
 }
 
-function toggleValue<T>(values: T[], value: T): T[] {
-  return values.includes(value)
-    ? values.filter((item) => item !== value)
-    : [...values, value];
+function labelFor<T extends string>(
+  options: Array<{ value: T; label: string }>,
+  value: T,
+) {
+  return options.find((option) => option.value === value)?.label ?? value;
 }
 
-function ScopeLink({
-  href,
-  isActive,
-  navigateAction,
-  children,
-}: {
-  href: string;
-  isActive: boolean;
-  navigateAction: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      href={href}
-      scroll={false}
-      className="rounded-md"
-      onClick={navigateAction}
-    >
-      <ScopeLinkContent isActive={isActive}>{children}</ScopeLinkContent>
-    </Link>
-  );
-}
-
-function ScopeLinkContent({
-  isActive,
-  children,
-}: {
-  isActive: boolean;
-  children: React.ReactNode;
-}) {
-  const { pending } = useLinkStatus();
-  const active = isActive || pending;
-
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-[13px] font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
-        active ? "bg-surface text-foreground shadow-sm" : undefined,
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
-function ClearLabel() {
-  const { pending } = useLinkStatus();
-
-  return <span className={cn(pending && "text-foreground")}>Clear</span>;
-}
-
-function FilterOptionLink({
-  href,
-  checked,
+function ViewMenu<T extends string>({
   icon,
   label,
-  navigateAction,
+  valueLabel,
+  options,
+  value,
+  selectAction,
 }: {
-  href: string;
-  checked: boolean;
   icon: React.ReactNode;
   label: string;
-  navigateAction: () => void;
-}) {
-  return (
-    <DropdownMenuItem
-      asChild
-      onSelect={(event) => event.preventDefault()}
-      className="gap-2.5"
-    >
-      <Link href={href} scroll={false} onClick={navigateAction}>
-        <FilterOptionContent checked={checked} icon={icon} label={label} />
-      </Link>
-    </DropdownMenuItem>
-  );
-}
-
-function FilterOptionContent({
-  checked,
-  icon,
-  label,
-}: {
-  checked: boolean;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <>
-      <span className="flex size-4 shrink-0 items-center justify-center">
-        {checked ? <Check className="size-4 text-cobalt" /> : null}
-      </span>
-      {icon}
-      <span className={cn(checked && "font-medium text-foreground")}>
-        {label}
-      </span>
-    </>
-  );
-}
-
-function FilterDropdown({
-  label,
-  count,
-  icon,
-  children,
-}: {
-  label: string;
-  count: number;
-  icon?: React.ReactNode;
-  children: React.ReactNode;
+  valueLabel: string;
+  options: Array<{ value: T; label: string }>;
+  value: T;
+  selectAction: (value: T) => void;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className={cn(count > 0 && "border-cobalt/40 text-cobalt")}
-        >
+        <Button variant="outline" size="sm">
           {icon}
-          {label}
-          {count > 0 ? (
-            <span className="rounded-full bg-cobalt/15 px-1.5 text-[11px] font-semibold">
-              {count}
-            </span>
-          ) : (
-            <ChevronDown className="size-3.5 text-muted-foreground" />
-          )}
+          <span className="text-muted-foreground">{label}:</span>
+          {valueLabel}
+          <ChevronDown className="size-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-52">
-        {children}
+      <DropdownMenuContent align="start" className="w-48">
+        <DropdownMenuLabel>{label} tasks by</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {options.map((option) => (
+          <DropdownMenuItem
+            key={option.value}
+            className="gap-2.5"
+            onSelect={() => selectAction(option.value)}
+          >
+            <span className="flex size-4 items-center justify-center">
+              {option.value === value ? (
+                <Check className="size-4 text-cobalt" />
+              ) : null}
+            </span>
+            <span
+              className={cn(
+                option.value === value && "font-medium text-foreground",
+              )}
+            >
+              {option.label}
+            </span>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-function Chip({
-  dotClass,
-  label,
-  removeHref,
-  navigateAction,
-}: {
-  dotClass?: string;
-  label: string;
-  removeHref: string;
-  navigateAction: () => void;
-}) {
-  return (
-    <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 text-sm text-foreground">
-      {dotClass ? (
-        <span className={cn("size-2 rounded-full", dotClass)} />
-      ) : null}
-      {label}
-      <Link
-        href={removeHref}
-        scroll={false}
-        onClick={navigateAction}
-        className="rounded-full p-0.5 text-muted-foreground hover:text-rose"
-        aria-label={`Remove ${label} filter`}
-      >
-        <ChipRemoveIcon />
-      </Link>
-    </span>
-  );
-}
-
-function ChipRemoveIcon() {
-  const { pending } = useLinkStatus();
-
-  return (
-    <X className={cn("size-3.5", pending ? "text-rose" : undefined)} />
   );
 }

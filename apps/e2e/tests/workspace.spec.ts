@@ -132,7 +132,11 @@ async function rowOrder(page: Page): Promise<string[]> {
 }
 
 function searchInput(page: Page) {
-  return page.getByPlaceholder(SEARCH_PLACEHOLDER);
+  // Next keeps the previous route tree in a hidden Activity after a client
+  // navigation. Target the live workspace rather than its cached search box.
+  return page.locator(
+    `input[placeholder="${SEARCH_PLACEHOLDER}"]:visible`,
+  );
 }
 
 /**
@@ -162,6 +166,10 @@ function pageTitle(page: Page) {
 /** The URL both surfaces share. */
 function taskUrl(taskId: string) {
   return `/lane/task/${taskId}`;
+}
+
+function projectUrl(projectId: string) {
+  return `/lane/project/${projectId}`;
 }
 
 /** Open a task the way the demo intends it to be opened: click its row. */
@@ -215,19 +223,6 @@ async function projectCount(page: Page, name: string): Promise<number> {
   const text = await page
     .getByTestId("sidebar")
     .getByRole("link", { name: new RegExp(`^${escapeRegExp(name)}`) })
-    .innerText();
-  return Number(text.match(/\d+/)?.[0]);
-}
-
-/**
- * The same number in the two places the response has to reach: the strip above
- * the list and the nav down the side. Both read `insights`, which a task write
- * now answers with — so both are watched, and neither may cost a read.
- */
-async function insightCardCount(page: Page, label: string): Promise<number> {
-  const text = await page
-    .getByTestId("insight-strip")
-    .getByRole("link", { name: new RegExp(escapeRegExp(label)) })
     .innerText();
   return Number(text.match(/\d+/)?.[0]);
 }
@@ -355,14 +350,13 @@ test("opening a task is a navigation to its own URL", async ({ page }) => {
 
   await taskLink(page, ACME_TASK).click();
 
-  // The selection is a path, not a parameter — and the view travels with it, so
-  // the list behind the panel still reads the key it was published under.
-  await expect(page).toHaveURL(
-    new RegExp(`${escapeRegExp(taskUrl(ACME_TASK_ID))}\\?.*q=billing`),
-  );
+  // The task URL names only the task. The intercepted list stays mounted with
+  // its own search state rather than serializing that state into the task URL.
+  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
   // Clicked from a row, it is intercepted: the panel, with the list still there.
   await expect(detailTitle(page)).toHaveValue(ACME_TASK);
   await expect(detailPage(page)).toHaveCount(0);
+  await expect(searchInput(page)).toHaveValue("billing");
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
@@ -380,11 +374,13 @@ test("a reload of a task URL renders the page, not the panel", async ({
   // and the `@modal` slot renders nothing.
   await expect(pageTitle(page)).toHaveValue(ACME_TASK);
   await expect(detailPanel(page)).toHaveCount(0);
-  await expect(page).toHaveURL(/q=billing/);
+  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
 
-  // The way back carries the view it left with.
+  // A directly loaded task has no list Context behind it, so its fallback is
+  // the canonical all-workspace list.
   await page.getByRole("link", { name: "Back to tasks" }).click();
-  await expect(searchInput(page)).toHaveValue("billing");
+  await expect(page).toHaveURL(/\/lane$/);
+  await expect(searchInput(page)).toHaveValue("");
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
@@ -433,6 +429,84 @@ test("search filters the task list", async ({ page }) => {
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
+test("the sidebar selects named Context routes", async ({ page }) => {
+  await gotoWorkspace(page);
+
+  await page
+    .getByTestId("sidebar")
+    .getByRole("link", { name: /^My tasks/ })
+    .click();
+
+  await expect(page).toHaveURL(/\/lane\/mine$/);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await expect(page.getByTestId("insight-strip")).toHaveCount(0);
+});
+
+test("grouping and sorting change presentation without changing Context", async ({
+  page,
+  request,
+}) => {
+  await gotoWorkspace(page, "/lane/mine");
+  await resetRequestDiagnostics(request);
+
+  await page.getByRole("button", { name: "Group: Priority" }).click();
+  await page.getByRole("menuitem", { name: "Status" }).click();
+  await expect(page).toHaveURL(/\/lane\/mine\?group=status$/);
+  await expect(page.locator('[data-group-key="in_progress"]')).toBeVisible();
+
+  await page.getByRole("button", { name: "Sort: Default" }).click();
+  await page.getByRole("menuitem", { name: "Title" }).click();
+  await expect(page).toHaveURL(/group=status&sort=title/);
+  await expect(page.getByRole("button", { name: "Sort: Title" })).toBeVisible();
+
+  const records = await readRequestDiagnostics(request);
+  expect(serverReadsOf(records, "/api/tasks")).toHaveLength(0);
+});
+
+test("a project is its own fixed workspace view", async ({ page }) => {
+  await gotoWorkspace(page);
+
+  await expect(
+    page.getByTestId("view-toolbar").getByRole("button", {
+      name: "Group: Priority",
+    }),
+  ).toBeVisible();
+  await expect(page.getByTestId("insight-strip")).toHaveCount(0);
+
+  await page
+    .getByTestId("sidebar")
+    .getByRole("link", { name: new RegExp(`^${BILLING_PROJECT}`) })
+    .click();
+
+  await expect(page).toHaveURL(projectUrl("p_billing"));
+  await expect(page.getByTestId("project-header")).toContainText(
+    BILLING_PROJECT,
+  );
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await expect(taskRow(page, "Interactive onboarding checklist")).toBeHidden();
+
+  // Search refines the project view instead of falling back to `/lane`.
+  await searchInput(page).fill("invoice");
+  await expect(page).toHaveURL(/\/lane\/project\/p_billing\?q=invoice/);
+  await expect(taskRow(page, ACME_INVOICE_TASK)).toBeVisible();
+  await expect(taskRow(page, ACME_TASK)).toBeHidden();
+});
+
+test("a project task opens in the panel and returns to its project", async ({
+  page,
+}) => {
+  await page.goto(projectUrl("p_billing"));
+  await expect(page.getByTestId("project-header")).toBeVisible();
+  await openTaskPanel(page, ACME_TASK);
+
+  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
+  await expect(page.getByTestId("project-header")).toBeVisible();
+
+  await page.goBack();
+  await expect(page).toHaveURL(projectUrl("p_billing"));
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+});
+
 test("a load reads every dynamic source", async ({
   page,
   request,
@@ -460,15 +534,17 @@ test("a rerender re-reads every published source", async ({
   page,
   request,
 }) => {
-  // A filter is a navigation, which renders the whole route — the same work a
-  // create's rerender does. Every read is dynamic, including reference data
-  // the filter did not change.
+  // A Context change is a navigation, which renders the whole route — the same
+  // work a create's rerender does. Every published read remains dynamic.
   await gotoWorkspace(page);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
   await resetRequestDiagnostics(request);
-  await page.getByRole("link", { name: /In review/ }).first().click();
-  await expect(page).toHaveURL(/status=in_review/);
+  await page
+    .getByTestId("sidebar")
+    .getByRole("link", { name: /^My tasks/ })
+    .click();
+  await expect(page).toHaveURL(/\/lane\/mine$/);
   await expect(page.getByTestId("task-list-skeleton")).toBeHidden();
 
   const records = await readRequestDiagnostics(request);
@@ -569,16 +645,14 @@ test("an edit after an in-app navigation reaches the list", async ({ page }) => 
  * response. Every key the edit moves is `set` from that answer, `invalidate`
  * is not used, and the owner is never asked to render. What proves it is not
  * the count of renders but their absence: zero server-origin reads of any of
- * the three dynamic sources, while both places that draw the number move.
+ * the three dynamic sources, while the named Context count moves.
  */
 test("a task edit asks the owner for nothing", async ({ page, request }) => {
   await gotoWorkspace(page);
   const title = `E2E counter task ${Date.now()}`;
   await createTask(page, title);
 
-  // "Completed" is the one number a status change moves that the strip *and*
-  // the sidebar both draw, which is what makes it the number worth watching.
-  const beforeCard = await insightCardCount(page, "Completed");
+  // "Completed" is the named Context count this status change moves.
   const beforeNav = await sidebarCount(page, "Completed");
 
   await resetRequestDiagnostics(request);
@@ -590,7 +664,6 @@ test("a task edit asks the owner for nothing", async ({ page, request }) => {
   await expect(page.getByText("Saved")).toBeVisible();
 
   await expect(async () => {
-    expect(await insightCardCount(page, "Completed")).toBe(beforeCard + 1);
     expect(await sidebarCount(page, "Completed")).toBe(beforeNav + 1);
   }).toPass();
 
@@ -704,14 +777,12 @@ test("creating a label rerenders the dynamic route", async ({
   await page.getByPlaceholder("Search or create label…").fill(name);
   await page.getByRole("button", { name: /^Create/ }).click();
 
-  // The label is on the task, and — the point of the test — in the sidebar,
-  // which lists what the *published* labels read returned.
+  // The label is on the task. Labels no longer occupy the workspace nav; the
+  // open picker is where the republished roster is visible.
   await expect(
     detailPanel(page).getByRole("button", { name: `Remove ${name}` }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: new RegExp(escapeRegExp(name)) }),
-  ).toBeVisible();
+  await expect(page.getByRole("option", { name })).toBeVisible();
 
   const records = await readRequestDiagnostics(request);
   // The action calls `refresh()`, and every source published by the route is

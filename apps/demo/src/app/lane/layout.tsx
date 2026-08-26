@@ -7,13 +7,12 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 /**
  * The route group's shell: one lane, and the row the detail is drawn into.
  *
- * **One lane for two routes.** `WorkspaceProvider` used to sit in `page.tsx`,
+ * **One lane for the workspace routes.** `WorkspaceProvider` used to sit in `page.tsx`,
  * where it was created and destroyed with the list. It has to live here now,
- * because `/lane` and `/lane/task/[id]` are two routes under this layout and
- * they publish into the same keys: a layout is not remounted when the page
- * below it changes, so the lane — and everything a mutation on one surface
- * marked on the other — survives the navigation between them. That is the whole
- * mechanism behind "edit on the task page, come back, the list reloads".
+ * because named Contexts, projects, and `/lane/task/[id]` all publish into the
+ * same keys. A layout is not remounted when the page below it changes, so the
+ * lane survives navigation between them. That is the mechanism behind "edit
+ * on the task page, come back, the list reloads".
  *
  * **The panel is a slot.** `modal` is `@modal`, and what it holds is the
  * *intercepted* form of `/lane/task/[id]` (`@modal/(.)task/[id]`): a `<Link>`

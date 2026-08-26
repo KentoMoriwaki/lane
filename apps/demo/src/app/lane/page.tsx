@@ -1,18 +1,4 @@
-import { Suspense } from "react";
-import {
-  FilterBarRegion,
-  InsightStripRegion,
-  SidebarRegion,
-  TaskListRegion,
-} from "./regions";
-import { WorkspaceBrand } from "@/app/lane/workspace/brand";
-import {
-  FilterBarSkeleton,
-  InsightStripSkeleton,
-  SidebarSkeleton,
-  TaskListSkeleton,
-} from "@/app/lane/workspace/skeletons";
-import { Workspace } from "@/app/lane/workspace/workspace";
+import { TaskContextPage } from "@/app/lane/workspace/task-context-page";
 
 // The route claims its navigations produce a UI immediately. Nothing below may
 // await above a Suspense boundary, or the claim fails validation.
@@ -53,28 +39,5 @@ type PageProps = {
  * client loaders, and the cache maintenance that comes with owning your data.
  */
 export default function Page({ searchParams }: PageProps) {
-  return (
-    <Workspace
-      sidebar={
-        <Suspense fallback={<SidebarSkeleton brand={<WorkspaceBrand />} />}>
-          <SidebarRegion searchParams={searchParams} />
-        </Suspense>
-      }
-      insights={
-        <Suspense fallback={<InsightStripSkeleton />}>
-          <InsightStripRegion searchParams={searchParams} />
-        </Suspense>
-      }
-      filterBar={
-        <Suspense fallback={<FilterBarSkeleton />}>
-          <FilterBarRegion searchParams={searchParams} />
-        </Suspense>
-      }
-      taskList={
-        <Suspense fallback={<TaskListSkeleton />}>
-          <TaskListRegion searchParams={searchParams} />
-        </Suspense>
-      }
-    />
-  );
+  return <TaskContextPage contextKey="all" searchParams={searchParams} />;
 }

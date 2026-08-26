@@ -12,7 +12,7 @@ import {
 import { getSession, getTeams, getWorkspaceCtx } from "@/app/lane/api/session";
 import { parseWorkspaceState, getterFromRecord } from "@/app/lane/api/url-state";
 import { FilterBar } from "@/app/lane/workspace/filter-bar";
-import { InsightStrip } from "@/app/lane/workspace/insight-strip";
+import { ProjectHeader } from "@/app/lane/workspace/project-header";
 import { Sidebar } from "@/app/lane/workspace/sidebar";
 import {
   TaskDetailPage,
@@ -21,6 +21,14 @@ import {
   TaskMissingPanel,
 } from "@/app/lane/workspace/task-detail-panel";
 import { TaskList } from "@/app/lane/workspace/task-list";
+import {
+  contextForKey,
+  filtersForContext,
+  legacyContextFromFilters,
+  projectPath,
+  type WorkspaceContextKey,
+  type WorkspaceListContext,
+} from "@/app/lane/workspace/workspace-context";
 
 /**
  * One publication per region, each behind its own Suspense boundary.
@@ -55,14 +63,49 @@ import { TaskList } from "@/app/lane/workspace/task-list";
 
 export type RegionProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
+  contextKey?: Exclude<WorkspaceContextKey, "project">;
+  projectParams?: Promise<{ id: string }>;
 };
 
-async function requested(searchParams: RegionProps["searchParams"]) {
-  return parseWorkspaceState(getterFromRecord(await searchParams));
+async function requested({
+  searchParams,
+  contextKey = "all",
+  projectParams,
+}: RegionProps) {
+  const [record, project] = await Promise.all([
+    searchParams,
+    projectParams ?? Promise.resolve(null),
+  ]);
+  const state = parseWorkspaceState(getterFromRecord(record));
+  let context: WorkspaceListContext;
+
+  if (project) {
+    context = {
+      key: "project",
+      pathname: projectPath(project.id),
+      projectId: project.id,
+    };
+  } else if (contextKey === "all") {
+    const legacy = legacyContextFromFilters(state.filters);
+    context =
+      legacy === "project" && state.filters.projectId
+        ? {
+            key: "project",
+            pathname: projectPath(state.filters.projectId),
+            projectId: state.filters.projectId,
+          }
+        : contextForKey(
+            legacy && legacy !== "project" ? legacy : contextKey,
+          );
+  } else {
+    context = contextForKey(contextKey);
+  }
+
+  return { ...state, filters: filtersForContext(state.filters, context) };
 }
 
 export async function SidebarRegion({ searchParams }: RegionProps) {
-  const state = await requested(searchParams);
+  const state = await requested({ searchParams });
   const ctx = await getWorkspaceCtx(state.teamId);
   // More than the sidebar draws: this is where the list route publishes its
   // reference data, and the create dialog's pickers read it from here (see
@@ -95,33 +138,40 @@ export async function SidebarRegion({ searchParams }: RegionProps) {
   );
 }
 
-export async function InsightStripRegion({ searchParams }: RegionProps) {
-  const state = await requested(searchParams);
-  const ctx = await getWorkspaceCtx(state.teamId);
-  const insights = await readInsights(ctx);
+export async function ProjectHeaderRegion({
+  searchParams,
+  projectParams,
+}: RegionProps) {
+  if (!projectParams) return null;
 
-  return (
-    <LaneHydration snapshots={workspaceSnapshots.insights(insights)}>
-      <InsightStrip />
-    </LaneHydration>
-  );
-}
-
-export async function FilterBarRegion({ searchParams }: RegionProps) {
-  const state = await requested(searchParams);
+  const [{ id }, state] = await Promise.all([
+    projectParams,
+    requested({ searchParams, projectParams }),
+  ]);
   const ctx = await getWorkspaceCtx(state.teamId);
-  const [projects, labels, tasks] = await Promise.all([
+  const [projects, projectCounts] = await Promise.all([
     readProjects(ctx),
-    readLabels(ctx),
-    // Page 1. The browser reads the rest on the same key (`api/lane-reads.ts`).
-    readTasks(ctx, state.filters, { cursor: null }),
+    readProjectTaskCounts(ctx),
   ]);
 
   return (
     <LaneHydration
+      snapshots={workspaceSnapshots.projectHeader({ projects, projectCounts })}
+    >
+      <ProjectHeader projectId={id} />
+    </LaneHydration>
+  );
+}
+
+export async function FilterBarRegion(props: RegionProps) {
+  const state = await requested(props);
+  const ctx = await getWorkspaceCtx(state.teamId);
+  // Page 1. The browser reads the rest on the same key (`api/lane-reads.ts`).
+  const tasks = await readTasks(ctx, state.filters, { cursor: null });
+
+  return (
+    <LaneHydration
       snapshots={workspaceSnapshots.filterBar({
-        projects,
-        labels,
         tasks: { data: tasks, filters: state.filters },
       })}
     >
@@ -130,8 +180,8 @@ export async function FilterBarRegion({ searchParams }: RegionProps) {
   );
 }
 
-export async function TaskListRegion({ searchParams }: RegionProps) {
-  const state = await requested(searchParams);
+export async function TaskListRegion(props: RegionProps) {
+  const state = await requested(props);
   const ctx = await getWorkspaceCtx(state.teamId);
   // Page 1, and only ever page 1: what this route publishes is the first page
   // of the list, and the depth on top of it is the browser's (`api/hooks.ts`).
@@ -162,7 +212,10 @@ export async function TaskDetailRegion({
   searchParams,
   surface,
 }: TaskRegionProps) {
-  const [{ id }, state] = await Promise.all([params, requested(searchParams)]);
+  const [{ id }, state] = await Promise.all([
+    params,
+    requested({ searchParams }),
+  ]);
   const ctx = await getWorkspaceCtx(state.teamId);
   // The counts are read here only for the page, which has no sidebar beside it
   // to have published them. In the panel the list route already did, and this

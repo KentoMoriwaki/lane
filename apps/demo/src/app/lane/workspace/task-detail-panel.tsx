@@ -181,8 +181,9 @@ function DetailPageShell({ children }: { children: React.ReactNode }) {
 
 /**
  * The way back, as a link rather than `router.back()`: this page is what a
- * shared URL or a reload lands on, and those have no history to go back to. It
- * carries the filters and the team along, so returning restores the view.
+ * shared URL or a reload lands on, and those have no history to go back to.
+ * The task URL intentionally carries no list Context, so this fallback returns
+ * to the all-workspace list (and preserves a non-default team).
  */
 function BackToList() {
   const { listHref } = useWorkspaceUrl();
@@ -352,11 +353,11 @@ function TaskDetail({
         run: () => remove(task.id),
         onSuccess: () => {
           toast.success("Task deleted");
-          // Not `back()`: the URL that just stopped existing must not be left
-          // in the history for a forward button to return to. `replace` puts
-          // the list in its place — and from the page, where there may be no
-          // history at all, it is the only way back.
-          closeTask();
+          // An intercepted panel has the exact Context immediately behind it;
+          // the independent task page does not, so it uses the canonical all
+          // workspace fallback instead.
+          if (surface === "panel" && onClose) onClose();
+          else closeTask();
         },
       });
     });
@@ -720,4 +721,3 @@ function DescriptionEditor({
     />
   );
 }
-

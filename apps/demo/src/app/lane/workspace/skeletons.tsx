@@ -26,7 +26,7 @@ export function SidebarSkeleton({ brand }: { brand?: React.ReactNode }) {
       </div>
       <div className="space-y-5 px-3 py-3">
         <div className="space-y-2">
-          {Array.from({ length: 5 }, (_, index) => (
+          {Array.from({ length: 6 }, (_, index) => (
             <Skeleton key={index} className="h-7 w-full" />
           ))}
         </div>
@@ -36,14 +36,21 @@ export function SidebarSkeleton({ brand }: { brand?: React.ReactNode }) {
             <Skeleton key={index} className="h-7 w-full" />
           ))}
         </div>
-        <div className="space-y-2">
-          <Skeleton className="h-3 w-16" />
-          {Array.from({ length: 3 }, (_, index) => (
-            <Skeleton key={index} className="h-7 w-full" />
-          ))}
-        </div>
       </div>
     </aside>
+  );
+}
+
+export function ProjectHeaderSkeleton() {
+  return (
+    <div className="flex min-h-[92px] items-center gap-3 border-b border-border bg-surface px-4 py-4">
+      <Skeleton className="size-10 rounded-lg" />
+      <div className="space-y-2">
+        <Skeleton className="h-5 w-36" />
+        <Skeleton className="h-3 w-24" />
+      </div>
+      <Skeleton className="ml-auto h-8 w-20" />
+    </div>
   );
 }
 
@@ -59,6 +66,7 @@ export function TopbarSkeleton() {
   );
 }
 
+/** Kept for the App Router comparison, which still renders its insight strip. */
 export function InsightStripSkeleton() {
   return (
     <div className="border-b border-border">
@@ -74,9 +82,9 @@ export function InsightStripSkeleton() {
 export function FilterBarSkeleton() {
   return (
     <div className="flex h-[49px] items-center gap-2 border-b border-border px-4">
-      {Array.from({ length: 4 }, (_, index) => (
-        <Skeleton key={index} className="h-7 w-20" />
-      ))}
+      <Skeleton className="h-8 w-32" />
+      <Skeleton className="h-8 w-28" />
+      <Skeleton className="ml-auto h-3 w-14" />
     </div>
   );
 }

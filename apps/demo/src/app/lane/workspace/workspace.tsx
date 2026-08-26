@@ -29,7 +29,7 @@ import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
  */
 export type WorkspaceSlots = {
   sidebar: React.ReactNode;
-  insights: React.ReactNode;
+  contextHeader: React.ReactNode;
   filterBar: React.ReactNode;
   taskList: React.ReactNode;
 };
@@ -46,7 +46,7 @@ export function Workspace(slots: WorkspaceSlots) {
 
 function WorkspaceFrame({
   sidebar,
-  insights,
+  contextHeader,
   filterBar,
   taskList,
 }: WorkspaceSlots) {
@@ -83,18 +83,18 @@ function WorkspaceFrame({
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           <LaneErrorBoundary
-            resetKey="insights"
+            resetKey="context"
             fallback={(error, retryBoundary) => (
               <div className="border-b border-border px-4 py-3">
                 <SectionError
-                  title="Insights unavailable"
+                  title="Context unavailable"
                   message={error instanceof Error ? error.message : undefined}
                   onRetry={() => retry(retryBoundary)}
                 />
               </div>
             )}
           >
-            {insights}
+            {contextHeader}
           </LaneErrorBoundary>
 
           <LaneErrorBoundary

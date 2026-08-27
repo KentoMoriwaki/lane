@@ -22,7 +22,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
  * page and `@modal/[...catchAll]` renders nothing.
  *
  * This layout awaits nothing. `getSession()` is handed on unresolved (see
- * `WorkspaceProvider`), so both routes below keep their static shells.
+ * `WorkspaceProvider`), so the nested workspace and task shells stay static.
  */
 export default function LaneLayout({
   children,

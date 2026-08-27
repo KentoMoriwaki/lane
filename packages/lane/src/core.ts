@@ -120,7 +120,6 @@ type LanePromiseCache = {
    */
   promise: Promise<unknown> | LaneWeakSlot<Promise<unknown>>;
   settlement: LanePromiseSettlement | undefined;
-  startedAt: number;
   controller: AbortController | undefined;
   /**
    * This cache is an external read's wait for its owner, not a value being
@@ -180,6 +179,17 @@ type LaneEntry = {
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
+
+/**
+ * Lane measures elapsed cache lifetimes; it never needs calendar time.
+ *
+ * A monotonic clock cannot jump when the system clock changes, and unlike
+ * `Date.now()` it does not make a pure React prerender depend on wall time.
+ * Modern browsers, Node 20+, and current React Native runtimes provide it.
+ */
+export function elapsedNow(): number {
+  return performance.now();
+}
 
 const laneStates = new WeakMap<Lane, LaneState>();
 
@@ -620,7 +630,7 @@ export function subscribeLane(
     }
 
     // Idle with a cache: retained until the departing reader's `gcTime` is up.
-    entry.evictAt = Date.now() + resolveGcTime(state, subscriber.gcTime?.());
+    entry.evictAt = elapsedNow() + resolveGcTime(state, subscriber.gcTime?.());
     scheduleSweep(state);
   };
 }
@@ -904,7 +914,7 @@ function startWarmClock(
     return;
   }
 
-  entry.evictAt = Date.now() + (options?.warmTime ?? state.warmTime);
+  entry.evictAt = elapsedNow() + (options?.warmTime ?? state.warmTime);
   scheduleSweep(state);
 }
 
@@ -940,24 +950,22 @@ function setEntryCache<T>(
   controller: AbortController | undefined,
   options: LaneReadOptions | undefined,
 ): Promise<LaneRead<T>> {
-  const startedAt = Date.now();
-
   // A value, not a promise: the settlement bookkeeping and the read itself
   // happen in this same synchronous run, so the promise handed back is already
   // fulfilled — the case a reveal cannot wait a microtask for. The async path's
   // displacement checks have no window to guard here: nothing can replace
   // `entry.cache` between building this read and installing it.
   if (!isPromiseLike(valueOrPromise)) {
+    const settledAt = elapsedNow();
     const value = shareWithLastFulfilled(entry, valueOrPromise);
-    rememberFulfilled(state, entry, startedAt, value);
+    rememberFulfilled(state, entry, settledAt, value);
     const settled = instrumentedValue<LaneRead<T>>(settledRead(entry, value));
 
     entry.cache = {
       cancelled: false,
       controller,
       promise: cacheSlot(entry, settled),
-      settlement: { at: startedAt, kind: "fulfilled" },
-      startedAt,
+      settlement: { at: settledAt, kind: "fulfilled" },
       waiting: false,
     };
     startWarmClock(state, entry, options);
@@ -970,7 +978,6 @@ function setEntryCache<T>(
     controller,
     promise: undefined as unknown as Promise<unknown>,
     settlement: undefined,
-    startedAt,
     waiting: false,
   };
 
@@ -1021,7 +1028,7 @@ function setEntryCache<T>(
     }
 
     if (!served) {
-      settle({ at: Date.now(), kind: "rejected" });
+      settle({ at: elapsedNow(), kind: "rejected" });
 
       // An external key's failure is "nobody answered", never an answer, so it
       // is not kept: the readers holding this promise are rejected, and the
@@ -1082,7 +1089,7 @@ function setEntryCache<T>(
         return settleWithoutValue(CANCELLED);
       }
 
-      const at = Date.now();
+      const at = elapsedNow();
       const shared = shareWithLastFulfilled(entry, value);
 
       settle({ at, kind: "fulfilled" });
@@ -1286,14 +1293,17 @@ function scheduleSweep(state: LaneState): void {
     clearTimeout(state.sweepTimer);
   }
 
-  const timer = setTimeout(() => sweep(state), Math.max(0, nearest - Date.now()));
+  const timer = setTimeout(
+    () => sweep(state),
+    Math.max(0, nearest - elapsedNow()),
+  );
   state.sweepTimer = timer;
   state.sweepAt = nearest;
   unrefTimer(timer);
 }
 
 function sweep(state: LaneState): void {
-  const now = Date.now();
+  const now = elapsedNow();
 
   state.sweepTimer = undefined;
   state.sweepAt = undefined;
@@ -1410,7 +1420,8 @@ function isStale(
   }
 
   // `now - at >= 0`: any staleTime <= 0 is stale; the Infinity default never is.
-  return Date.now() - cache.settlement.at >= (staleTime ?? DEFAULT_STALE_TIME);
+  const age = elapsedNow() - cache.settlement.at;
+  return age >= (staleTime ?? DEFAULT_STALE_TIME);
 }
 
 function isPromiseLike<T>(value: LaneValue<T>): value is Promise<T> {

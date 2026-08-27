@@ -9,13 +9,11 @@ import { Topbar } from "./topbar";
 import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
 
 /**
- * The frame, and only the frame.
+ * The persistent workspace frame.
  *
- * It reads nothing. Every region arrives as an already-rendered slot from the
- * server, each behind its own Suspense boundary, so this component and the
- * layout it draws are part of the route's static shell — there is no
- * hand-written whole-screen skeleton any more, because the shell *is* this
- * frame with each slot showing its own fallback.
+ * It lives in the list routes' shared layout, so Context navigations replace
+ * only `children`. The sidebar, topbar, open-create state, and their DOM stay
+ * mounted while the right-hand page streams its next regions.
  *
  * The detail is no longer one of those slots. It is a route of its own now, and
  * the intercepted form of it lands in the `@modal` slot that `layout.tsx`
@@ -24,32 +22,32 @@ import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
  * list's half of that row: `flex-1`, and it gives the panel its width back by
  * shrinking.
  *
- * What stays here is the chrome that is genuinely client state: the session
- * gate, the search field, the create dialog, and the retry boundaries.
+ * What stays here is the chrome that is genuinely shared client state: the
+ * session gate, sidebar, search field, create dialog, and their retry boundary.
+ * `WorkspaceContent` below owns the page-specific region boundaries.
  */
-export type WorkspaceSlots = {
+export type WorkspaceProps = {
   sidebar: React.ReactNode;
+  children: React.ReactNode;
+};
+
+export type WorkspaceContentProps = {
   contextHeader: React.ReactNode;
   filterBar: React.ReactNode;
   taskList: React.ReactNode;
 };
 
-export function Workspace(slots: WorkspaceSlots) {
+export function Workspace(props: WorkspaceProps) {
   const { isSignedIn } = useWorkspace();
 
   if (!isSignedIn) {
     return <SignInScreen />;
   }
 
-  return <WorkspaceFrame {...slots} />;
+  return <WorkspaceFrame {...props} />;
 }
 
-function WorkspaceFrame({
-  sidebar,
-  contextHeader,
-  filterBar,
-  taskList,
-}: WorkspaceSlots) {
+function WorkspaceFrame({ sidebar, children }: WorkspaceProps) {
   const [createOpen, setCreateOpen] = React.useState(false);
   const { refresh, isRefreshing } = useWorkspaceRefresh();
 
@@ -81,54 +79,7 @@ function WorkspaceFrame({
           isRefreshing={isRefreshing}
         />
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <LaneErrorBoundary
-            resetKey="context"
-            fallback={(error, retryBoundary) => (
-              <div className="border-b border-border px-4 py-3">
-                <SectionError
-                  title="Context unavailable"
-                  message={error instanceof Error ? error.message : undefined}
-                  onRetry={() => retry(retryBoundary)}
-                />
-              </div>
-            )}
-          >
-            {contextHeader}
-          </LaneErrorBoundary>
-
-          <LaneErrorBoundary
-            resetKey="filters"
-            fallback={(error, retryBoundary) => (
-              <div className="border-b border-border px-4 py-3">
-                <SectionError
-                  title="Filters unavailable"
-                  message={error instanceof Error ? error.message : undefined}
-                  onRetry={() => retry(retryBoundary)}
-                />
-              </div>
-            )}
-          >
-            {filterBar}
-          </LaneErrorBoundary>
-
-          <div className="scrollbar-calm min-h-0 flex-1 overflow-y-auto">
-            <LaneErrorBoundary
-              resetKey="tasks"
-              fallback={(error, retryBoundary) => (
-                <div className="p-4">
-                  <SectionError
-                    title="Couldn't load tasks"
-                    message={error instanceof Error ? error.message : undefined}
-                    onRetry={() => retry(retryBoundary)}
-                  />
-                </div>
-              )}
-            >
-              {taskList}
-            </LaneErrorBoundary>
-          </div>
-        </section>
+        {children}
       </div>
 
       {/* Mounted on open: it reads the URL to open what it creates, which
@@ -137,6 +88,74 @@ function WorkspaceFrame({
         <CreateTaskDialog closeAction={() => setCreateOpen(false)} />
       ) : null}
     </div>
+  );
+}
+
+/** The regions that belong to one Context page, not to the shared frame. */
+export function WorkspaceContent({
+  contextHeader,
+  filterBar,
+  taskList,
+}: WorkspaceContentProps) {
+  const { refresh } = useWorkspaceRefresh();
+
+  const retry = React.useCallback(
+    (retryBoundary: () => void) => {
+      refresh();
+      retryBoundary();
+    },
+    [refresh],
+  );
+
+  return (
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <LaneErrorBoundary
+        resetKey="context"
+        fallback={(error, retryBoundary) => (
+          <div className="border-b border-border px-4 py-3">
+            <SectionError
+              title="Context unavailable"
+              message={error instanceof Error ? error.message : undefined}
+              onRetry={() => retry(retryBoundary)}
+            />
+          </div>
+        )}
+      >
+        {contextHeader}
+      </LaneErrorBoundary>
+
+      <LaneErrorBoundary
+        resetKey="filters"
+        fallback={(error, retryBoundary) => (
+          <div className="border-b border-border px-4 py-3">
+            <SectionError
+              title="Filters unavailable"
+              message={error instanceof Error ? error.message : undefined}
+              onRetry={() => retry(retryBoundary)}
+            />
+          </div>
+        )}
+      >
+        {filterBar}
+      </LaneErrorBoundary>
+
+      <div className="scrollbar-calm min-h-0 flex-1 overflow-y-auto">
+        <LaneErrorBoundary
+          resetKey="tasks"
+          fallback={(error, retryBoundary) => (
+            <div className="p-4">
+              <SectionError
+                title="Couldn't load tasks"
+                message={error instanceof Error ? error.message : undefined}
+                onRetry={() => retry(retryBoundary)}
+              />
+            </div>
+          )}
+        >
+          {taskList}
+        </LaneErrorBoundary>
+      </div>
+    </section>
   );
 }
 

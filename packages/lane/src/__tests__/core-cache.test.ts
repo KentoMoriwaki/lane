@@ -15,6 +15,22 @@ import {
 afterEach(resetVitest);
 
 describe("readOrCreate", () => {
+  it("does not read wall time while a pure loader is pending or settles", async () => {
+    const wallTime = vi.spyOn(Date, "now");
+    const pending = deferred<string>();
+    const lane = createLane();
+
+    const read = readOrCreate(lane, ["tasks"], () => pending.promise);
+
+    expect(wallTime).not.toHaveBeenCalled();
+    pending.resolve("loaded");
+    await expect(read).resolves.toEqual({
+      revision: expect.any(Number),
+      data: "loaded",
+    });
+    expect(wallTime).not.toHaveBeenCalled();
+  });
+
   it("creates a promise only when the key slot has no cache", async () => {
     const lane = createLane();
     const loader = vi.fn(async () => "loaded");
@@ -126,7 +142,6 @@ describe("hydrateMany", () => {
   // invalidation — announced to the key's subscribers — once it is not.
   it("sets freshness metadata from hydration time", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(10_000);
 
     const lane = createLane();
     const listener = vi.fn();
@@ -136,7 +151,7 @@ describe("hydrateMany", () => {
     });
     subscribeInvalidate(lane, ["tasks"], listener);
 
-    vi.setSystemTime(10_999);
+    vi.advanceTimersByTime(999);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).not.toHaveBeenCalled();
@@ -145,7 +160,7 @@ describe("hydrateMany", () => {
       data: "server",
     });
 
-    vi.setSystemTime(11_000);
+    vi.advanceTimersByTime(1);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -153,7 +168,6 @@ describe("hydrateMany", () => {
 
   it("sets freshness metadata from publication time on a client-owned key", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(10_000);
 
     const lane = createLane();
     const listener = vi.fn();
@@ -161,7 +175,7 @@ describe("hydrateMany", () => {
     lane.set(["tasks"], "published");
     subscribeInvalidate(lane, ["tasks"], listener);
 
-    vi.setSystemTime(10_999);
+    vi.advanceTimersByTime(999);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).not.toHaveBeenCalled();
@@ -169,7 +183,7 @@ describe("hydrateMany", () => {
       readOrCreate(lane, ["tasks"], async () => "too-early"),
     ).resolves.toEqual({ revision: expect.any(Number), data: "published" });
 
-    vi.setSystemTime(11_000);
+    vi.advanceTimersByTime(1);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -407,7 +421,6 @@ describe("conditional invalidation", () => {
 
   it("stale invalidation only clears fulfilled cache after staleTime elapses", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(1_000);
 
     const lane = createLane();
     const listener = vi.fn();
@@ -415,7 +428,7 @@ describe("conditional invalidation", () => {
     lane.set(["tasks"], "fresh");
     subscribeInvalidate(lane, ["tasks"], listener);
 
-    vi.setSystemTime(1_999);
+    vi.advanceTimersByTime(999);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).not.toHaveBeenCalled();
@@ -423,7 +436,7 @@ describe("conditional invalidation", () => {
       readOrCreate(lane, ["tasks"], async () => "too-early"),
     ).resolves.toEqual({ revision: expect.any(Number), data: "fresh" });
 
-    vi.setSystemTime(2_000);
+    vi.advanceTimersByTime(1);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -434,7 +447,6 @@ describe("conditional invalidation", () => {
 
   it("measures staleness from promise settlement time, not creation time", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(1_000);
 
     const lane = createLane();
     const pending = deferred<string>();
@@ -443,11 +455,11 @@ describe("conditional invalidation", () => {
     lane.set(["tasks"], pending.promise);
     subscribeInvalidate(lane, ["tasks"], listener);
 
-    vi.setSystemTime(10_000);
+    vi.advanceTimersByTime(9_000);
     pending.resolve("loaded");
     await settlePromiseHandlers();
 
-    vi.setSystemTime(10_999);
+    vi.advanceTimersByTime(999);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).not.toHaveBeenCalled();
@@ -455,7 +467,7 @@ describe("conditional invalidation", () => {
       readOrCreate(lane, ["tasks"], async () => "too-early"),
     ).resolves.toEqual({ revision: expect.any(Number), data: "loaded" });
 
-    vi.setSystemTime(11_000);
+    vi.advanceTimersByTime(1);
     lane.invalidate(["tasks"], { onlyIf: "stale", staleTime: 1_000 });
 
     expect(listener).toHaveBeenCalledTimes(1);

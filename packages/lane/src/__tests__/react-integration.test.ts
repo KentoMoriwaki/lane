@@ -176,7 +176,6 @@ describe("React integration", () => {
 
   it("throttles focus revalidation and allows it again after the window passes", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(10_000);
 
     const lane = createLane();
     const first = deferred<string>();
@@ -216,7 +215,7 @@ describe("React integration", () => {
     });
     expect(loader).toHaveBeenCalledTimes(1);
 
-    vi.setSystemTime(15_000);
+    vi.advanceTimersByTime(5_000);
     await act(async () => {
       window.dispatchEvent(new Event("focus"));
       await settlePromiseHandlers();

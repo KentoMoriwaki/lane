@@ -142,7 +142,6 @@ describe("LaneProvider revalidation", () => {
 
   it("throttles focus within the window and allows it again after it passes", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(10_000);
 
     const onFocus = vi.fn();
     await renderProvider(
@@ -158,7 +157,7 @@ describe("LaneProvider revalidation", () => {
     await fire("visibilitychange", document);
     expect(onFocus).toHaveBeenCalledTimes(1);
 
-    vi.setSystemTime(15_000);
+    vi.advanceTimersByTime(5_000);
     await fire("focus");
     expect(onFocus).toHaveBeenCalledTimes(2);
   });
@@ -209,7 +208,6 @@ describe("LaneProvider with a custom event source", () => {
 
   it("applies the focus throttle to an injected source", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(10_000);
 
     const source = controllableSource();
     const onFocus = vi.fn();
@@ -230,7 +228,7 @@ describe("LaneProvider with a custom event source", () => {
     });
     expect(onFocus).toHaveBeenCalledTimes(1);
 
-    vi.setSystemTime(15_000);
+    vi.advanceTimersByTime(5_000);
     await act(async () => {
       source.fireFocus();
       await settlePromiseHandlers();

@@ -13,7 +13,6 @@ import { getSession, getTeams, getWorkspaceCtx } from "@/app/lane/api/session";
 import { parseWorkspaceState, getterFromRecord } from "@/app/lane/api/url-state";
 import { FilterBar } from "@/app/lane/workspace/filter-bar";
 import { ProjectHeader } from "@/app/lane/workspace/project-header";
-import { Sidebar } from "@/app/lane/workspace/sidebar";
 import {
   TaskDetailPage,
   TaskDetailPanel,
@@ -104,7 +103,8 @@ async function requested({
   return { ...state, filters: filtersForContext(state.filters, context) };
 }
 
-export async function SidebarRegion({ searchParams }: RegionProps) {
+/** Publish the data consumed by the Sidebar mounted in the shared layout. */
+export async function SidebarDataRegion({ searchParams }: RegionProps) {
   const state = await requested({ searchParams });
   const ctx = await getWorkspaceCtx(state.teamId);
   // More than the sidebar draws: this is where the list route publishes its
@@ -133,7 +133,7 @@ export async function SidebarRegion({ searchParams }: RegionProps) {
         members,
       })}
     >
-      <Sidebar />
+      {null}
     </LaneHydration>
   );
 }

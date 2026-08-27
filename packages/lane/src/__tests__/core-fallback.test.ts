@@ -167,9 +167,9 @@ describe("fallback", () => {
 
   it("leaves the entry stale, so a freshness-gated refresh still fires", async () => {
     vi.useFakeTimers();
-    // A realistic clock: the epoch stand-in below is only "as old as possible"
-    // relative to now, and a test clock a few seconds past 0 is not.
-    vi.setSystemTime(new Date("2026-08-07T00:00:00Z"));
+    // The epoch stand-in below is only "as old as possible" once meaningful
+    // elapsed time has passed; a monotonic clock intentionally starts at 0.
+    vi.advanceTimersByTime(60_001);
 
     const lane = createLane();
     const listener = vi.fn();

@@ -14,18 +14,14 @@ type PageProps = {
  * than fetching anything itself.
  *
  * This component awaits nothing, which is the whole point. `searchParams` and
- * every read are resolved inside the regions, below their own boundaries, so
- * the frame and each region's fallback are static: that composition *is* the
- * App Shell, prerendered by the framework rather than written by hand. A
- * navigation paints it immediately and each region streams in as its own read
- * lands — the task list at its own latency, not the slowest read's.
+ * every read are resolved inside the regions, below their own boundaries. The
+ * shared route-group layout keeps the sidebar and topbar mounted, while the
+ * page-specific toolbar and task list stream independently.
  *
  * **The detail is not here any more.** A task is its own route
  * (`task/[id]/page.tsx`), and a row is a `<Link>` to it. Clicking one is
- * intercepted into the `@modal` slot, which `layout.tsx` draws beside this
- * list; opening the same URL directly renders the full page instead. So this
- * file publishes the list's keys and nothing else, and the panel's empty state
- * is `@modal/default.tsx` — literally nothing rendered.
+ * intercepted into the `@modal` slot, which the root `layout.tsx` draws beside
+ * this list; opening the same URL directly renders the full page instead.
  *
  * Mutations arrive by two channels, and only one of them ends here. Creating
  * something calls a Server Action, whose response *is* this route rendered

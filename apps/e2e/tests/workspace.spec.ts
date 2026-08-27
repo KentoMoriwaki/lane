@@ -442,6 +442,67 @@ test("the sidebar selects named Context routes", async ({ page }) => {
   await expect(page.getByTestId("insight-strip")).toHaveCount(0);
 });
 
+test("the sidebar stays mounted across Context routes", async ({ page }) => {
+  await gotoWorkspace(page);
+  await expect(page.getByTestId("sidebar")).toBeVisible();
+
+  // A property placed directly on the DOM node survives only if the shared
+  // workspace layout keeps that exact node. Reconstructing an identical
+  // Sidebar under the next page would lose it (and show its Suspense fallback
+  // while the slower reference-data publication lands).
+  await page.getByTestId("sidebar").evaluate((node) => {
+    node.setAttribute("data-persistence-probe", "standing");
+  });
+
+  await page
+    .getByTestId("sidebar")
+    .getByRole("link", { name: /^Overdue/ })
+    .click();
+
+  await expect(page).toHaveURL(/\/lane\/overdue$/);
+  await expect(page.getByTestId("sidebar")).toHaveAttribute(
+    "data-persistence-probe",
+    "standing",
+  );
+  await expect(page.getByTestId("sidebar-skeleton")).toHaveCount(0);
+  await expect(taskRows(page).first()).toBeVisible();
+});
+
+test("Due soon uses the same open-task predicate as its sidebar count", async ({
+  request,
+}) => {
+  const title = `E2E completed future task ${Date.now()}`;
+  const headers = {
+    "x-team-id": "t_acme",
+    "x-user-id": "u_maya",
+  };
+  const created = await request.post("/api/tasks", {
+    headers,
+    data: {
+      title,
+      status: "done",
+      priority: "none",
+      dueDate: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    },
+  });
+  expect(created.status()).toBe(201);
+
+  const [insightsResponse, tasksResponse] = await Promise.all([
+    request.get("/api/insights", { headers }),
+    request.get("/api/tasks?due=week&limit=100", { headers }),
+  ]);
+  expect(insightsResponse.ok()).toBe(true);
+  expect(tasksResponse.ok()).toBe(true);
+
+  const insights = await insightsResponse.json() as { dueSoon: number };
+  const taskPage = await tasksResponse.json() as {
+    items: Array<{ title: string }>;
+  };
+
+  expect(taskPage.items).toHaveLength(insights.dueSoon);
+  expect(taskPage.items.map((task) => task.title)).not.toContain(title);
+});
+
 test("grouping and sorting change presentation without changing Context", async ({
   page,
   request,
@@ -534,8 +595,9 @@ test("a rerender re-reads every published source", async ({
   page,
   request,
 }) => {
-  // A Context change is a navigation, which renders the whole route — the same
-  // work a create's rerender does. Every published read remains dynamic.
+  // A Context change renders the page publication again — the same source work
+  // a create's rerender does. The shared Sidebar stays mounted while every
+  // published read remains dynamic.
   await gotoWorkspace(page);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 

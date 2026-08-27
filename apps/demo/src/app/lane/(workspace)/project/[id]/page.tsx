@@ -1,40 +1,43 @@
 import { Suspense } from "react";
 import {
   FilterBarRegion,
+  ProjectHeaderRegion,
   SidebarDataRegion,
   TaskListRegion,
 } from "@/app/lane/regions";
 import {
   FilterBarSkeleton,
+  ProjectHeaderSkeleton,
   TaskListSkeleton,
 } from "@/app/lane/workspace/skeletons";
-import type { WorkspaceContextKey } from "@/app/lane/workspace/workspace-context";
 import { WorkspaceContent } from "@/app/lane/workspace/workspace";
 
-type SearchParams = Promise<
-  Record<string, string | string[] | undefined>
->;
+export const instant = true;
 
-/** The page-owned regions for a named, mutually exclusive task Context. */
-export function TaskContextPage({
-  contextKey,
+type ProjectPageProps = {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+/** A project is a fixed list context, not a shortcut that rewrites filters. */
+export default function ProjectPage({
+  params,
   searchParams,
-}: {
-  contextKey: Exclude<WorkspaceContextKey, "project">;
-  searchParams: SearchParams;
-}) {
-  const regionProps = { contextKey, searchParams };
+}: ProjectPageProps) {
+  const regionProps = { projectParams: params, searchParams };
 
   return (
     <>
-      {/* The shared layout owns the mounted Sidebar; this page only publishes
-          the active team's values into the Lane it reads. */}
       <Suspense fallback={null}>
         <SidebarDataRegion searchParams={searchParams} />
       </Suspense>
 
       <WorkspaceContent
-        contextHeader={null}
+        contextHeader={
+          <Suspense fallback={<ProjectHeaderSkeleton />}>
+            <ProjectHeaderRegion {...regionProps} />
+          </Suspense>
+        }
         filterBar={
           <Suspense fallback={<FilterBarSkeleton />}>
             <FilterBarRegion {...regionProps} />

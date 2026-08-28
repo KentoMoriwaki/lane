@@ -7,12 +7,10 @@ import type {
   UpdateTaskInput,
 } from "@/server/api";
 import type { ProjectRef } from "@/app/lane/api/route-reads";
-import { ArrowLeft, Check, FileQuestion, Trash2, X } from "lucide-react";
-import Link from "next/link";
+import { Check, FileQuestion, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 import { toast } from "sonner";
-import type { TaskSurface } from "@/app/lane/regions";
 import {
   useAddTaskLabel,
   useDeleteTask,
@@ -42,54 +40,39 @@ import { StatusControl } from "./status-control";
 import { useWorkspaceUrl } from "./use-workspace-url";
 
 /**
- * **One detail, two shells.**
+ * **One detail, one workspace panel.**
  *
- * `/lane/task/<id>` is a route now, and it renders one of two ways. Clicked
- * from a row it is intercepted into the `@modal` slot and drawn here as the
- * panel beside the list (`TaskDetailPanel`); opened directly, reloaded, or
- * shared it renders as the full page (`TaskDetailPage`). Both are published by
- * the same region and read the same `task(id)` key through the same `useTask`.
- *
- * The `surface` they pass down is not decoration. It answers one question —
- * *is the list on screen beside this?* — and that decides how an edit here
- * converges (`api/hooks.ts`):
- *
- * - **panel**: the list is right there, so the confirmed task is `set` and the
- *   row it owns is patched **in place**, at the index it already occupies.
- * - **page**: no list is visible, so every list entry the lane holds is marked
- *   stale instead. Nothing is read until a list is looked at again.
+ * A soft navigation publishes this through the intercepted slot while the
+ * list page remains active. A direct task visit first establishes All tasks,
+ * then uses the same soft navigation and renders this same panel.
  */
-
 export function TaskDetailPanel({ taskId }: { taskId: string }) {
-  const router = useRouter();
-  // The panel was pushed onto the history by the link that opened it, so
-  // "close" is the same gesture the Back button makes — which is what a user
-  // expects of something that opened over what they were looking at.
-  const onClose = React.useCallback(() => router.back(), [router]);
+  const { commitTaskNavigation } = useWorkspaceUrl();
+
+  React.useLayoutEffect(() => {
+    commitTaskNavigation();
+  }, [commitTaskNavigation, taskId]);
 
   return (
     <DetailPanelShell>
       <React.Suspense key={taskId} fallback={<DetailSkeleton />}>
-        <TaskDetail taskId={taskId} surface="panel" onClose={onClose} />
+        <TaskDetail taskId={taskId} />
       </React.Suspense>
     </DetailPanelShell>
   );
 }
 
-export function TaskDetailPage({ taskId }: { taskId: string }) {
-  return (
-    <DetailPageShell>
-      <React.Suspense key={taskId} fallback={<DetailSkeleton />}>
-        <TaskDetail taskId={taskId} surface="page" />
-      </React.Suspense>
-    </DetailPageShell>
-  );
-}
+/** The route found no task to publish. */
+export function TaskMissingPanel({ taskId }: { taskId: string }) {
+  const { commitTaskNavigation } = useWorkspaceUrl();
 
-/** The read found nothing. Same message, drawn in whichever shell asked. */
-export function TaskMissingPanel() {
+  React.useLayoutEffect(() => {
+    commitTaskNavigation();
+  }, [commitTaskNavigation, taskId]);
+
   return (
     <DetailPanelShell>
+      <PanelCloseHeader />
       <EmptyState
         icon={FileQuestion}
         title="Task not found"
@@ -100,38 +83,19 @@ export function TaskMissingPanel() {
   );
 }
 
-export function TaskMissingPage() {
-  return (
-    <DetailPageShell>
-      <EmptyState
-        icon={FileQuestion}
-        title="Task not found"
-        message="It may have been deleted since this link was made."
-      />
-    </DetailPageShell>
-  );
-}
-
 /**
- * The retry boundary the frame used to hold for the detail column. It moved
- * with the detail: the panel is a sibling of the frame now, not a slot in it,
- * and the page is a route of its own — so each route wraps its own.
+ * The intercepted route owns the retry boundary around the panel it places
+ * beside the persistent workspace readers.
  */
-export function TaskDetailBoundary({
-  surface,
-  children,
-}: {
-  surface: TaskSurface;
-  children: React.ReactNode;
-}) {
+export function TaskDetailBoundary({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const Shell = surface === "panel" ? DetailPanelShell : DetailPageShell;
 
   return (
     <LaneErrorBoundary
-      resetKey={surface}
+      resetKey="task-detail"
       fallback={(error, retryBoundary) => (
-        <Shell>
+        <DetailPanelShell>
+          <PanelCloseHeader />
           <div className="p-4">
             <SectionError
               title="Couldn't load this task"
@@ -144,7 +108,7 @@ export function TaskDetailBoundary({
               }}
             />
           </div>
-        </Shell>
+        </DetailPanelShell>
       )}
     >
       {children}
@@ -163,59 +127,37 @@ function DetailPanelShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function DetailPageShell({ children }: { children: React.ReactNode }) {
+function PanelCloseHeader() {
+  const { closeTask, commitTaskNavigation } = useWorkspaceUrl();
+
+  React.useLayoutEffect(() => {
+    commitTaskNavigation();
+  }, [commitTaskNavigation]);
+
   return (
-    <div
-      data-testid="task-page"
-      className="scrollbar-calm min-w-0 flex-1 overflow-y-auto bg-background"
-    >
-      <div className="mx-auto w-full max-w-2xl px-4 py-6">
-        <BackToList />
-        <div className="mt-4 overflow-hidden rounded-xl border border-border bg-surface">
-          {children}
-        </div>
-      </div>
+    <div className="sticky top-0 z-10 flex justify-end border-b border-border bg-surface/95 px-4 py-2.5 backdrop-blur">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        onClick={closeTask}
+        aria-label="Close panel"
+      >
+        <X className="size-4" />
+      </Button>
     </div>
   );
 }
 
-/**
- * The way back, as a link rather than `router.back()`: this page is what a
- * shared URL or a reload lands on, and those have no history to go back to.
- * The task URL intentionally carries no list Context, so this fallback returns
- * to the all-workspace list (and preserves a non-default team).
- */
-function BackToList() {
-  const { listHref } = useWorkspaceUrl();
-
-  return (
-    <Link
-      href={listHref}
-      className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-    >
-      <ArrowLeft className="size-4" />
-      Back to tasks
-    </Link>
-  );
-}
-
-function TaskDetail({
-  taskId,
-  surface,
-  onClose,
-}: {
-  taskId: string;
-  surface: TaskSurface;
-  onClose?: () => void;
-}) {
+function TaskDetail({ taskId }: { taskId: string }) {
   const task = React.use(useTask(taskId).promise).data;
   const projects = React.use(useProjects().promise).data;
   const members = React.use(useMembers().promise).data;
-  const { closeTask } = useWorkspaceUrl();
-  const update = useUpdateTask(taskId, surface);
-  const addLabel = useAddTaskLabel(taskId, surface);
-  const removeLabel = useRemoveTaskLabel(taskId, surface);
-  const remove = useDeleteTask(surface);
+  const { closeTask, closeDeletedTask } = useWorkspaceUrl();
+  const update = useUpdateTask(taskId);
+  const addLabel = useAddTaskLabel(taskId);
+  const removeLabel = useRemoveTaskLabel(taskId);
+  const remove = useDeleteTask();
   const [isSavedVisible, showSavedNotice] = useSavedNotice();
   const [optimisticTask, addOptimisticTask] = React.useOptimistic(
     task,
@@ -353,11 +295,7 @@ function TaskDetail({
         run: () => remove(task.id),
         onSuccess: () => {
           toast.success("Task deleted");
-          // An intercepted panel has the exact Context immediately behind it;
-          // the independent task page does not, so it uses the canonical all
-          // workspace fallback instead.
-          if (surface === "panel" && onClose) onClose();
-          else closeTask();
+          closeDeletedTask();
         },
       });
     });
@@ -400,16 +338,15 @@ function TaskDetail({
           >
             <Trash2 className="size-4" />
           </Button>
-          {onClose ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onClose}
-              aria-label="Close panel"
-            >
-              <X className="size-4" />
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={closeTask}
+            aria-label="Close panel"
+          >
+            <X className="size-4" />
+          </Button>
         </div>
       </div>
 

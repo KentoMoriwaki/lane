@@ -10,7 +10,7 @@ import { useWorkspaceUrl } from "./use-workspace-url";
 
 /** Named task Context links preserve search and presentation, not predicates. */
 export function useWorkspaceHrefs() {
-  const { contextHref, contextKey, state } = useWorkspaceUrl();
+  const { contextHref, contextKey, fixedProjectId } = useWorkspaceUrl();
 
   const workspaceHref = React.useCallback(
     (key: Exclude<WorkspaceContextKey, "project">) =>
@@ -30,7 +30,7 @@ export function useWorkspaceHrefs() {
 
   return {
     contextKey,
-    projectId: state.filters.projectId,
+    projectId: fixedProjectId,
     projectHref,
     workspaceHref,
   };

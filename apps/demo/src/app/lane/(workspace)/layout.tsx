@@ -10,17 +10,15 @@ import { Workspace } from "@/app/lane/workspace/workspace";
  * Route groups do not affect the URL, but their layout survives navigation
  * among `/lane`, named Contexts, and project pages. The Sidebar is therefore
  * one mounted reader of the root layout's Lane rather than a new reader owned
- * by every page. Each page still publishes the active team's sidebar keys; a
- * navigation hydrates those keys before it commits, and this mounted reader
- * adopts them without returning to its first-load fallback.
- *
- * The standalone task page deliberately sits outside this group. Its
- * intercepted form remains in the root `@modal` slot beside this shell.
+ * by every page. Each Context page owns its visible list and loading boundary;
+ * only the Sidebar, Topbar, and create state persist here.
  */
 export default function WorkspaceLayout({
   children,
+  modal,
 }: {
   children: ReactNode;
+  modal: ReactNode;
 }) {
   return (
     <Workspace
@@ -30,7 +28,10 @@ export default function WorkspaceLayout({
         </Suspense>
       }
     >
-      {children}
+      <div className="flex min-h-0 min-w-0 flex-1">
+        {children}
+        {modal}
+      </div>
     </Workspace>
   );
 }

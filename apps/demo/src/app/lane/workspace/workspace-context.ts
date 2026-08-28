@@ -1,15 +1,45 @@
 import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 
-export const LANE_PATH = "/lane";
+export const LANE_ROOT_PATH = "/lane";
+export const CONTEXTS_PATH = `${LANE_ROOT_PATH}/contexts`;
+export const PROJECTS_PATH = `${LANE_ROOT_PATH}/projects`;
+export const TASKS_PATH = `${LANE_ROOT_PATH}/tasks`;
 
-export type WorkspaceContextKey =
-  | "all"
-  | "mine"
-  | "unassigned"
-  | "overdue"
-  | "due-soon"
-  | "completed"
-  | "project";
+export const WORKSPACE_PRESENTATION_PARAMS = ["group", "sort", "order"] as const;
+export const TASK_WORKSPACE_PARAMS = [
+  "team",
+  "q",
+  ...WORKSPACE_PRESENTATION_PARAMS,
+] as const;
+
+export function workspaceQueryFromRecord(
+  record: Record<string, string | string[] | undefined>,
+): string {
+  const query = new URLSearchParams();
+  for (const key of TASK_WORKSPACE_PARAMS) {
+    const value = record[key];
+    const first = Array.isArray(value) ? value[0] : value;
+    if (first) query.set(key, first);
+  }
+  return query.toString();
+}
+
+export const STATIC_WORKSPACE_CONTEXT_KEYS = [
+  "all",
+  "mine",
+  "unassigned",
+  "overdue",
+  "due-soon",
+  "completed",
+] as const;
+
+export type StaticWorkspaceContextKey =
+  (typeof STATIC_WORKSPACE_CONTEXT_KEYS)[number];
+
+/** The canonical entry to the workspace: the cross-project Context. */
+export const LANE_PATH = `${CONTEXTS_PATH}/all`;
+
+export type WorkspaceContextKey = StaticWorkspaceContextKey | "project";
 
 export type WorkspaceListContext = {
   key: WorkspaceContextKey;
@@ -18,18 +48,18 @@ export type WorkspaceListContext = {
 };
 
 export const WORKSPACE_CONTEXT_PATHS: Record<
-  Exclude<WorkspaceContextKey, "project">,
+  StaticWorkspaceContextKey,
   string
 > = {
   all: LANE_PATH,
-  mine: `${LANE_PATH}/mine`,
-  unassigned: `${LANE_PATH}/unassigned`,
-  overdue: `${LANE_PATH}/overdue`,
-  "due-soon": `${LANE_PATH}/due-soon`,
-  completed: `${LANE_PATH}/completed`,
+  mine: `${CONTEXTS_PATH}/mine`,
+  unassigned: `${CONTEXTS_PATH}/unassigned`,
+  overdue: `${CONTEXTS_PATH}/overdue`,
+  "due-soon": `${CONTEXTS_PATH}/due-soon`,
+  completed: `${CONTEXTS_PATH}/completed`,
 };
 
-const PROJECT_PATHNAME = /^\/lane\/project\/([^/]+)\/?$/;
+const PROJECT_PATHNAME = /^\/lane\/projects\/([^/]+)\/?$/;
 
 export const ALL_WORKSPACE_CONTEXT: WorkspaceListContext = {
   key: "all",
@@ -38,11 +68,11 @@ export const ALL_WORKSPACE_CONTEXT: WorkspaceListContext = {
 };
 
 export function projectPath(projectId: string): string {
-  return `${LANE_PATH}/project/${encodeURIComponent(projectId)}`;
+  return `${PROJECTS_PATH}/${encodeURIComponent(projectId)}`;
 }
 
 export function contextPath(
-  key: Exclude<WorkspaceContextKey, "project">,
+  key: StaticWorkspaceContextKey,
 ): string {
   return WORKSPACE_CONTEXT_PATHS[key];
 }
@@ -62,7 +92,7 @@ export function contextFromPathname(
     }
   }
 
-  const projectMatch = PROJECT_PATHNAME.exec(pathname);
+  const projectMatch = PROJECT_PATHNAME.exec(normalized);
   if (!projectMatch) return null;
 
   const projectId = decodeURIComponent(projectMatch[1]);
@@ -71,21 +101,6 @@ export function contextFromPathname(
     pathname: projectPath(projectId),
     projectId,
   };
-}
-
-/** Convert the old query shortcuts into their named Context on a warm URL. */
-export function legacyContextFromFilters(
-  filters: TaskFilters,
-): WorkspaceContextKey | null {
-  if (filters.projectId) return "project";
-  if (filters.scope === "mine") return "mine";
-  if (filters.scope === "unassigned") return "unassigned";
-  if (filters.due === "overdue") return "overdue";
-  if (filters.due === "week") return "due-soon";
-  if (filters.status.length === 1 && filters.status[0] === "done") {
-    return "completed";
-  }
-  return null;
 }
 
 /**
@@ -122,11 +137,17 @@ export function filtersForContextUrl(filters: TaskFilters): TaskFilters {
 }
 
 export function contextForKey(
-  key: Exclude<WorkspaceContextKey, "project">,
+  key: StaticWorkspaceContextKey,
 ): WorkspaceListContext {
   return {
     key,
     pathname: contextPath(key),
     projectId: null,
   };
+}
+
+export function isStaticWorkspaceContextKey(
+  value: string,
+): value is StaticWorkspaceContextKey {
+  return (STATIC_WORKSPACE_CONTEXT_KEYS as readonly string[]).includes(value);
 }

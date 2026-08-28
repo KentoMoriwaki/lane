@@ -24,7 +24,7 @@ import {
 import { useSelectedTaskId, useWorkspaceUrl } from "./use-workspace-url";
 
 /**
- * The list, and what a row now is: a `<Link>` to `/lane/task/<id>`.
+ * The list, and what a row now is: a `<Link>` to `/lane/tasks/<id>`.
  *
  * Opening a task is a navigation rather than a state change. Clicked from here
  * it is intercepted into the `@modal` slot and drawn as the panel beside this
@@ -33,12 +33,11 @@ import { useSelectedTaskId, useWorkspaceUrl } from "./use-workspace-url";
  * pathname to know which of them is the open one.
  *
  * **The first page is the route's; the depth is the browser's.** `useTasks` is
- * an infinite read on one key: the route published page 1, `loadMore` fetches
- * the next from the browser, and both live under `["tasks", filters]`. What
- * this component does with that is flatten it — the rows are the rows, whoever
- * fetched them — and offer the button at the bottom while `hasNext`. A scroll
- * sentinel would work the same way; a button is the version whose every load is
- * something the user asked for.
+ * an infinite read on one key per Context: the active route publishes page 1,
+ * `loadMore` fetches the next page for the complete filters, and both live in
+   * one value. Search omits `q` from the key so the next page publication can
+   * update the current reader without resetting the whole view. This component
+   * flattens those pages and offers the button while `hasNext`.
  *
  * The stable display policy runs over that flattened list first. Grouping and
  * sorting are a browser-owned projection on top: they never change the Lane
@@ -49,8 +48,9 @@ export function TaskList() {
     contextKey,
     filters,
     taskHref,
-    closeTask,
-    resetFilters,
+    rememberTaskNavigation,
+    closeDeletedTask,
+    clearSearch,
   } = useWorkspaceUrl();
   const selectedTaskId = useSelectedTaskId();
   const hasSearch = filters.q.trim().length > 0;
@@ -58,9 +58,9 @@ export function TaskList() {
   const onDeleted = React.useCallback(
     (taskId: string) => {
       // Only the row that is currently open takes the view with it.
-      if (selectedTaskId === taskId) closeTask();
+      if (selectedTaskId === taskId) closeDeletedTask();
     },
-    [closeTask, selectedTaskId],
+    [closeDeletedTask, selectedTaskId],
   );
   const { id: userId } = useSessionUser();
   const { refresh, isRefreshing, error } = useWorkspaceRefresh();
@@ -109,7 +109,7 @@ export function TaskList() {
             action={
               <button
                 type="button"
-                onClick={resetFilters}
+                onClick={clearSearch}
                 className="text-sm font-medium text-cobalt hover:underline"
               >
                 Clear search
@@ -150,6 +150,7 @@ export function TaskList() {
             currentUserId={userId}
             selectedTaskId={selectedTaskId}
             taskHref={taskHref}
+            rememberTaskNavigation={rememberTaskNavigation}
             onDeleted={onDeleted}
           />
         ))}
@@ -370,6 +371,7 @@ function TaskGroup({
   currentUserId,
   selectedTaskId,
   taskHref,
+  rememberTaskNavigation,
   onDeleted,
 }: {
   groupKey: string;
@@ -379,6 +381,7 @@ function TaskGroup({
   currentUserId: string;
   selectedTaskId: string | null;
   taskHref: (taskId: string) => string;
+  rememberTaskNavigation: (href: string) => void;
   onDeleted: (taskId: string) => void;
 }) {
   return (
@@ -405,6 +408,7 @@ function TaskGroup({
             isMine={task.assignee?.id === currentUserId}
             isSelected={task.id === selectedTaskId}
             href={taskHref(task.id)}
+            navigateAction={rememberTaskNavigation}
             deleteAction={onDeleted}
           />
         ))}

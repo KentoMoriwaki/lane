@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useActiveTeamId } from "./workspace-provider";
-import { LANE_PATH } from "./use-workspace-url";
+import { LANE_PATH } from "./workspace-context";
 
 function teamInitials(name: string) {
   return name

@@ -55,7 +55,8 @@ const emptyDraft: Draft = {
  * lifetime is the open state rather than the frame's.
  */
 export function CreateTaskDialog({ closeAction }: { closeAction: () => void }) {
-  const { fixedProjectId, taskHref } = useWorkspaceUrl();
+  const { fixedProjectId, taskHref, rememberTaskNavigation } =
+    useWorkspaceUrl();
   const router = useRouter();
   const open = true;
   const onOpenChange = (next: boolean) => {
@@ -63,7 +64,11 @@ export function CreateTaskDialog({ closeAction }: { closeAction: () => void }) {
   };
   // The created task opens where a clicked row opens: a push to its route,
   // intercepted into the panel beside the list the action just republished.
-  const createAction = (taskId: string) => router.push(taskHref(taskId));
+  const createAction = (taskId: string) => {
+    const href = taskHref(taskId);
+    rememberTaskNavigation(href);
+    router.push(href);
+  };
 
   const createTask = useCreateTask();
   const [isCreating, startCreateTransition] = React.useTransition();

@@ -11,20 +11,9 @@ import { useWorkspace, useWorkspaceRefresh } from "./workspace-provider";
 /**
  * The persistent workspace frame.
  *
- * It lives in the list routes' shared layout, so Context navigations replace
- * only `children`. The sidebar, topbar, open-create state, and their DOM stay
- * mounted while the right-hand page streams its next regions.
- *
- * The detail is no longer one of those slots. It is a route of its own now, and
- * the intercepted form of it lands in the `@modal` slot that `layout.tsx`
- * renders beside this frame — so what used to be the fifth column here is
- * literally a sibling of this component, drawn one level up. The frame is the
- * list's half of that row: `flex-1`, and it gives the panel its width back by
- * shrinking.
- *
- * What stays here is the chrome that is genuinely shared client state: the
- * session gate, sidebar, search field, create dialog, and their retry boundary.
- * `WorkspaceContent` below owns the page-specific region boundaries.
+ * It lives in the shared route-group layout. Sidebar, Topbar, and open-create
+ * state stay mounted while `children` is the active Context page. Task detail
+ * lands in the route-group's `@modal` slot beside the active list.
  */
 export type WorkspaceProps = {
   sidebar: React.ReactNode;
@@ -91,7 +80,7 @@ function WorkspaceFrame({ sidebar, children }: WorkspaceProps) {
   );
 }
 
-/** The regions that belong to one Context page, not to the shared frame. */
+/** The visible regions owned by one Context page. */
 export function WorkspaceContent({
   contextHeader,
   filterBar,

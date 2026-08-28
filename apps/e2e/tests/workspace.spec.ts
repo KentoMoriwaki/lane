@@ -12,8 +12,10 @@ const GROWTH_TEAM = "Growth Pod";
 const ACME_TASK = "Review billing webhook retry behavior";
 const ACME_TASK_ID = "task_webhook";
 const ACME_INVOICE_TASK = "Generate downloadable invoice PDFs";
+const ACME_INVOICE_TASK_ID = "task_invoice_pdf";
 const GROWTH_TASK = "Welcome email rewrite";
 const BILLING_PROJECT = "Billing";
+const LANE_ALL = "/lane/contexts/all";
 
 /**
  * The page `/api/tasks` serves when nobody names a `limit`
@@ -139,37 +141,24 @@ function searchInput(page: Page) {
   );
 }
 
-/**
- * The two shells `/lane/task/<id>` renders as, each naming itself in the DOM.
- *
- * A `<Link>` from a row is intercepted into the panel beside the list; a direct
- * visit, a reload, or a shared link renders the full page. One URL, one read,
- * two surfaces — and which one is on screen is what decides how an edit made
- * there converges.
- */
+/** The task panel, whether intercepted or reconstructed by a hard load. */
 function detailPanel(page: Page) {
-  return page.getByTestId("task-panel");
-}
-
-function detailPage(page: Page) {
-  return page.getByTestId("task-page");
+  // Next keeps previously visited intercepted trees in hidden Activities.
+  // Interacting with "the panel" always means the one currently on screen.
+  return page.locator('[data-testid="task-panel"]:visible');
 }
 
 function detailTitle(page: Page) {
   return detailPanel(page).locator("textarea").first();
 }
 
-function pageTitle(page: Page) {
-  return detailPage(page).locator("textarea").first();
-}
-
-/** The URL both surfaces share. */
+/** A task has one canonical identity, independent of the list behind it. */
 function taskUrl(taskId: string) {
-  return `/lane/task/${taskId}`;
+  return `/lane/tasks/${taskId}`;
 }
 
 function projectUrl(projectId: string) {
-  return `/lane/project/${projectId}`;
+  return `/lane/projects/${projectId}`;
 }
 
 /** Open a task the way the demo intends it to be opened: click its row. */
@@ -235,10 +224,13 @@ async function sidebarCount(page: Page, label: string): Promise<number> {
   return Number(text.match(/\d+/)?.[0]);
 }
 
-async function gotoWorkspace(page: Page, path = "/lane") {
+async function gotoWorkspace(page: Page, path = LANE_ALL) {
   await page.goto(path);
-  // SSR paints before hydration; settle so interactions reach live handlers.
-  await page.waitForLoadState("networkidle");
+  // App Router streaming and prefetches are allowed to keep network work in
+  // flight. Wait for the actual interactive workspace instead of treating a
+  // quiet transport as application readiness.
+  await expect(page.getByTestId("sidebar")).toBeVisible();
+  await expect(taskRows(page).first()).toBeVisible();
 }
 
 async function createTask(page: Page, title: string) {
@@ -293,7 +285,7 @@ test("the server-owned route paints its frame before any region resolves", async
   await page.goto("/");
 
   await instant(page, async () => {
-    await page.locator('a[href="/lane"]').click();
+    await page.locator(`a[href="${LANE_ALL}"]`).click();
     // There is no hand-written whole-screen shell. The frame reads nothing, so
     // it is static, and what fills the regions is each region's own fallback.
     await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
@@ -313,7 +305,7 @@ test("every region resolves the session through one source read", async ({
   // frame free of awaits. `getSession` is `React.cache`d so it still costs one
   // read; without it this is five.
   await resetRequestDiagnostics(request);
-  await gotoWorkspace(page, "/lane");
+  await gotoWorkspace(page, LANE_ALL);
 
   const sessionReads = (await readRequestDiagnostics(request)).filter(
     (entry) => entry.origin === "server" && entry.path === "/api/me",
@@ -325,7 +317,7 @@ test("regions stream independently rather than landing together", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.locator('a[href="/lane"]').click();
+  await page.locator(`a[href="${LANE_ALL}"]`).click();
 
   // The task list is a fast read; the sidebar waits on the project counts. The
   // list must not be held back to the sidebar's latency.
@@ -350,17 +342,21 @@ test("opening a task is a navigation to its own URL", async ({ page }) => {
 
   await taskLink(page, ACME_TASK).click();
 
-  // The task URL names only the task. The intercepted list stays mounted with
-  // its own search state rather than serializing that state into the task URL.
-  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
+  // Context is deliberately absent. Search/team remain because they refine the
+  // workspace that a direct visit reconstructs behind the canonical task.
+  await expect.poll(() => new URL(page.url()).pathname).toBe(
+    taskUrl(ACME_TASK_ID),
+  );
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe(
+    "billing",
+  );
   // Clicked from a row, it is intercepted: the panel, with the list still there.
   await expect(detailTitle(page)).toHaveValue(ACME_TASK);
-  await expect(detailPage(page)).toHaveCount(0);
   await expect(searchInput(page)).toHaveValue("billing");
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
-test("a reload of a task URL renders the page, not the panel", async ({
+test("a reload reconstructs the same list and panel", async ({
   page,
 }) => {
   await gotoWorkspace(page);
@@ -370,18 +366,20 @@ test("a reload of a task URL renders the page, not the panel", async ({
 
   await page.reload();
 
-  // Nothing intercepts a fresh document load, so `children` is the task page
-  // and the `@modal` slot renders nothing.
-  await expect(pageTitle(page)).toHaveValue(ACME_TASK);
-  await expect(detailPanel(page)).toHaveCount(0);
-  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
-
-  // A directly loaded task has no list Context behind it, so its fallback is
-  // the canonical all-workspace list.
-  await page.getByRole("link", { name: "Back to tasks" }).click();
-  await expect(page).toHaveURL(/\/lane$/);
-  await expect(searchInput(page)).toHaveValue("");
+  // A fresh task request establishes All tasks first and then reopens the same
+  // canonical URL through the list's interceptor.
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await expect.poll(() => new URL(page.url()).pathname).toBe(
+    taskUrl(ACME_TASK_ID),
+  );
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe(
+    "billing",
+  );
+  await expect(searchInput(page)).toHaveValue("billing");
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
+
+  await detailPanel(page).getByRole("button", { name: "Close panel" }).click();
+  await expect(page).toHaveURL(`${LANE_ALL}?q=billing`);
 });
 
 test("clicking the open row again leaves the panel and the list alone", async ({
@@ -391,15 +389,13 @@ test("clicking the open row again leaves the panel and the list alone", async ({
   await openTaskPanel(page, ACME_TASK);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
-  // Its href *is* the panel's URL, so following it would navigate from the task
-  // route rather than from the list — not the referrer the interception
-  // matches, which leaves the task without the list behind it.
+  // Its href already is the current URL. The row prevents a redundant
+  // navigation so the active intercepted tree remains untouched.
   await taskLink(page, ACME_TASK).click();
 
-  await expect(page).toHaveURL(new RegExp(escapeRegExp(taskUrl(ACME_TASK_ID))));
+  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
   await expect(detailTitle(page)).toHaveValue(ACME_TASK);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
-  await expect(detailPage(page)).toHaveCount(0);
 });
 
 test("Back closes the panel and leaves the list standing", async ({ page }) => {
@@ -409,11 +405,126 @@ test("Back closes the panel and leaves the list standing", async ({ page }) => {
 
   await page.goBack();
 
-  await expect(page).toHaveURL(/\/lane(\?|$)/);
+  await expect(page).toHaveURL(new RegExp(`${LANE_ALL.replaceAll("/", "\\/")}(\\?|$)`));
   // Hidden, not gone: the router keeps the intercepted tree alive in a hidden
   // `<Activity>` so reopening it is instant (measured in activity-lab #96).
   await expect(detailPanel(page)).toBeHidden();
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
+});
+
+test("close backs out of the first task opened from a list", async ({ page }) => {
+  await gotoWorkspace(page, `${LANE_ALL}?team=t_growth`);
+  await openTaskPanel(page, GROWTH_TASK);
+  expect(
+    await page.evaluate(
+      () =>
+        (window.history.state as {
+          __laneTaskNavigation?: { closeMode?: string };
+        } | null)?.__laneTaskNavigation?.closeMode,
+    ),
+  ).toBe("back");
+
+  // The list is immediately behind the first task, so close is a real Back.
+  // The task entry remains in front and Forward can reveal it again.
+  await detailPanel(page).getByRole("button", { name: "Close panel" }).click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe(LANE_ALL);
+  await page.goForward();
+  await expect(detailTitle(page)).toHaveValue(GROWTH_TASK);
+});
+
+test("closing a task reached from another task pushes the retained list", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await page.locator(`a[href="${LANE_ALL}"]`).click();
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await openTaskPanel(page, ACME_TASK);
+
+  // Task-to-task navigation is ordinary history: Back from the second task
+  // still reveals the first one.
+  await taskLink(page, ACME_INVOICE_TASK).click();
+  await expect(detailTitle(page)).toHaveValue(ACME_INVOICE_TASK);
+  await expect(page).toHaveURL(taskUrl(ACME_INVOICE_TASK_ID));
+
+  // A: list → detail A → detail B → push(list). Closing is an ordinary App
+  // Router push over the list that remains active behind both details.
+  await resetRequestDiagnostics(request);
+  await detailPanel(page).getByRole("button", { name: "Close panel" }).click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe(LANE_ALL);
+  await expect(detailPanel(page)).toBeHidden();
+  expect(
+    serverReadsOf(await readRequestDiagnostics(request), "/api/tasks"),
+  ).toHaveLength(0);
+
+  // The previous entry was another task, so close pushed the list. Neither task
+  // was erased: Back walks through the task that closed, then the earlier one.
+  await page.goBack();
+  await expect(page).toHaveURL(taskUrl(ACME_INVOICE_TASK_ID));
+  await expect(detailTitle(page)).toHaveValue(ACME_INVOICE_TASK);
+  await page.goBack();
+  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+});
+
+test("direct task bootstrap replaces history and close pushes the retained list", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  const beforeDirect = await page.evaluate(() => window.history.length);
+
+  await page.goto(taskUrl(ACME_TASK_ID));
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  const afterBootstrap = await page.evaluate(() => window.history.length);
+
+  // The document navigation adds the task entry. Bootstrap replaces that same
+  // entry; it must not add an artificial list → task pair.
+  expect(afterBootstrap).toBe(beforeDirect + 1);
+
+  // B: direct task → replace-bootstrap(list + intercepted detail) → push(list).
+  // Reset after bootstrap so the measurement covers the close alone.
+  await resetRequestDiagnostics(request);
+  await detailPanel(page).getByRole("button", { name: "Close panel" }).click();
+  await expect(page).toHaveURL(LANE_ALL);
+  expect(
+    serverReadsOf(await readRequestDiagnostics(request), "/api/tasks"),
+  ).toHaveLength(0);
+
+  // Close pushed the list. Back therefore returns to the task, and one more
+  // Back reaches the page before the direct landing — never a bootstrap list.
+  await page.goBack();
+  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test("a missing direct task can close to All tasks", async ({ page }) => {
+  await page.goto(taskUrl("task_missing"));
+  await expect(detailPanel(page).getByText("Task not found")).toBeVisible();
+
+  await detailPanel(page).getByRole("button", { name: "Close panel" }).click();
+  await expect(page).toHaveURL(LANE_ALL);
+  await expect(taskRows(page).first()).toBeVisible();
+});
+
+test("the legacy /lane entry keeps only supported workspace state", async ({
+  page,
+}) => {
+  await page.goto(
+    "/lane?team=t_growth&q=welcome&group=status&view=kanban&scope=mine&label=l_email",
+  );
+  await expect.poll(() => new URL(page.url()).pathname).toBe(LANE_ALL);
+
+  const query = await page.evaluate(() =>
+    Object.fromEntries(new URL(window.location.href).searchParams),
+  );
+  expect(query).toEqual({
+    team: "t_growth",
+    q: "welcome",
+    group: "status",
+  });
 });
 
 test("search filters the task list", async ({ page }) => {
@@ -437,9 +548,47 @@ test("the sidebar selects named Context routes", async ({ page }) => {
     .getByRole("link", { name: /^My tasks/ })
     .click();
 
-  await expect(page).toHaveURL(/\/lane\/mine$/);
+  await expect(page).toHaveURL(`${LANE_ALL.replace(/all$/, "mine")}`);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
   await expect(page.getByTestId("insight-strip")).toHaveCount(0);
+});
+
+test("a named Context stays mounted behind the canonical task URL", async ({ page }) => {
+  await gotoWorkspace(page, "/lane/contexts/mine");
+
+  await page.getByTestId("view-toolbar").evaluate((node) => {
+    node.setAttribute("data-interception-probe", "standing");
+  });
+
+  await instant(page, async () => {
+    await taskLink(page, ACME_TASK).click();
+
+    // A named Context uses the same interception as All tasks. While the task
+    // RSC is pending, the existing list stays visible; replacing the Context
+    // page here would show its list fallback and discard this probe.
+    await expect(page.getByTestId("task-list-skeleton")).toHaveCount(0);
+    await expect(page.getByTestId("view-toolbar")).toHaveAttribute(
+      "data-interception-probe",
+      "standing",
+    );
+  });
+
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await expect(page.getByTestId("view-toolbar")).toHaveAttribute(
+    "data-interception-probe",
+    "standing",
+  );
+
+  await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
+
+  // The canonical URL does not encode its referrer. A hard load therefore uses
+  // the documented default Context rather than guessing My tasks.
+  await page.reload();
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+
+  await detailPanel(page).getByRole("button", { name: "Close panel" }).click();
+  await expect(page).toHaveURL(LANE_ALL);
 });
 
 test("the sidebar stays mounted across Context routes", async ({ page }) => {
@@ -459,12 +608,12 @@ test("the sidebar stays mounted across Context routes", async ({ page }) => {
     .getByRole("link", { name: /^Overdue/ })
     .click();
 
-  await expect(page).toHaveURL(/\/lane\/overdue$/);
+  await expect(page).toHaveURL(/\/lane\/contexts\/overdue$/);
+  await expect(page.getByTestId("sidebar-skeleton")).toHaveCount(0);
   await expect(page.getByTestId("sidebar")).toHaveAttribute(
     "data-persistence-probe",
     "standing",
   );
-  await expect(page.getByTestId("sidebar-skeleton")).toHaveCount(0);
   await expect(taskRows(page).first()).toBeVisible();
 });
 
@@ -507,12 +656,12 @@ test("grouping and sorting change presentation without changing Context", async 
   page,
   request,
 }) => {
-  await gotoWorkspace(page, "/lane/mine");
+  await gotoWorkspace(page, "/lane/contexts/mine");
   await resetRequestDiagnostics(request);
 
   await page.getByRole("button", { name: "Group: Priority" }).click();
   await page.getByRole("menuitem", { name: "Status" }).click();
-  await expect(page).toHaveURL(/\/lane\/mine\?group=status$/);
+  await expect(page).toHaveURL(/\/lane\/contexts\/mine\?group=status$/);
   await expect(page.locator('[data-group-key="in_progress"]')).toBeVisible();
 
   await page.getByRole("button", { name: "Sort: Default" }).click();
@@ -546,9 +695,11 @@ test("a project is its own fixed workspace view", async ({ page }) => {
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
   await expect(taskRow(page, "Interactive onboarding checklist")).toBeHidden();
 
-  // Search refines the project view instead of falling back to `/lane`.
+  // Search refines the project view instead of falling back to All tasks.
   await searchInput(page).fill("invoice");
-  await expect(page).toHaveURL(/\/lane\/project\/p_billing\?q=invoice/);
+  await expect(page).toHaveURL(
+    /\/lane\/projects\/p_billing\?q=invoice/,
+  );
   await expect(taskRow(page, ACME_INVOICE_TASK)).toBeVisible();
   await expect(taskRow(page, ACME_TASK)).toBeHidden();
 });
@@ -563,9 +714,21 @@ test("a project task opens in the panel and returns to its project", async ({
   await expect(page).toHaveURL(taskUrl(ACME_TASK_ID));
   await expect(page.getByTestId("project-header")).toBeVisible();
 
+  // While the intercepted tree is alive, Back returns to the exact project.
   await page.goBack();
   await expect(page).toHaveURL(projectUrl("p_billing"));
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
+
+  await openTaskPanel(page, ACME_TASK);
+  // A hard load has no referrer Context in the canonical URL, so it rebuilds
+  // the documented All tasks default instead of guessing a project.
+  await page.reload();
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await expect(page.getByTestId("project-header")).toHaveCount(0);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
+
+  await detailPanel(page).getByRole("button", { name: "Close panel" }).click();
+  await expect(page).toHaveURL(LANE_ALL);
 });
 
 test("a load reads every dynamic source", async ({
@@ -577,7 +740,7 @@ test("a load reads every dynamic source", async ({
   // strip one `/api/insights`. The reference reads are dynamic too, so a warm
   // load still reaches each of their sources.
   await resetRequestDiagnostics(request);
-  await gotoWorkspace(page, "/lane");
+  await gotoWorkspace(page, LANE_ALL);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
   const records = await readRequestDiagnostics(request);
@@ -606,7 +769,7 @@ test("a rerender re-reads every published source", async ({
     .getByTestId("sidebar")
     .getByRole("link", { name: /^My tasks/ })
     .click();
-  await expect(page).toHaveURL(/\/lane\/mine$/);
+  await expect(page).toHaveURL(/\/lane\/contexts\/mine$/);
   await expect(page.getByTestId("task-list-skeleton")).toBeHidden();
 
   const records = await readRequestDiagnostics(request);
@@ -764,7 +927,7 @@ test("deleting a task drops its row and clears the detail", async ({
   // The row leaves every list holding it as soon as the API confirms — no
   // republication in between.
   await expect(taskRow(page, title)).toBeHidden();
-  await expect(page).not.toHaveURL(/\/lane\/task\//);
+  await expect(page).not.toHaveURL(/\/lane\/tasks\//);
   // The intercepted tree stays mounted but hidden after the view moves back to
   // the list (router keep-alive); what matters is that nothing shows it.
   await expect(detailPanel(page)).toBeHidden();
@@ -922,39 +1085,31 @@ test("a failed refresh keeps data visible and recovers through the chip", async 
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
 });
 
-/**
- * The other surface, and the whole reason a task is a route of its own.
- *
- * An edit made where no list is on screen marks every list entry the lane holds
- * instead of rewriting one. Nothing is read for it while the page is up — a
- * marked key with no reader stays marked — and the read happens when a list is
- * revealed again.
- */
-test("an edit on the task page is read again only when the list is", async ({
+test("an edit after a hard task load converges into the visible list", async ({
   page,
   request,
 }) => {
   await gotoWorkspace(page);
   await openTaskPanel(page, ACME_TASK);
 
-  // A reload of the same URL is not intercepted, so the detail is now the full
-  // page: same task, same key, no list beside it.
+  // Reload enters through the canonical route, rebuilds All tasks, and then
+  // reopens the detail through the same interceptor used by a row click.
   await page.reload();
-  await expect(pageTitle(page)).toHaveValue(ACME_TASK);
-  await expect(detailPanel(page)).toHaveCount(0);
+  await expect(detailTitle(page)).toHaveValue(ACME_TASK);
+  await expect(taskRow(page, ACME_TASK)).toBeVisible();
 
   await resetRequestDiagnostics(request);
   const next = await chooseAnotherStatus(
     page,
-    detailPage(page).getByRole("button", { name: /^Status:/ }),
+    detailPanel(page).getByRole("button", { name: /^Status:/ }),
   );
   await expect(page.getByText("Saved")).toBeVisible();
   await expect(
-    detailPage(page).getByRole("button", { name: `Status: ${next}` }),
+    taskRow(page, ACME_TASK).getByRole("button", { name: `Status: ${next}` }),
   ).toBeVisible();
 
-  // One write and nothing else. The marks this edit left have no reader on this
-  // page — no list, no strip, no sidebar — so no rerender was asked for.
+  // The mutation response patches the task, row, and derived counts. The hard
+  // route uses the same convergence path as the intercepted panel.
   const afterEdit = await readRequestDiagnostics(request);
   expect(
     afterEdit.filter(
@@ -963,27 +1118,6 @@ test("an edit on the task page is read again only when the list is", async ({
   ).toHaveLength(1);
   expect(serverReadsOf(afterEdit, "/api/tasks")).toHaveLength(0);
   expect(serverReadsOf(afterEdit, "/api/insights")).toHaveLength(0);
-
-  await resetRequestDiagnostics(request);
-  await page.goBack();
-
-  // Back on the list: it arrives freshly sorted, with the edit in it, and the
-  // insights are the ones that go with it.
-  await expect(taskRow(page, ACME_TASK)).toBeVisible();
-  await expect(
-    taskRow(page, ACME_TASK).getByRole("button", { name: `Status: ${next}` }),
-  ).toBeVisible();
-
-  // Exactly one render answered the traverse.
-  const afterBack = await readRequestDiagnostics(request);
-  expect(serverReadsOf(afterBack, "/api/tasks")).toHaveLength(1);
-  expect(serverReadsOf(afterBack, "/api/insights")).toHaveLength(1);
-  for (const path of DYNAMIC_REFERENCE_READ_PATHS) {
-    expect(
-      serverReadsOf(afterBack, path).length,
-      `${path} after a back`,
-    ).toBeGreaterThan(0);
-  }
 });
 
 /**
@@ -1039,17 +1173,24 @@ test("a project's count follows a task the browser moved", async ({
   expect(serverReadsOf(afterDelete, "/api/projects")).toHaveLength(0);
 });
 
-test("opening a task paints the panel's shell before the read lands", async ({
+test("opening a task keeps the list standing until the detail lands", async ({
   page,
 }) => {
   await gotoWorkspace(page);
   await expect(taskRow(page, ACME_TASK)).toBeVisible();
+  await page.getByTestId("view-toolbar").evaluate((node) => {
+    node.setAttribute("data-detail-probe", "standing");
+  });
 
-  // The intercepted route makes the same claim the list does: its shell is
-  // static, so the navigation produces UI without waiting for the server.
+  // The current Context remains the immediate UI while the task-only RSC is
+  // pending. No whole-list fallback or remount is allowed on the way in.
   await instant(page, async () => {
     await taskLink(page, ACME_TASK).click();
-    await expect(page.getByTestId("task-panel-skeleton")).toBeVisible();
+    await expect(page.getByTestId("task-list-skeleton")).toHaveCount(0);
+    await expect(page.getByTestId("view-toolbar")).toHaveAttribute(
+      "data-detail-probe",
+      "standing",
+    );
   });
 
   await expect(detailTitle(page)).toHaveValue(ACME_TASK);
@@ -1146,42 +1287,4 @@ test("an inline edit keeps the pages the browser loaded", async ({
   expect(browserReadsOf(records, "/api/tasks")).toHaveLength(0);
   // Both pages are still standing.
   expect((await rowOrder(page)).length).toBe(before.length);
-});
-
-test("an edit on the task page resets the list to one page when it is looked at again", async ({
-  page,
-}) => {
-  await gotoWorkspace(page);
-  await loadMore(page);
-  expect(await taskRows(page).count()).toBeGreaterThan(PAGE_SIZE);
-
-  // The other surface: a direct visit is not intercepted, so this is the full
-  // task page with no list beside it, and an edit here marks every list entry
-  // stale rather than patching a row.
-  await page.goto(taskUrl(ACME_TASK_ID));
-  await expect(pageTitle(page)).toHaveValue(ACME_TASK);
-  await expect(detailPanel(page)).toHaveCount(0);
-
-  const next = await chooseAnotherStatus(
-    page,
-    detailPage(page).getByRole("button", { name: /^Status:/ }),
-  );
-  await expect(page.getByText("Saved")).toBeVisible();
-
-  await page.goBack();
-
-  // One page, freshly sorted, with the edit in it — and the button back, because
-  // there is more again. An explicit invalidate resets the depth by design:
-  // "this list is stale" is said about pages 2..n as well, and they cannot be
-  // re-derived without walking the cursor chain from the start.
-  await expect(taskRow(page, ACME_TASK)).toBeVisible();
-  await expect(
-    taskRow(page, ACME_TASK).getByRole("button", { name: `Status: ${next}` }),
-  ).toBeVisible();
-  expect(await taskRows(page).count()).toBe(PAGE_SIZE);
-  await expect(loadMoreButton(page)).toBeVisible();
-
-  // And the browser can buy the depth back.
-  await loadMore(page);
-  await expect(taskRow(page, ACME_PAGE_TWO_TASK)).toBeVisible();
 });

@@ -1,51 +1,81 @@
 import { Suspense } from "react";
 import {
-  FilterBarRegion,
+  ProjectHeaderRegion,
   SidebarDataRegion,
   TaskListRegion,
 } from "@/app/lane/regions";
+import { FilterBar } from "@/app/lane/workspace/filter-bar";
 import {
   FilterBarSkeleton,
+  ProjectHeaderSkeleton,
   TaskListSkeleton,
 } from "@/app/lane/workspace/skeletons";
-import type { WorkspaceContextKey } from "@/app/lane/workspace/workspace-context";
+import { TaskList } from "@/app/lane/workspace/task-list";
+import { TaskRouteBootstrap } from "@/app/lane/workspace/task-route-bootstrap";
 import { WorkspaceContent } from "@/app/lane/workspace/workspace";
 
 type SearchParams = Promise<
   Record<string, string | string[] | undefined>
 >;
 
-/** The page-owned regions for a named, mutually exclusive task Context. */
+/** The visible page and request-bound data for one task Context. */
 export function TaskContextPage({
-  contextKey,
+  contextParams,
+  projectParams,
   searchParams,
 }: {
-  contextKey: Exclude<WorkspaceContextKey, "project">;
+  contextParams?: Promise<{ context: string }>;
+  projectParams?: Promise<{ projectId: string }>;
   searchParams: SearchParams;
 }) {
-  const regionProps = { contextKey, searchParams };
+  const regionProps = {
+    contextParams,
+    projectParams,
+    searchParams,
+  };
 
   return (
     <>
-      {/* The shared layout owns the mounted Sidebar; this page only publishes
-          the active team's values into the Lane it reads. */}
+      {/* Only the Sidebar reader lives outside this page, because its layout is
+          deliberately persistent across Context navigations. */}
       <Suspense fallback={null}>
         <SidebarDataRegion searchParams={searchParams} />
       </Suspense>
 
-      <WorkspaceContent
-        contextHeader={null}
-        filterBar={
-          <Suspense fallback={<FilterBarSkeleton />}>
-            <FilterBarRegion {...regionProps} />
-          </Suspense>
+      {/* The page owns both the list publication and its visible readers. A
+          direct task visit establishes this page first; the subsequent
+          intercepted navigation leaves it mounted and adds only the panel. */}
+      <Suspense
+        fallback={
+          <WorkspaceContent
+            contextHeader={projectParams ? <ProjectHeaderSkeleton /> : null}
+            filterBar={<FilterBarSkeleton />}
+            taskList={<TaskListSkeleton />}
+          />
         }
-        taskList={
-          <Suspense fallback={<TaskListSkeleton />}>
-            <TaskListRegion {...regionProps} />
-          </Suspense>
-        }
-      />
+      >
+        <TaskListRegion {...regionProps}>
+          <>
+            <WorkspaceContent
+              contextHeader={
+                projectParams ? (
+                  <Suspense fallback={<ProjectHeaderSkeleton />}>
+                    <ProjectHeaderRegion projectParams={projectParams} />
+                  </Suspense>
+                ) : null
+              }
+              filterBar={<FilterBar />}
+              taskList={<TaskList />}
+            />
+            {/* Do not change the URL until this publication and its readers
+                have hydrated; otherwise selected-row state can differ between
+                the server list and its first client render. */}
+            <Suspense fallback={null}>
+              <TaskRouteBootstrap />
+            </Suspense>
+          </>
+        </TaskListRegion>
+      </Suspense>
     </>
   );
 }

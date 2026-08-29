@@ -10,7 +10,7 @@ import { EMPTY_FILTERS, type TaskFilters } from "./endpoints";
  *
  * `selectedTaskId` — the `?task=<id>` parameter — belongs to `/app-router`
  * alone, which shares this module. `/lane` moved its selection out of the query
- * string and into the route (`/lane/task/[id]`, panel or page), so it never
+ * string and into the canonical route (`/lane/tasks/[taskId]`), so it never
  * reads or writes this field; `buildWorkspaceSearch` simply never sees one.
  */
 

@@ -22,9 +22,9 @@ import { StatusControl } from "./status-control";
 /**
  * A row is a link to the task's own route.
  *
- * Clicking it is a soft navigation to `/lane/task/<id>`, intercepted into the
- * `@modal` slot so the detail opens beside this list and the list itself is
- * never re-rendered by the navigation. The href carries the current filters and
+ * Clicking it is a soft navigation to `/lane/tasks/<id>`, intercepted into the
+ * workspace's `@modal` slot so the detail opens beside this mounted list.
+ * The href carries the current filters and
  * team along, which is what keeps the list reading the very key it was
  * published under while the panel is on top of it.
  *
@@ -43,6 +43,7 @@ export function TaskRow({
   isMine,
   dimmed,
   href,
+  navigateAction,
   deleteAction,
 }: {
   task: Task;
@@ -50,12 +51,13 @@ export function TaskRow({
   isMine: boolean;
   dimmed?: boolean;
   href: string;
+  navigateAction?: (href: string) => void;
   deleteAction?: (taskId: string) => void;
 }) {
   // The list is on screen beside whatever this opens, so an edit made from a
   // row patches the row in place rather than marking the list stale.
-  const update = useUpdateTask(task.id, "panel");
-  const remove = useDeleteTask("panel");
+  const update = useUpdateTask(task.id);
+  const remove = useDeleteTask();
   const [isUpdating, startUpdateTransition] = React.useTransition();
   const [isDeleting, startDeleteTransition] = React.useTransition();
   const [deleteConfirmed, setDeleteConfirmed] = React.useState(false);
@@ -125,12 +127,10 @@ export function TaskRow({
         aria-label={optimisticTask.title}
         aria-current={isSelected ? "page" : undefined}
         // Going where you already are is not a navigation, and here it is a
-        // destructive one: this href is the panel's own URL, so a click on the
-        // open row navigates *from* the task route rather than from the list,
-        // which is not the referrer the interception matches — the router
-        // renders the task without the list behind it. Nothing to do instead:
-        // the panel is already open on this task.
+        // redundant one: this href is the panel's current URL. Nothing to do
+        // instead; the panel is already open on this task.
         onClick={isSelected ? (event) => event.preventDefault() : undefined}
+        onNavigate={() => navigateAction?.(href)}
         className="absolute inset-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
       />
 
@@ -239,4 +239,3 @@ export function TaskRow({
     </div>
   );
 }
-

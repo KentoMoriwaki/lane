@@ -2,36 +2,94 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
-import { EMPTY_FILTERS, type TaskFilters } from "@/app/lane/api/endpoints";
 import {
   type WorkspaceUrlState,
   buildWorkspaceHref,
   parseWorkspaceState,
 } from "@/app/lane/api/url-state";
+import {
+  ALL_WORKSPACE_CONTEXT,
+  TASKS_PATH,
+  contextFromPathname,
+  filtersForContext,
+  filtersForContextUrl,
+  type WorkspaceListContext,
+  WORKSPACE_PRESENTATION_PARAMS,
+} from "./workspace-context";
 
-type HistoryMode = "push" | "replace";
-
-/** The list route. Filters and the team live in its query string. */
-export const LANE_PATH = "/lane";
-
-/** The path a task's own route has, panel or page — they are one URL. */
-export function taskPath(taskId: string): string {
-  return `${LANE_PATH}/task/${encodeURIComponent(taskId)}`;
+/** A task has one canonical identity, independent of the list behind it. */
+function taskPath(taskId: string): string {
+  return `${TASKS_PATH}/${encodeURIComponent(taskId)}`;
 }
 
-const TASK_PATHNAME = /^\/lane\/task\/([^/]+)\/?$/;
+const TASK_PATHNAME = /^\/lane\/tasks\/([^/]+)\/?$/;
+const TASK_NAVIGATION_STATE = "__laneTaskNavigation";
+
+type TaskNavigationState = {
+  closeMode: "back" | "push";
+  list: string;
+  to: string;
+};
+
+let pendingTaskNavigation: TaskNavigationState | null = null;
+
+function canonicalBrowserHref(href: string): string {
+  const url = new URL(href, window.location.origin);
+  url.searchParams.sort();
+  const search = url.searchParams.toString();
+  return `${url.pathname}${search ? `?${search}` : ""}`;
+}
+
+function browserHref(): string {
+  return canonicalBrowserHref(
+    `${window.location.pathname}${window.location.search}`,
+  );
+}
+
+function taskNavigationFromHistory(): TaskNavigationState | null {
+  const state: unknown = window.history.state;
+  if (!state || typeof state !== "object") return null;
+
+  const navigation = (state as Record<string, unknown>)[TASK_NAVIGATION_STATE];
+  if (!navigation || typeof navigation !== "object") return null;
+
+  const { closeMode, list, to } = navigation as Record<string, unknown>;
+  return (closeMode === "back" || closeMode === "push") &&
+    typeof list === "string" &&
+    typeof to === "string"
+    ? { closeMode, list, to }
+    : null;
+}
+
+function stateForContext(
+  state: WorkspaceUrlState,
+  context: WorkspaceListContext,
+): WorkspaceUrlState {
+  return { ...state, filters: filtersForContext(state.filters, context) };
+}
+
+function stateForListUrl(state: WorkspaceUrlState): WorkspaceUrlState {
+  return { ...state, filters: filtersForContextUrl(state.filters) };
+}
+
+function withPresentation(
+  href: string,
+  source: URLSearchParams,
+): string {
+  const url = new URL(href, "http://lane.local");
+  for (const key of WORKSPACE_PRESENTATION_PARAMS) {
+    const value = source.get(key);
+    if (value) url.searchParams.set(key, value);
+  }
+  const search = url.searchParams.toString();
+  return `${url.pathname}${search ? `?${search}` : ""}`;
+}
 
 /**
  * **The open task, read from the route rather than from a query parameter.**
  *
- * It used to be `?task=<id>` on the list route. It is a path now, and that path
- * means two different renders — the intercepted panel when a `<Link>` brought
- * the user here, the full page on a direct visit — so the *pathname* is the one
- * thing both have in common, and it is what the list highlights against.
- *
- * `useParams()` is not used for this on purpose: while the panel is open the
- * list sits in a slot that has no `[id]` of its own, and what it needs to know
- * is what the URL says, not what its own segment matched.
+ * A row navigates to the task's canonical URL. The intercepted panel keeps the
+ * current list tree alive; a direct visit bootstraps All tasks first.
  */
 export function useSelectedTaskId(): string | null {
   const pathname = usePathname();
@@ -42,90 +100,211 @@ export function useSelectedTaskId(): string | null {
 
 export function useWorkspaceUrl() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchString = searchParams.toString();
-  const [isPending, startTransition] = React.useTransition();
+  const [, startTransition] = React.useTransition();
+
+  const parsed = React.useMemo<WorkspaceUrlState>(() => {
+    const params = new URLSearchParams(searchString);
+    return parseWorkspaceState((key) => params.get(key));
+  }, [searchString]);
+  const currentRouteContext = React.useMemo(
+    () => contextFromPathname(pathname),
+    [pathname],
+  );
+  // A canonical `/lane/tasks/:id` URL intentionally carries no list Context.
+  // The list already mounted under an intercepted task remains its owner,
+  // so each long-lived list reader remembers the last Context URL it saw.
+  // A direct task visit first mounts All tasks through `TaskRouteBootstrap`,
+  // giving every reader the same initial value before interception starts.
+  const contextRef = React.useRef(ALL_WORKSPACE_CONTEXT);
+  const listSearchRef = React.useRef(searchString);
+  if (currentRouteContext) {
+    contextRef.current = currentRouteContext;
+    listSearchRef.current = searchString;
+  }
+  const context = currentRouteContext ?? contextRef.current;
+  const listSearchString = currentRouteContext
+    ? searchString
+    : listSearchRef.current;
 
   const state = React.useMemo<WorkspaceUrlState>(
-    () => {
-      const params = new URLSearchParams(searchString);
-      return parseWorkspaceState((key) => params.get(key));
-    },
-    [searchString],
+    () => stateForContext(parsed, context),
+    [context, parsed],
   );
 
-  // A debounced search commit fires a few hundred milliseconds after the
-  // keystroke that scheduled it, by which time a link navigation may already
-  // have changed the view. Writes therefore merge onto the URL as it is at write
-  // time, not onto a render-time snapshot captured in a closure: a late commit
-  // can only lose `q` to a newer value instead of restoring the whole previous
-  // filter set. Reading `window.location` keeps this out of render, where a
-  // mirrored ref would be written by renders that never commit.
-  const readCurrentState = React.useCallback((): WorkspaceUrlState => {
+  const readCurrent = React.useCallback((): {
+    context: WorkspaceListContext;
+    params: URLSearchParams;
+    state: WorkspaceUrlState;
+  } => {
     const params = new URLSearchParams(window.location.search);
-    return parseWorkspaceState((key) => params.get(key));
+    const parsed = parseWorkspaceState((key) => params.get(key));
+    const context =
+      contextFromPathname(window.location.pathname) ?? contextRef.current;
+
+    return {
+      context,
+      params,
+      state: stateForContext(parsed, context),
+    };
   }, []);
 
-  // Every filter write targets the list route, never the pathname it was called
-  // from. A filter changed with the panel open belongs to the list, and landing
-  // on `/lane` is also what closes the panel — the slot matches nothing there.
-  const write = React.useCallback(
-    (next: Partial<WorkspaceUrlState>, mode: HistoryMode) => {
-      const href = buildWorkspaceHref(LANE_PATH, readCurrentState(), next);
-      startTransition(() => {
-        if (mode === "push") {
-          router.push(href, { scroll: false });
-        } else {
-          router.replace(href, { scroll: false });
-        }
-      });
+  // Search is the sole refinement outside the named Context. It uses replace
+  // so typing does not fill browser history, and it preserves Group/Sort since
+  // those describe the same list rather than a new server query.
+  const replaceSearch = React.useCallback(
+    (q: string) => {
+      const current = readCurrent();
+      const nextState = {
+        ...current.state,
+        filters: { ...current.state.filters, q },
+      };
+      const href = withPresentation(
+        buildWorkspaceHref(
+          current.context.pathname,
+          stateForListUrl(nextState),
+          {},
+        ),
+        current.params,
+      );
+      startTransition(() => router.replace(href, { scroll: false }));
     },
-    [readCurrentState, router, startTransition],
+    [readCurrent, router],
   );
 
-  // Discrete filter/view actions push a history entry so Back returns to the
-  // previous view. Continuous input (search typing) passes `mode: "replace"`
-  // so it does not flood the history stack.
-  const patchFilters = React.useCallback(
-    (patch: Partial<TaskFilters>, mode: HistoryMode = "push") =>
-      write({ filters: { ...readCurrentState().filters, ...patch } }, mode),
-    [readCurrentState, write],
+  const clearSearch = React.useCallback(
+    () => replaceSearch(""),
+    [replaceSearch],
   );
 
-  const resetFilters = React.useCallback(
-    () => write({ filters: { ...EMPTY_FILTERS } }, "push"),
-    [write],
-  );
-
-  // The task links, with the view carried along: the filters and the team stay
-  // in the query string across the navigation, so the list behind an
-  // intercepted panel keeps reading the very key it was published under, and
-  // the back link restores the view the user left.
+  // The task's path is Context-free. Team, search, and presentation remain in
+  // its query because they are independent workspace state, not its return URL.
   const taskHref = React.useCallback(
-    (taskId: string) => buildWorkspaceHref(taskPath(taskId), state, {}),
-    [state],
+    (taskId: string) =>
+      withPresentation(
+        buildWorkspaceHref(
+          taskPath(taskId),
+          { ...stateForListUrl(state), selectedTaskId: null },
+          {},
+        ),
+        new URLSearchParams(listSearchString),
+      ),
+    [listSearchString, state],
   );
 
   const listHref = React.useMemo(
-    () => buildWorkspaceHref(LANE_PATH, state, {}),
-    [state],
+    () =>
+      withPresentation(
+        buildWorkspaceHref(context.pathname, stateForListUrl(state), {}),
+        new URLSearchParams(listSearchString),
+      ),
+    [context.pathname, listSearchString, state],
   );
 
-  /** Leave the detail without adding a history entry — used after a delete. */
+  const contextHref = React.useCallback(
+    (target: WorkspaceListContext) =>
+      withPresentation(
+        buildWorkspaceHref(target.pathname, stateForListUrl(state), {}),
+        new URLSearchParams(listSearchString),
+      ),
+    [listSearchString, state],
+  );
+
+  /** Record the source while `<Link>` remains responsible for the navigation. */
+  const rememberTaskNavigation = React.useCallback(
+    (href: string, options?: { closeMode?: "back" | "push" }) => {
+      const from = browserHref();
+      const list = canonicalBrowserHref(listHref);
+      pendingTaskNavigation = {
+        closeMode: options?.closeMode ?? (from === list ? "back" : "push"),
+        list,
+        to: canonicalBrowserHref(href),
+      };
+    },
+    [listHref],
+  );
+
+  /** Attach the recorded source to the new task's own browser-history entry. */
+  const commitTaskNavigation = React.useCallback(() => {
+    if (!pendingTaskNavigation) return;
+
+    const current = browserHref();
+    if (pendingTaskNavigation.to !== current) return;
+
+    const state: unknown = window.history.state;
+    const nextState = state && typeof state === "object" ? { ...state } : {};
+    window.history.replaceState(
+      {
+        ...nextState,
+        [TASK_NAVIGATION_STATE]: pendingTaskNavigation,
+      },
+      "",
+      current,
+    );
+    pendingTaskNavigation = null;
+  }, []);
+
+  const closeTarget = React.useCallback(() => {
+    const current = readCurrent();
+    const fallbackHref = withPresentation(
+      buildWorkspaceHref(
+        current.context.pathname,
+        stateForListUrl(current.state),
+        {},
+      ),
+      current.params,
+    );
+    const navigation = taskNavigationFromHistory();
+    const currentHref = browserHref();
+    const targetHref =
+      navigation?.to === currentHref && isWorkspaceListHref(navigation.list)
+        ? navigation.list
+        : canonicalBrowserHref(fallbackHref);
+
+    return { currentHref, navigation, targetHref };
+  }, [readCurrent]);
+
+  /** Close to the list without erasing the task that is being closed. */
   const closeTask = React.useCallback(() => {
-    const href = buildWorkspaceHref(LANE_PATH, readCurrentState(), {});
-    startTransition(() => router.replace(href, { scroll: false }));
-  }, [readCurrentState, router, startTransition]);
+    const { currentHref, navigation, targetHref } = closeTarget();
+
+    startTransition(() => {
+      if (
+        navigation?.to === currentHref &&
+        navigation.closeMode === "back"
+      ) {
+        router.back();
+      } else {
+        router.push(targetHref, { scroll: false });
+      }
+    });
+  }, [closeTarget, router]);
+
+  /** A deleted task must not remain as the entry immediately being left. */
+  const closeDeletedTask = React.useCallback(() => {
+    const { targetHref } = closeTarget();
+    startTransition(() => router.replace(targetHref, { scroll: false }));
+  }, [closeTarget, router]);
 
   return {
-    state,
-    teamId: state.teamId,
     filters: state.filters,
-    isPending,
-    listHref,
+    contextKey: context.key,
+    contextPathname: context.pathname,
+    fixedProjectId: context.projectId,
     taskHref,
+    contextHref,
+    rememberTaskNavigation,
+    commitTaskNavigation,
     closeTask,
-    patchFilters,
-    resetFilters,
+    closeDeletedTask,
+    replaceSearch,
+    clearSearch,
   };
+}
+
+function isWorkspaceListHref(href: string): boolean {
+  const url = new URL(href, window.location.origin);
+  return contextFromPathname(url.pathname) !== null;
 }

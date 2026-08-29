@@ -2,7 +2,6 @@
 
 import { Check, ChevronsUpDown, Users } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import * as React from "react";
 import { useTeams } from "@/app/lane/api/hooks";
 import { buildWorkspaceHref, EMPTY_VIEW_STATE } from "@/app/lane/api/url-state";
@@ -15,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useActiveTeamId } from "./workspace-provider";
+import { LANE_PATH } from "./workspace-context";
 
 function teamInitials(name: string) {
   return name
@@ -26,22 +26,20 @@ function teamInitials(name: string) {
 }
 
 export function TeamSwitcher() {
-  const pathname = usePathname();
   const activeTeamId = useActiveTeamId();
   const teams = React.use(useTeams().promise).data;
 
   const active = teams.find((team) => team.id === activeTeamId) ?? teams[0];
   const hrefForTeam = React.useCallback(
     (teamId: string) =>
-      buildWorkspaceHref(pathname, EMPTY_VIEW_STATE, { teamId }),
-    [pathname],
+      buildWorkspaceHref(LANE_PATH, EMPTY_VIEW_STATE, { teamId }),
+    [],
   );
-  // No eviction step. Every workspace key is published by the route, so the
-  // navigation this link performs re-renders the route for the new team and the
-  // publication that follows overwrites all of them at once. The client-owned
-  // variants have to drop those keys by hand here — and have to do it *after*
-  // the new team is in scope, or the readers they wake up refetch under the team
-  // being left. Owning none of it removes the ordering problem with the code.
+  // A team is the outer workspace context, so switching it always lands on the
+  // cross-project list. Carrying a project route across teams could name a
+  // project that does not exist there. No eviction step is needed: the route
+  // republishes every workspace key for the new team into this server-owned
+  // lane.
 
   return (
     <DropdownMenu>

@@ -29,7 +29,7 @@ const PRIMARY_GROUPS: VariantGroup[] = [
           "The baseline: ordinary server values flow through client components as props, and every mutation re-renders the route. No Lane and no client data cache.",
       },
       {
-        href: "/lane",
+        href: "/lane/contexts/all",
         name: "use-lane",
         badge: "Next → external reads",
         tagline:

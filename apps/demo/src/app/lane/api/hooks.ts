@@ -19,7 +19,6 @@ import {
   type Lane,
 } from "use-lane";
 import * as React from "react";
-import type { TaskSurface } from "@/app/lane/regions";
 import { useWorkspaceCtx } from "@/app/lane/workspace/workspace-provider";
 import {
   createLabelAction,
@@ -120,12 +119,9 @@ export function useInsights() {
  * (`server/team/routes.ts`). So the hook calls the embedded API from the
  * browser — same `endpoints.ts` the route reads through, same typed client, no
  * Server Action in the path — and then converges the lane from the answer it is
- * already holding. What that convergence *is* depends on where the edit was
- * made, which is the `surface` every one of these hooks takes:
- *
- * **`"panel"` — the list is on screen beside the detail.** The intercepted
- * panel, and the status control on a row. **Nothing here asks the route to
- * render.**
+ * already holding. The list is always on screen beside the detail — both for
+ * an intercepted navigation and for a hard-loaded task URL — so nothing here
+ * asks the route to render.
  *
  * - `set(task(id))` — the entity that came back, in place, no round trip;
  * - `updateAll(["tasks"])` — the same row patched inside every list holding it,
@@ -144,38 +140,6 @@ export function useInsights() {
  * That is the whole of it: one `PATCH`, four writes, zero reads. `invalidate`
  * would mean *read again*, and there is nothing left to read.
  *
- * **`"page"` — no list is on screen.** The full task page at
- * `/lane/task/<id>`, which is what a direct visit, a reload, or a shared link
- * renders.
- *
- * - `set(task(id))` — the same;
- * - `invalidateAll(["tasks"])` — every list entry this lane holds is marked
- *   stale rather than rewritten. This is the one thing the response genuinely
- *   cannot carry: where the edited row now sorts among rows this client has
- *   never seen. Patching a list nobody is looking at would only guess at an
- *   order the server owns, and there is no jump to avoid.
- *   **This resets the list to one page, by design**: saying "stale" about a
- *   list says it about pages 2..n too, and those cannot be re-derived without
- *   walking the cursor chain again. So the list revealed after an edit made
- *   here is the route's first page, freshly sorted, and the browser deepens it
- *   again if the user wants it deeper;
- * - the two counts — `set` from the response, exactly as in the panel. Being on
- *   another screen does not make a number the server already computed unknown.
- *
- * Nothing is *asked* by the second form while the page is up: a marked key with
- * no reader stays marked. The ask comes when a list is revealed again — the
- * reader finds its entry stale, suspends into the list's fallback, Lane asks
- * the owner once, and the publication that answers is a freshly sorted list
- * with the edited task in its new place. That is the same shape a
- * `revalidatePath` and a Back would have produced, arrived at without reading
- * anything until someone looked.
- *
- * Which list entries the page's lane actually holds depends on how it was
- * reached: a reload lands on a lane with none, and the navigation back to the
- * list reads it fresh anyway. Marking them is what makes the case where it
- * *does* hold one — a soft navigation out to the page and back — behave the
- * same as the case where it does not.
- *
  * A note on getting *into* the panel: it opens by `<Link>`, on purpose. Browser
  * back and forward into an intercepted URL always re-suspend, because the RSC
  * payload for it varies on `Next-Url` and the router has no cached copy of the
@@ -191,33 +155,29 @@ export function useInsights() {
  * display concern and never a write.
  */
 
-export function useUpdateTask(taskId: string, surface: TaskSurface) {
+export function useUpdateTask(taskId: string) {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
   return React.useCallback(
     async (input: UpdateTaskInput): Promise<Task> => {
       const result = await updateTask(ctx, taskId, input);
-      convergeOnTask(lane, result, surface);
+      convergeOnTask(lane, result);
 
       return result.task;
     },
-    [ctx, lane, surface, taskId],
+    [ctx, lane, taskId],
   );
 }
 
-export function useDeleteTask(surface: TaskSurface) {
+export function useDeleteTask() {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
   return React.useCallback(
     async (taskId: string): Promise<void> => {
       const { insights, projectCounts } = await deleteTask(ctx, taskId);
-      if (surface === "panel") {
-        lane.updateAll<TaskList>(["tasks"], (list) => withoutRow(list, taskId));
-      } else {
-        lane.invalidateAll(["tasks"]);
-      }
+      lane.updateAll<TaskList>(["tasks"], (list) => withoutRow(list, taskId));
       lane.set(workspaceReads.insights().key, insights);
       lane.set(workspaceReads.projectCounts().key, projectCounts);
       // The `task(id)` entry is left where it is rather than removed. The
@@ -226,37 +186,37 @@ export function useDeleteTask(surface: TaskSurface) {
       // skeleton on the way out. It is a published value with nothing left to
       // publish it: it expires with the payload that seeded it.
     },
-    [ctx, lane, surface],
+    [ctx, lane],
   );
 }
 
-export function useAddTaskLabel(taskId: string, surface: TaskSurface) {
+export function useAddTaskLabel(taskId: string) {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
   return React.useCallback(
     async (label: TeamLabel): Promise<Task> => {
       const result = await addTaskLabel(ctx, taskId, label.id);
-      convergeOnTask(lane, result, surface);
+      convergeOnTask(lane, result);
 
       return result.task;
     },
-    [ctx, lane, surface, taskId],
+    [ctx, lane, taskId],
   );
 }
 
-export function useRemoveTaskLabel(taskId: string, surface: TaskSurface) {
+export function useRemoveTaskLabel(taskId: string) {
   const ctx = useWorkspaceCtx();
   const lane = useLaneInstance();
 
   return React.useCallback(
     async (labelId: string): Promise<Task> => {
       const result = await removeTaskLabel(ctx, taskId, labelId);
-      convergeOnTask(lane, result, surface);
+      convergeOnTask(lane, result);
 
       return result.task;
     },
-    [ctx, lane, surface, taskId],
+    [ctx, lane, taskId],
   );
 }
 
@@ -306,28 +266,16 @@ export function useCreateProject() {
  * moment later — reading it back would produce the same numbers at the cost of
  * a round trip and a rerender of a screen that is already right.
  *
- * Only the middle sentence differs by surface, and it is the same distinction
- * either way — *is anyone looking at a list right now?* With the list beside
- * the detail, rewriting the row is what keeps it from moving under the cursor.
- * Without one, marking is strictly better: no order is guessed, and nothing is
- * read until a list is on screen to read it for. It is also the one thing here
- * that is a read at all, which is why `invalidate` appears on this branch and
- * nowhere else.
+ * The list keeps the row at its current index while it is being edited. The
+ * next route publication remains responsible for re-evaluating membership and
+ * order from the server's full data set.
  */
-function convergeOnTask(
-  lane: Lane,
-  result: TaskMutationResult,
-  surface: TaskSurface,
-) {
+function convergeOnTask(lane: Lane, result: TaskMutationResult) {
   const { task, insights, projectCounts } = result;
 
   lane.set(workspaceReads.task(task.id).key, task);
 
-  if (surface === "panel") {
-    lane.updateAll<TaskList>(["tasks"], (list) => withRowPatched(list, task));
-  } else {
-    lane.invalidateAll(["tasks"]);
-  }
+  lane.updateAll<TaskList>(["tasks"], (list) => withRowPatched(list, task));
 
   lane.set(workspaceReads.insights().key, insights);
   lane.set(workspaceReads.projectCounts().key, projectCounts);

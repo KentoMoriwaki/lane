@@ -59,11 +59,9 @@ export function WorkspaceProvider({
   // this router. Out of render and coalesced to one call per tick by Lane, so
   // several invalidated keys are still one rerender.
   //
-  // One mutation fires it: an edit made on the task page, which marks the list
-  // entries stale because where a row now sorts is the one thing a response
-  // cannot carry (`api/hooks.ts`). The ask waits until a list is revealed —
-  // a marked key with no reader stays marked — so this is the traverse back,
-  // not the edit.
+  // The current demo's task writes converge from their API response and do not
+  // need this path. It remains the owner contract for any external key that a
+  // future interaction explicitly marks stale.
   const askOwnerToPublish = React.useCallback(() => {
     router.refresh();
   }, [router]);

@@ -4,10 +4,10 @@ import {
   AlertTriangle,
   CalendarClock,
   CircleCheck,
+  FolderKanban,
   Inbox,
   type LucideIcon,
   LogOut,
-  Tag,
   UserCircle2,
   UserX,
 } from "lucide-react";
@@ -15,15 +15,12 @@ import Link, { useLinkStatus } from "next/link";
 import { WorkspaceBrand } from "./brand";
 import { useWorkspaceHrefs } from "./use-workspace-hrefs";
 import * as React from "react";
-import type { TaskFilters } from "@/app/lane/api/endpoints";
 import {
   useCurrentUser,
   useInsights,
-  useLabels,
   useProjectCounts,
   useProjects,
 } from "@/app/lane/api/hooks";
-import { EMPTY_FILTERS } from "@/app/lane/api/endpoints";
 import { Avatar } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -37,29 +34,9 @@ import { cn } from "@/lib/utils";
 import { TeamSwitcher } from "./team-switcher";
 import { useWorkspace } from "./workspace-provider";
 
-function activeKey(f: TaskFilters): string {
-  if (f.projectId) return `project:${f.projectId}`;
-  if (f.labelId) return `label:${f.labelId}`;
-  if (f.due === "overdue") return "overdue";
-  if (f.due === "week") return "due-soon";
-  if (f.status.length === 1 && f.status[0] === "done") return "completed";
-  if (f.scope === "mine") return "mine";
-  if (f.scope === "unassigned") return "unassigned";
-  if (
-    f.scope === "all" &&
-    f.status.length === 0 &&
-    !f.due &&
-    !f.q &&
-    f.priority.length === 0
-  ) {
-    return "all";
-  }
-  return "";
-}
-
 export function Sidebar() {
-  const { filters, viewHref } = useWorkspaceHrefs();
-  const active = activeKey(filters);
+  const { contextKey, projectId, projectHref, workspaceHref } =
+    useWorkspaceHrefs();
   const user = React.use(useCurrentUser().promise).data;
   const insights = React.use(useInsights().promise).data;
   // Two reads for one row of the nav: the project's name and colour come from
@@ -67,7 +44,6 @@ export function Sidebar() {
   // mutation response can update it independently.
   const projects = React.use(useProjects().promise).data;
   const projectCounts = React.use(useProjectCounts().promise).data;
-  const labels = React.use(useLabels().promise).data;
   const { signOut } = useWorkspace();
 
   return (
@@ -88,44 +64,44 @@ export function Sidebar() {
           <NavItem
             icon={Inbox}
             label="All tasks"
-            isActive={active === "all"}
-            href={viewHref(EMPTY_FILTERS)}
+            isActive={contextKey === "all"}
+            href={workspaceHref("all")}
           />
           <NavItem
             icon={UserCircle2}
             label="My tasks"
             count={insights.assignedToMe}
-            isActive={active === "mine"}
-            href={viewHref({ scope: "mine" })}
+            isActive={contextKey === "mine"}
+            href={workspaceHref("mine")}
           />
           <NavItem
             icon={UserX}
             label="Unassigned"
             count={insights.unassigned}
-            isActive={active === "unassigned"}
-            href={viewHref({ scope: "unassigned" })}
+            isActive={contextKey === "unassigned"}
+            href={workspaceHref("unassigned")}
           />
           <NavItem
             icon={AlertTriangle}
             label="Overdue"
             count={insights.overdue}
             tone="rose"
-            isActive={active === "overdue"}
-            href={viewHref({ due: "overdue" })}
+            isActive={contextKey === "overdue"}
+            href={workspaceHref("overdue")}
           />
           <NavItem
             icon={CalendarClock}
             label="Due soon"
             count={insights.dueSoon}
-            isActive={active === "due-soon"}
-            href={viewHref({ due: "week" })}
+            isActive={contextKey === "due-soon"}
+            href={workspaceHref("due-soon")}
           />
           <NavItem
             icon={CircleCheck}
             label="Completed"
             count={insights.completed}
-            isActive={active === "completed"}
-            href={viewHref({ status: ["done"] })}
+            isActive={contextKey === "completed"}
+            href={workspaceHref("completed")}
           />
         </NavGroup>
 
@@ -141,26 +117,10 @@ export function Sidebar() {
                 dotClass={accent(project.color).dot}
                 label={project.name}
                 count={projectCounts[project.id] ?? 0}
-                isActive={active === `project:${project.id}`}
-                href={viewHref({ projectId: project.id })}
-              />
-            ))
-          )}
-        </NavSection>
-
-        <NavSection title="Labels">
-          {labels.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-muted-foreground">
-              No labels yet
-            </p>
-          ) : (
-            labels.map((label) => (
-              <NavItem
-                key={label.id}
-                dotClass={accent(label.color).dot}
-                label={label.name}
-                isActive={active === `label:${label.id}`}
-                href={viewHref({ labelId: label.id })}
+                isActive={
+                  contextKey === "project" && projectId === project.id
+                }
+                href={projectHref(project.id)}
               />
             ))
           )}
@@ -211,7 +171,7 @@ function NavSection({
   return (
     <div className="space-y-0.5">
       <p className="flex items-center gap-1.5 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <Tag className="size-3" />
+        <FolderKanban className="size-3" />
         {title}
       </p>
       {children}

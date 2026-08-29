@@ -43,7 +43,6 @@ describe("stale-on-error", () => {
 
   it("preserves the original freshness time when falling back", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(1_000);
 
     const lane = createLane();
     const listener = vi.fn();
@@ -51,7 +50,7 @@ describe("stale-on-error", () => {
     lane.set(["tasks"], "cached");
     subscribeInvalidate(lane, ["tasks"], listener);
 
-    vi.setSystemTime(5_000);
+    vi.advanceTimersByTime(4_000);
     lane.invalidate(["tasks"]);
     listener.mockClear();
 

@@ -6,15 +6,25 @@ import * as React from "react";
 import { useTasks } from "@/app/lane/api/hooks";
 import type { TaskFilters } from "@/app/lane/api/endpoints";
 import { Button } from "@/components/ui/button";
-import { PRIORITY_GROUP_ORDER, PRIORITY_META } from "@/lib/task-meta";
+import {
+  PRIORITY_GROUP_ORDER,
+  PRIORITY_META,
+  STATUS_META,
+  STATUS_ORDER,
+} from "@/lib/task-meta";
 import { useSessionUser, useWorkspaceRefresh } from "./workspace-provider";
 import { EmptyState, ErrorChip } from "./feedback";
 import { TaskRow } from "./task-row";
-import { hasActiveFilters } from "./use-workspace-hrefs";
+import {
+  type TaskGroupBy,
+  type TaskSortBy,
+  type TaskSortOrder,
+  useTaskView,
+} from "./use-task-view";
 import { useSelectedTaskId, useWorkspaceUrl } from "./use-workspace-url";
 
 /**
- * The list, and what a row now is: a `<Link>` to `/lane/task/<id>`.
+ * The list, and what a row now is: a `<Link>` to `/lane/tasks/<id>`.
  *
  * Opening a task is a navigation rather than a state change. Clicked from here
  * it is intercepted into the `@modal` slot and drawn as the panel beside this
@@ -23,27 +33,34 @@ import { useSelectedTaskId, useWorkspaceUrl } from "./use-workspace-url";
  * pathname to know which of them is the open one.
  *
  * **The first page is the route's; the depth is the browser's.** `useTasks` is
- * an infinite read on one key: the route published page 1, `loadMore` fetches
- * the next from the browser, and both live under `["tasks", filters]`. What
- * this component does with that is flatten it — the rows are the rows, whoever
- * fetched them — and offer the button at the bottom while `hasNext`. A scroll
- * sentinel would work the same way; a button is the version whose every load is
- * something the user asked for.
+ * an infinite read on one key per Context: the active route publishes page 1,
+ * `loadMore` fetches the next page for the complete filters, and both live in
+   * one value. Search omits `q` from the key so the next page publication can
+   * update the current reader without resetting the whole view. This component
+   * flattens those pages and offers the button while `hasNext`.
  *
- * The display-order policy below runs over the flattened list, so an appended
- * page arrives at the end (where the server's order puts it) and stays there.
+ * The stable display policy runs over that flattened list first. Grouping and
+ * sorting are a browser-owned projection on top: they never change the Lane
+ * key or ask the route for another task set.
  */
 export function TaskList() {
-  const { filters, taskHref, closeTask, resetFilters } = useWorkspaceUrl();
+  const {
+    contextKey,
+    filters,
+    taskHref,
+    rememberTaskNavigation,
+    closeDeletedTask,
+    clearSearch,
+  } = useWorkspaceUrl();
   const selectedTaskId = useSelectedTaskId();
-  const activeFilters = hasActiveFilters(filters);
-  const onResetFilters = resetFilters;
+  const hasSearch = filters.q.trim().length > 0;
+  const { group, sort, order } = useTaskView();
   const onDeleted = React.useCallback(
     (taskId: string) => {
       // Only the row that is currently open takes the view with it.
-      if (selectedTaskId === taskId) closeTask();
+      if (selectedTaskId === taskId) closeDeletedTask();
     },
-    [closeTask, selectedTaskId],
+    [closeDeletedTask, selectedTaskId],
   );
   const { id: userId } = useSessionUser();
   const { refresh, isRefreshing, error } = useWorkspaceRefresh();
@@ -57,6 +74,14 @@ export function TaskList() {
     [data.pages],
   );
   const displayed = useDisplayOrder(filters, tasks);
+  const arranged = React.useMemo(
+    () => sortTasks(displayed, sort, order),
+    [displayed, order, sort],
+  );
+  const groups = React.useMemo(
+    () => groupTasks(arranged, group),
+    [arranged, group],
+  );
 
   const dimmed = isInvalidationPending || isRefreshing;
   // The read cannot fail here — it is served by the publication — so what the
@@ -76,20 +101,26 @@ export function TaskList() {
     return (
       <>
         {refreshNotice}
-        {activeFilters ? (
+        {hasSearch ? (
           <EmptyState
             icon={ListTodo}
-            title="No tasks match these filters"
-            message="Try widening your filters to see more of the team's work."
+            title="No tasks match this search"
+            message="Try another phrase or clear the search to see this Context again."
             action={
               <button
                 type="button"
-                onClick={onResetFilters}
+                onClick={clearSearch}
                 className="text-sm font-medium text-cobalt hover:underline"
               >
-                Clear filters
+                Clear search
               </button>
             }
+          />
+        ) : contextKey !== "all" ? (
+          <EmptyState
+            icon={Inbox}
+            title="No tasks in this Context"
+            message="This view has no matching tasks yet."
           />
         ) : (
           <EmptyState
@@ -102,11 +133,6 @@ export function TaskList() {
     );
   }
 
-  const groups = PRIORITY_GROUP_ORDER.map((priority) => ({
-    priority,
-    items: displayed.filter((task) => task.priority === priority),
-  })).filter((group) => group.items.length > 0);
-
   return (
     <>
       {refreshNotice}
@@ -114,14 +140,17 @@ export function TaskList() {
         className="divide-y divide-border transition-opacity"
         style={{ opacity: dimmed ? 0.6 : 1 }}
       >
-        {groups.map((group) => (
-          <PriorityGroup
-            key={group.priority}
-            label={PRIORITY_META[group.priority].label}
-            items={group.items}
+        {groups.map((taskGroup) => (
+          <TaskGroup
+            key={taskGroup.key}
+            groupKey={taskGroup.key}
+            label={taskGroup.label}
+            showHeader={group !== "none"}
+            items={taskGroup.items}
             currentUserId={userId}
             selectedTaskId={selectedTaskId}
             taskHref={taskHref}
+            rememberTaskNavigation={rememberTaskNavigation}
             onDeleted={onDeleted}
           />
         ))}
@@ -174,13 +203,10 @@ export function TaskList() {
  * changes — different filters are a different list — and on remount, because a
  * fresh mount has nothing to be stable with respect to.
  *
- * The priority *group* is not part of what is remembered. A row is always drawn
- * under the heading its own priority names, because a row sitting under "Low"
- * with an urgent icon on it is a lie, and priority is the one field the list
- * itself does not edit — it changes in the detail panel, where the round trip
- * is covered optimistically and the row's own position is not what the user is
- * looking at. So: an edit never moves a row, except a priority change, which
- * moves it once, to the group it now belongs in.
+ * Grouping is not part of what is remembered. A row is always drawn under the
+ * heading named by its current value, whether the user groups by priority,
+ * status, project, or assignee. Explicit sorting is also allowed to move rows;
+ * the stable order remains the baseline restored by `Sort: Default`.
  *
  * The insertion scan is quadratic in the worst case. A page of tasks is the
  * size it is on screen, and this runs once per publication.
@@ -250,29 +276,124 @@ function mergeDisplayOrder(shown: string[], tasks: Task[]): string[] {
   return order;
 }
 
-function PriorityGroup({
+type DisplayGroup = {
+  key: string;
+  label: string;
+  items: Task[];
+};
+
+function groupTasks(tasks: Task[], group: TaskGroupBy): DisplayGroup[] {
+  if (group === "none") {
+    return [{ key: "all", label: "All tasks", items: tasks }];
+  }
+
+  if (group === "priority") {
+    return PRIORITY_GROUP_ORDER.map((priority) => ({
+      key: priority,
+      label: PRIORITY_META[priority].label,
+      items: tasks.filter((task) => task.priority === priority),
+    })).filter((entry) => entry.items.length > 0);
+  }
+
+  if (group === "status") {
+    return STATUS_ORDER.map((status) => ({
+      key: status,
+      label: STATUS_META[status].label,
+      items: tasks.filter((task) => task.status === status),
+    })).filter((entry) => entry.items.length > 0);
+  }
+
+  const entries = new Map<string, DisplayGroup>();
+  for (const task of tasks) {
+    const item =
+      group === "project"
+        ? task.project
+          ? { key: task.project.id, label: task.project.name }
+          : { key: "unassigned", label: "No project" }
+        : task.assignee
+          ? { key: task.assignee.id, label: task.assignee.name }
+          : { key: "unassigned", label: "Unassigned" };
+    const entry = entries.get(item.key) ?? { ...item, items: [] };
+    entry.items.push(task);
+    entries.set(item.key, entry);
+  }
+
+  return [...entries.values()].sort((left, right) => {
+    if (left.key === "unassigned") return 1;
+    if (right.key === "unassigned") return -1;
+    return left.label.localeCompare(right.label);
+  });
+}
+
+function sortTasks(
+  tasks: Task[],
+  sort: TaskSortBy,
+  order: TaskSortOrder,
+): Task[] {
+  if (sort === "default") return tasks;
+
+  const direction = order === "asc" ? 1 : -1;
+  return [...tasks].sort((left, right) => {
+    let compared = 0;
+    switch (sort) {
+      case "due":
+        if (!left.dueDate && !right.dueDate) compared = 0;
+        else if (!left.dueDate) return 1;
+        else if (!right.dueDate) return -1;
+        else compared = left.dueDate.localeCompare(right.dueDate);
+        break;
+      case "priority":
+        compared =
+          PRIORITY_GROUP_ORDER.indexOf(left.priority) -
+          PRIORITY_GROUP_ORDER.indexOf(right.priority);
+        break;
+      case "updated":
+        compared = left.updatedAt.localeCompare(right.updatedAt);
+        break;
+      case "created":
+        compared = left.createdAt.localeCompare(right.createdAt);
+        break;
+      case "title":
+        compared = left.title.localeCompare(right.title);
+        break;
+    }
+    return compared === 0
+      ? left.id.localeCompare(right.id)
+      : compared * direction;
+  });
+}
+
+function TaskGroup({
+  groupKey,
   label,
+  showHeader,
   items,
   currentUserId,
   selectedTaskId,
   taskHref,
+  rememberTaskNavigation,
   onDeleted,
 }: {
+  groupKey: string;
   label: string;
+  showHeader: boolean;
   items: Task[];
   currentUserId: string;
   selectedTaskId: string | null;
   taskHref: (taskId: string) => string;
+  rememberTaskNavigation: (href: string) => void;
   onDeleted: (taskId: string) => void;
 }) {
   return (
-    <section>
-      <header className="sticky top-0 z-10 flex items-center gap-2 bg-background/85 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur">
-        {label}
-        <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium text-muted-foreground">
-          {items.length}
-        </span>
-      </header>
+    <section data-testid="task-group" data-group-key={groupKey}>
+      {showHeader ? (
+        <header className="sticky top-0 z-10 flex items-center gap-2 bg-background/85 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur">
+          {label}
+          <span className="rounded-full bg-muted px-1.5 text-[11px] font-medium text-muted-foreground">
+            {items.length}
+          </span>
+        </header>
+      ) : null}
       <div className="divide-y divide-border/70 px-1">
         {items.map((task) => (
           // Keyed by id alone. The row used to be keyed by `id:updatedAt` so
@@ -287,6 +408,7 @@ function PriorityGroup({
             isMine={task.assignee?.id === currentUserId}
             isSelected={task.id === selectedTaskId}
             href={taskHref(task.id)}
+            navigateAction={rememberTaskNavigation}
             deleteAction={onDeleted}
           />
         ))}

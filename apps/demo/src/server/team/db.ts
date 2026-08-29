@@ -1099,7 +1099,7 @@ export async function listTasks(
       if (filters.due === "today") {
         return sameDay(due, now);
       }
-      return due >= now && due <= week;
+      return isDueSoon(task.status, due, now, week);
     });
   }
 
@@ -1432,7 +1432,7 @@ export async function getInsights(
       if (task.due_date) {
         const due = new Date(task.due_date).getTime();
         if (due < now) overdue += 1;
-        else if (due <= week) dueSoon += 1;
+        else if (isDueSoon(status, due, now, week)) dueSoon += 1;
       }
     }
   }
@@ -1491,6 +1491,16 @@ function parseCsv(value: string | undefined): string[] {
 
 function isClosed(status: TaskStatus): boolean {
   return status === "done" || status === "canceled";
+}
+
+/** The one predicate shared by the Due soon Context and its sidebar count. */
+function isDueSoon(
+  status: TaskStatus,
+  due: number,
+  now: number,
+  week: number,
+): boolean {
+  return !isClosed(status) && due >= now && due <= week;
 }
 
 function sameDay(a: number, b: number): boolean {

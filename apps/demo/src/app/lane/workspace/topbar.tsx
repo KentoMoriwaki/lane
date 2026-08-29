@@ -69,10 +69,10 @@ export function Topbar({
 }
 
 function SearchField() {
-  const { filters, patchFilters } = useWorkspaceUrl();
+  const { filters, replaceSearch } = useWorkspaceUrl();
   const commit = React.useCallback(
-    (q: string) => patchFilters({ q }, "replace"),
-    [patchFilters],
+    (q: string) => replaceSearch(q),
+    [replaceSearch],
   );
   const field: SearchFieldValue = useDebouncedSearchField(filters.q, commit);
 

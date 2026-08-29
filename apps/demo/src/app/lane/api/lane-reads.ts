@@ -5,7 +5,7 @@ import {
   laneRead,
   laneSnapshot,
 } from "use-lane";
-import type { LaneHydrationSnapshots, LaneSnapshot } from "use-lane";
+import type { LaneHydrationSnapshots } from "use-lane";
 import type {
   CurrentUser,
   Insights,
@@ -16,7 +16,11 @@ import type {
   TeamSummary,
 } from "@/server/api";
 import type { WorkspaceCtx } from "@/lib/lane-meta";
-import { fetchTaskPage, type ProjectTaskCounts, type TaskFilters } from "./endpoints";
+import {
+  fetchTaskPage,
+  type ProjectTaskCounts,
+  type TaskFilters,
+} from "./endpoints";
 import type { ProjectRef } from "./route-reads";
 
 /**
@@ -39,10 +43,11 @@ import type { ProjectRef } from "./route-reads";
  * here.
  *
  * What is worth noticing is what is **not** here: a second map of keys. Each
- * factory takes exactly what decides its key — `tasks(filters)`, `task(taskId)` —
- * and the session the loaders need arrives from the lane as `meta` (declared in
- * `@/lib/lane-meta`, supplied by `WorkspaceProvider`). So a read is a plain
- * object that costs nothing to build, and `.key` is reachable from anywhere:
+ * factory names a workspace resource — a Context's `tasks` view or
+ * `task(taskId)` — and the session the loaders need arrives from the lane as
+ * `meta` (declared in `@/lib/lane-meta`, supplied by `WorkspaceProvider`). So
+ * a read is a plain object that costs nothing to build, and `.key` is reachable
+ * from anywhere:
  *
  * ```ts
  * laneSnapshot(workspaceReads.insights(), insights);  // the server publishes
@@ -96,6 +101,12 @@ export const workspaceReads = {
    * than a bare `Task[]`, so "where the next page starts" travels with the rows
    * it was computed from and `nextCursor(page)` is a field read, not a guess.
    *
+   * The key names the task-set predicate but deliberately omits `q`. A Context
+   * navigation renders a page that reads a new key behind its fallback. Search
+   * republishes the same key, so React can keep the previous list on screen
+   * during the transition. The complete filters still drive page 1 and the
+   * page-2 loader.
+   *
    * What a republication does to the depth is the library's rule, not this
    * app's: an equal page 1 keeps the pages standing behind it, a different one
    * (or an `invalidate`) resets to one page. See `docs/api-reference.md` §
@@ -112,7 +123,7 @@ export const workspaceReads = {
    */
   tasks: (filters: TaskFilters, ctx: WorkspaceCtx = NOT_THE_BROWSER) =>
     infiniteLaneRead<TaskPage, string | null>({
-      key: ["tasks", filters],
+      key: ["tasks", taskSetKey(filters)],
       loader: external,
       fetchPage: (cursor) => fetchTaskPage(ctx, filters, { cursor }),
       nextCursor: (page) => page.nextCursor,
@@ -130,14 +141,26 @@ export const workspaceReads = {
   insights: () => laneRead<Insights>({ key: ["insights"], loader: external }),
 };
 
+function taskSetKey(filters: TaskFilters) {
+  return {
+    scope: filters.scope,
+    status: filters.status,
+    priority: filters.priority,
+    projectId: filters.projectId,
+    labelId: filters.labelId,
+    due: filters.due,
+  };
+}
+
 /**
  * The seeds each region publishes.
  *
  * There is no whole-workspace bundle any more. A region publishes exactly the
- * keys its leaf reads, and `<LaneHydration>` boundaries nest, so a leaf still
- * sees every key seeded anywhere in its lineage. `laneSnapshot` takes the read
- * itself, so the entry a snapshot names cannot drift from the entry that loads
- * it, and `data` is checked against what that read loads.
+ * keys its leaf reads. Publications resolve matching external reads through
+ * the shared Lane, including persistent readers elsewhere in the React tree.
+ * `laneSnapshot` takes the read itself, so the entry a snapshot names cannot
+ * drift from the entry that loads it, and `data` is checked against what that
+ * read loads.
  */
 export const workspaceSnapshots = {
   /**
@@ -173,10 +196,6 @@ export const workspaceSnapshots = {
     };
   },
 
-  insights(insights: Insights): LaneHydrationSnapshots {
-    return { entries: [laneSnapshot(workspaceReads.insights(), insights)] };
-  },
-
   /**
    * The list's first page, published as the list.
    *
@@ -207,55 +226,18 @@ export const workspaceSnapshots = {
     };
   },
 
-  filterBar(seeds: {
-    projects: ProjectRef[];
-    labels: TeamLabel[];
-    tasks: { filters: TaskFilters; data: TaskPage };
+  /**
+   * The detail's own key. Members, projects, labels and project counts are
+   * published by the workspace page and are consumed across the tree from the
+   * same Lane instead of being fetched again for every task navigation.
+   */
+  detail(seeds: {
+    task: Task;
   }): LaneHydrationSnapshots {
     return {
       entries: [
-        laneSnapshot(workspaceReads.projects(), seeds.projects),
-        laneSnapshot(workspaceReads.labels(), seeds.labels),
-        infiniteLaneSnapshot(
-          workspaceReads.tasks(seeds.tasks.filters),
-          seeds.tasks.data,
-          null,
-        ),
+        laneSnapshot(workspaceReads.task(seeds.task.id), seeds.task),
       ],
     };
-  },
-
-  /**
-   * The detail's keys, published by whichever route is showing it — the task
-   * page or its intercepted twin in the panel slot. Both publish the same
-   * entries, so `useTask(id)` reads one key however the detail was opened.
-   */
-  detail(seeds: {
-    members: TeamMember[];
-    projects: ProjectRef[];
-    /**
-     * Only the page surface passes these. In the panel the sidebar is on
-     * screen and has already published them, and the count is the one
-     * dynamic read of the four — asking for it twice in one render would be
-     * two trips to the source for one number.
-     */
-    projectCounts?: ProjectTaskCounts;
-    labels: TeamLabel[];
-    task: Task;
-  }): LaneHydrationSnapshots {
-    const entries: LaneSnapshot[] = [
-      laneSnapshot(workspaceReads.members(), seeds.members),
-      laneSnapshot(workspaceReads.projects(), seeds.projects),
-      laneSnapshot(workspaceReads.labels(), seeds.labels),
-      laneSnapshot(workspaceReads.task(seeds.task.id), seeds.task),
-    ];
-
-    if (seeds.projectCounts) {
-      entries.push(
-        laneSnapshot(workspaceReads.projectCounts(), seeds.projectCounts),
-      );
-    }
-
-    return { entries };
   },
 };

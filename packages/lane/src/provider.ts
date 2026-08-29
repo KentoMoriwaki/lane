@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { elapsedNow } from "./clock";
 import { createLane, setLaneRefresh } from "./core";
 import { domEventSource } from "./event-source";
 import type { LaneEventSource } from "./event-source";
@@ -109,10 +110,12 @@ export function LaneProvider({
   React.useEffect(() => {
     // Focus is throttled here, not in the source: coalescing is policy that
     // applies whatever the source. Reconnect is not throttled.
-    let lastFocusAt = 0;
+    // A monotonic clock starts near zero, so zero itself cannot mean "never" —
+    // the first focus must always pass regardless of the runtime's time origin.
+    let lastFocusAt = Number.NEGATIVE_INFINITY;
 
     const onFocus = () => {
-      const now = Date.now();
+      const now = elapsedNow();
 
       if (now - lastFocusAt < focusThrottleInterval) {
         return;

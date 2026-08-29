@@ -57,8 +57,13 @@ const pickerDelayMs = readMilliseconds(
   process.env.TEAM_API_PICKER_DELAY_MS,
   15,
 );
-// The filtered task list: a join and a sort.
-const listDelayMs = readMilliseconds(process.env.TEAM_API_LIST_DELAY_MS, 50);
+// One indexed row lookup should beat the filtered list below.
+const detailDelayMs = readMilliseconds(
+  process.env.TEAM_API_DETAIL_DELAY_MS,
+  120,
+);
+// The filtered task list: a join and a sort over a larger result set.
+const listDelayMs = readMilliseconds(process.env.TEAM_API_LIST_DELAY_MS, 400);
 // Insights: a scan of every task in the team.
 const aggregateDelayMs = readMilliseconds(
   process.env.TEAM_API_AGGREGATE_DELAY_MS,
@@ -137,8 +142,12 @@ function readRequestDelay(method: string, path: string) {
     return aggregateDelayMs;
   }
 
+  if (path.startsWith("/api/tasks/")) {
+    return detailDelayMs;
+  }
+
   // Any task-list query — the filtered board and the dependency panels' by-id
-  // lookup both land here. A single task (`/api/tasks/:id`) does not.
+  // lookup both land here.
   if (path === "/api/tasks") {
     return listDelayMs;
   }

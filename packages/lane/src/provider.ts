@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { createLane, elapsedNow, setLaneRefresh } from "./core";
+import { elapsedNow } from "./clock";
+import { createLane, setLaneRefresh } from "./core";
 import { domEventSource } from "./event-source";
 import type { LaneEventSource } from "./event-source";
 import type { Lane, LaneLoaderMeta, LaneLoaderMetaProp } from "./types";

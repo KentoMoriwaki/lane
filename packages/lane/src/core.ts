@@ -1,3 +1,4 @@
+import { elapsedNow } from "./clock";
 import { isPrefixKey, serializeKey } from "./keys";
 import {
   isExternalLoader,
@@ -179,17 +180,6 @@ type LaneEntry = {
 };
 
 export const DEFAULT_GC_TIME = 5 * 60_000;
-
-/**
- * Lane measures elapsed cache lifetimes; it never needs calendar time.
- *
- * A monotonic clock cannot jump when the system clock changes, and unlike
- * `Date.now()` it does not make a pure React prerender depend on wall time.
- * Modern browsers, Node 20+, and current React Native runtimes provide it.
- */
-export function elapsedNow(): number {
-  return performance.now();
-}
 
 const laneStates = new WeakMap<Lane, LaneState>();
 
@@ -1420,8 +1410,9 @@ function isStale(
   }
 
   // `now - at >= 0`: any staleTime <= 0 is stale; the Infinity default never is.
-  const age = elapsedNow() - cache.settlement.at;
-  return age >= (staleTime ?? DEFAULT_STALE_TIME);
+  return (
+    elapsedNow() - cache.settlement.at >= (staleTime ?? DEFAULT_STALE_TIME)
+  );
 }
 
 function isPromiseLike<T>(value: LaneValue<T>): value is Promise<T> {

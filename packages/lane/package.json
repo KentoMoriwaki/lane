@@ -1,6 +1,6 @@
 {
   "name": "use-lane",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Promise-first, transition-native data fetching for React 19 — a minimal data layer that keeps keyed promises in React state while React owns the UI.",
   "license": "MIT",
   "author": "Kento Moriwaki <kentomoriwaki@gmail.com>",

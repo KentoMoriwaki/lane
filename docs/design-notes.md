@@ -41,7 +41,16 @@ app already uses. Callers compose it directly: wrap a filter change in
 `startTransition`, or derive the key and loader from a `useDeferredValue` input,
 and deferred behavior falls out for free. Background revalidations (focus, mount,
 polling, reconnect) run on a separate transition surfaced as `isBackgroundPending`,
-so automatic refreshes never block an interaction.
+so automatic refreshes use a different pending channel from an interaction.
+Mount revalidation defers the entire invalidation to a separate task: React's
+popstate synchronous attempt can otherwise commit a fallback even for work
+scheduled in a transition. Delaying only the promise update leaves the cache
+invalidated during restore. A queued mount refetch is cancelled when its reader
+leaves and skipped if another operation has replaced the promise in the meantime;
+current freshness is checked when it executes. This stays in the hook, with no
+router dependency or change to explicit invalidation's timing. See the
+[back/forward caveat](./integrations.md#transitions-and-the-backforward-caveat)
+for the scope and React upstream references.
 
 Two deliberate exceptions keep the claim honest: an initial load with no prior
 value suspends to a Suspense fallback — a transition can only preserve UI that
@@ -531,8 +540,10 @@ promises that settle late are ignored by comparing cache-object identity.
 whole rather than shaken statement-by-statement out of a shared bundle. Two
 numbers follow from that, and they are the ones `size-limit` holds in CI —
 minified, Brotli-compressed, `react` / `react-dom` external. The typical
-`LaneProvider` + `useLane` import is about **3.8 kB**, and importing *every*
-export is about **5.4 kB**: that ceiling is the whole of what Lane can cost you.
+`LaneProvider` + `useLane` import is about **4.37 kB**, and importing *every*
+export is about **5.94 kB**. The corresponding budgets are 4.45 / 6.01 kB;
+the mount-refetch cancellation and supersession guard justify the 100 B increase
+recorded in the changelog. The store-only guard remains 2.93 kB.
 
 ## Design bias
 

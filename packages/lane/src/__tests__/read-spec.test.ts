@@ -84,6 +84,7 @@ describe("laneRead", () => {
   });
 
   it("reads with the options the spec carries", async () => {
+    vi.useFakeTimers();
     const lane = createLane();
     const reload = deferred<string>();
     const loader = vi.fn(() => reload.promise);
@@ -104,6 +105,8 @@ describe("laneRead", () => {
     );
 
     await waitForText(app.container, "seeded");
+    expect(loader).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(loader).toHaveBeenCalledTimes(1);
 
     await resolveReload(reload, "refetched");

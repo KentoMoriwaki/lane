@@ -281,6 +281,7 @@ describe("React integration", () => {
   });
 
   it("marks refetchOnMount as background pending", async () => {
+    vi.useFakeTimers();
     const lane = createLane();
     const reload = deferred<string>();
     const loader = vi.fn(() => reload.promise);
@@ -296,6 +297,7 @@ describe("React integration", () => {
       },
     });
 
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await waitForText(app.container, "cached|background:1|transition:0|refresh:none");
     expect(loader).toHaveBeenCalledTimes(1);
 
@@ -594,6 +596,7 @@ describe("React integration", () => {
   // background transition, and a correction that cannot see it pre-empts it
   // synchronously and drops the value the boundary had just revealed.
   it("does not pre-empt its own converging refresh under StrictMode", async () => {
+    vi.useFakeTimers();
     const lane = createLane();
     const gate = deferred<string>();
     const loader = vi.fn(() => gate.promise);
@@ -617,6 +620,8 @@ describe("React integration", () => {
         }),
       ),
     );
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
     // The refresh the mount asked for is in flight, and the value it is
     // refreshing is still on screen — no fallback, and the pending flag says

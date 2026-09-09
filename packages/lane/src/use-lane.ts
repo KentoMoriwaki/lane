@@ -328,6 +328,28 @@ export function useLane<T, C = T>(
 
   const subscriptionRef = useRef<LaneReaderSubscription | undefined>(undefined);
 
+  const scheduleMountRefetch = useEffectEvent((targetLane: Lane, targetKeyId: string) => {
+    if (!read.refetchOnMount) {
+      return;
+    }
+
+    const mountedPromise = peekEntryPromise(targetLane, targetKeyId);
+    // Leave the entire invalidation (including cache removal) outside the
+    // mounting task. React can flush mount effects during a synchronous
+    // popstate attempt; a transition alone does not protect that warm restore.
+    const timer = setTimeout(() => {
+      // A sibling mount, focus event, or explicit write may already have
+      // replaced this promise, even with a read that settled before our task.
+      // Do not invalidate that newer work. The event checks current options
+      // and the store checks freshness at execution time.
+      if (peekEntryPromise(targetLane, targetKeyId) === mountedPromise) {
+        refetchOnMount(targetLane, targetKeyId);
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
+  });
+
   // Reconcile, then subscribe, with nothing between: a store change lands
   // either before the re-read (the reconciliation sees it) or after the
   // subscribe (a notification carries it) — no gap in which a reader could be
@@ -436,7 +458,9 @@ export function useLane<T, C = T>(
       return;
     }
 
-    refetchOnMount(lane, keyId);
+    // Cancel on unmount, key/lane switch, gating, Activity hide, and Strict
+    // Mode's effect replay. An abandoned appearance has no refresh to perform.
+    return scheduleMountRefetch(lane, keyId);
   }, [enabled, lane, keyId]);
 
   const invalidate = useCallback(

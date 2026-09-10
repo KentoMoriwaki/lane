@@ -100,6 +100,9 @@ for (const flags of ["", "activity"]) {
     await expect(page.getByTestId("tasks")).toHaveText("Tasks 1");
     await expect.poll(() => page.evaluate(() => window.source.loads === window.source.completed)).toBe(true);
     await page.getByRole("link", { name: "Journal", exact: true }).click();
+    // The URL changes before React commits the route. Returning before Tasks
+    // leaves can cancel that navigation without ever mounting a new reader.
+    await expect(page.getByTestId("journal")).toBeVisible();
     await page.evaluate(() => { window.source.value = 2; });
     const before = await page.evaluate(() => window.source.loads);
     await page.goBack();
@@ -124,6 +127,7 @@ test("refetchOnMount false restores the warm value without a new read", async ({
   await page.goto("/?no-refetch#/tasks");
   await expect(page.getByTestId("tasks")).toHaveText("Tasks 1");
   await page.getByRole("link", { name: "Journal", exact: true }).click();
+  await expect(page.getByTestId("journal")).toBeVisible();
   const before = await page.evaluate(() => {
     window.source.value = 2;
     return window.source.loads;

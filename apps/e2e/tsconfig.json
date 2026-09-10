@@ -1,7 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "jsx": "react-jsx",
     "types": ["node"]
   },
-  "include": ["playwright.config.ts", "tests"]
+  "include": ["playwright*.config.ts", "tests", "popstate"]
 }

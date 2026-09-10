@@ -35,6 +35,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @lane/e2e exec playwright install --with-deps chromium
+      - run: pnpm --filter @lane/e2e e2e:popstate
+      - run: pnpm --filter @lane/e2e e2e:popstate
+        env:
+          REACT_MODE: production
       - run: pnpm --filter @lane/e2e e2e
       - uses: actions/upload-artifact@v4
         if: failure()

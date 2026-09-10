@@ -6,6 +6,20 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Defer `refetchOnMount` invalidation to a separate task so a settled warm
+  back/forward restore does not lose its cached promise during React's popstate
+  flush. Cancel abandoned mount tasks and skip work superseded by another
+  promise replacement, including fast sibling refetches and explicit writes.
+  Freshness and options are checked at execution time; explicit invalidation
+  and focus/reconnect timing are unchanged. Add native-browser regressions and
+  correct the router documentation's History API explanation.
+  The cancellation and promise-identity guard bring the measured typical import
+  to 4.37 kB and the full import to 5.94 kB (Brotli), exceeding the prior limits.
+  Raise those budgets by 100 B to 4.45 / 6.01 kB for this correctness fix; the
+  store-only guard stays at 2.93 kB (measured 2.91 kB).
+
 ## [0.9.0] - 2026-09-02
 
 ### Added

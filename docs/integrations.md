@@ -29,27 +29,41 @@ the other. That is the point — the same core integrates with any host.
 
 ## Transitions, and the back/forward caveat
 
-A route change that triggers a suspending read must be a **synchronous
-transition**, or React replaces the page with the nearest Suspense fallback. This
-is the pattern React itself recommends for routers: update router state inside
-`startTransition`, then let the destination suspend in render.
+Wrap route-state updates synchronously in `startTransition` so React can keep
+an already revealed boundary visible while the destination loads. Initial loads
+and newly mounted boundaries can still show a fallback.
 
-Lane is built for this. It keeps each key's promise in `useState` + `useTransition`
-— **not** in a `useSyncExternalStore` read during render — so a Lane read never
-forces a synchronous fallback during a transition the way an external-store read
-can. What that costs, stated exactly, is in
-[Cross-reader consistency](./consistency.md).
+Lane keeps each key's promise in React state and replaces it through transitions;
+see [Cross-reader consistency](./consistency.md). This does not override React's
+scheduling. In affected React versions, work scheduled during **browser
+back/forward (`popstate`)** can be synchronously attempted and commit a Suspense
+fallback even when it was scheduled as a transition. This is a React scheduling
+issue, not a History API requirement that every suspension must show a fallback.
+React sees scheduled updates, lanes, and event types; it does not identify a
+router's destination or decide whether that route's data is warm.
 
-The one place this breaks is **browser back/forward (`popstate`)**. The legacy
-`popstate` event must run synchronously (for scroll and form restoration), so a
-transition started from it is forced to finish synchronously — and if the
-destination *suspends*, the fallback flashes. This is a constraint of the History
-API, shared by essentially every client router, not a Lane or React-Router quirk.
-(The Navigation API, whose `navigate` handler can be async, is the forward-looking
-fix.)
+[React issue #35966](https://github.com/react/react/issues/35966) tracks this
+behavior. The original optimization in
+[PR #26025](https://github.com/react/react/pull/26025) discussed a later return to
+ordinary transition behavior when the synchronous attempt suspends.
+[PR #36883](https://github.com/react/react/pull/36883) proposes excluding the
+synthetic `SyncLane` from the transition-only check in `RootSuspendedWithDelay`;
+as checked on 2026-09-09 it is open and unreviewed, not a released fix.
 
-The practical consequence: **make back/forward land on data that is already
-cached, so nothing suspends.** That is a retention decision, covered next.
+**Warm restore and cold navigation are different cases.** Lane schedules
+`refetchOnMount` in a separate timer task, leaving the warm promise available
+through the mounting task. The deferred work includes cache invalidation and
+notification, not just the transition that adopts the replacement. It still
+refetches stale data in a background transition. Cleanup cancels an abandoned
+mount's task; a replaced promise supersedes it, and current options and freshness
+are checked when it runs. Explicit invalidation, focus, and reconnect retain
+their existing timing.
+
+Keep entries warm with suitable retention, but do not treat `gcTime` as a
+universal no-fallback guarantee. Cold reads, entries explicitly invalidated while
+away, a return during an in-flight replacement, or a router's own suspending work
+can still show a fallback. The mount scheduling change addresses a settled warm
+entry being invalidated by the returning reader itself.
 
 ## Keep-alive (`<Activity>`), and what it does not promise
 
@@ -81,7 +95,7 @@ worth knowing before you design around it, because none of them is Lane's to fix
 ## Cache lifetime across navigation
 
 To make back/forward feel instant (and flash-free), the route's entry must still be
-warm when you return to it. Three knobs, all on Lane — and all of them for
+warm when you return to it. Two knobs, both on Lane — and all of them for
 **client-owned** keys, since a published key's lifetime belongs to whoever
 publishes it ([retention](./api-reference.md#external-retention)):
 
@@ -89,9 +103,8 @@ publishes it ([retention](./api-reference.md#external-retention)):
   same entry instead of a fresh one.
 - **`gcTime`** (on [`createLane`](./api-reference.md#createlaneoptions) for the
   lane, or on the read for one route) — how long an inactive route's entry is
-  retained after you navigate away; this is your back/forward window, and the
-  only thing that decides whether a revisit suspends. Generous keeps the return
-  instant; `Infinity` pins everything for the session (like a framework router
+  retained after you navigate away; this is your cache retention window. A settled retained promise can make
+  the return instant; `Infinity` pins everything for the session (like a framework router
   cache; costs memory). `0` makes every revisit a fresh load, which is a flash on
   back/forward — do that only for a route whose data must not be shown twice.
   Staleness alone never takes a value away: refreshing what a returning reader is
@@ -256,9 +269,9 @@ function UsersRoute() {
 }
 ```
 
-Caveat: a back/forward that lands on a *suspending* read can flash (the `popstate`
-constraint above). Mitigate with an adequate `gcTime` so the entry is warm on
-return and the read does not suspend at all. Declarative mode also does not surface a navigation
+A warm return can restore the cached promise before the deferred mount refetch
+starts. A back/forward that lands on a cold or pending read can still flash (the
+React scheduling caveat above). Use an adequate `gcTime` to retain settled reads. Declarative mode also does not surface a navigation
 pending state — wrap `navigate` in your own `useTransition` if you want a progress
 indicator.
 
@@ -329,8 +342,7 @@ createBrowserRouter([
 TanStack Router is Suspense- and transition-oriented and has loaders, so the
 **Data-mode recipe applies unchanged**: load in the route loader, return a
 `LaneHydration` snapshot, read with `useLane`. Its typed search params are a natural
-fit for `key = f(search)`. As with any History-API router, the `popstate` caveat
-holds; prefer Lane's own pending (`isInvalidationPending` / `isBackgroundPending`) and
+fit for `key = f(search)`. The React `popstate` scheduling caveat can also apply here; prefer Lane's own pending (`isInvalidationPending` / `isBackgroundPending`) and
 the router's loader-pending over relying on a single navigation flag.
 
 ## Plain SPA, or embedding inside another router

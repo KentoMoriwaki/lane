@@ -67,6 +67,7 @@ exercise random failures. `OPTIONS` requests are never failed.
 ```sh
 pnpm --filter use-lane test    # library unit and React integration tests
 pnpm test:e2e                  # Playwright success-criteria suite
+pnpm --filter @lane/e2e e2e:popstate # standalone HashRouter browser regressions
 pnpm typecheck                 # all workspaces
 ```
 
@@ -78,6 +79,13 @@ touched. On first run, install the browser:
 ```sh
 pnpm --filter @lane/e2e exec playwright install chromium
 ```
+
+The standalone `e2e:popstate` suite serves an in-memory esbuild bundle on port
+3103; it uses no database or Next server. React 19.2.8 / React Router 8.3.1 are
+pinned in the harness, and all React imports (including library source imports)
+resolve to that one copy. It uses native browser history traversal and samples
+visible fallbacks on animation frames, checking refetch counts and latest data.
+Run with `REACT_MODE=production` to exercise production React as well; CI runs both.
 
 CI runs unit tests, typechecks, the size budgets, and the E2E suite on every push
 and pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).

@@ -6,19 +6,47 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-10
+
 ### Fixed
 
-- Defer `refetchOnMount` invalidation to a separate task so a settled warm
-  back/forward restore does not lose its cached promise during React's popstate
-  flush. Cancel abandoned mount tasks and skip work superseded by another
-  promise replacement, including fast sibling refetches and explicit writes.
-  Freshness and options are checked at execution time; explicit invalidation
-  and focus/reconnect timing are unchanged. Add native-browser regressions and
-  correct the router documentation's History API explanation.
-  The cancellation and promise-identity guard bring the measured typical import
-  to 4.37 kB and the full import to 5.94 kB (Brotli), exceeding the prior limits.
-  Raise those budgets by 100 B to 4.45 / 6.01 kB for this correctness fix; the
-  store-only guard stays at 2.93 kB (measured 2.91 kB).
+- **A warm back/forward restore keeps its cached promise.** `refetchOnMount`
+  invalidated the key from the mount effect itself, and React can flush mount
+  effects inside a synchronous popstate attempt — so the entry was taken away
+  while the returning reader was still reading it, and a history entry whose
+  read had already settled suspended instead of painting from cache. A
+  transition around the invalidation does not protect that flush, so the whole
+  invalidation — cache removal and notification, not just the transition that
+  adopts the replacement — now runs in a task of its own, after the mounting
+  task rather than inside it. Stale data is still refetched in a background
+  transition.
+
+  The task is cancelled when the appearance it belongs to is abandoned:
+  unmount, a key or lane switch, gating, an `<Activity>` hide, and Strict
+  Mode's effect replay. It is skipped when the promise it was scheduled for has
+  already been replaced by newer work — a fast sibling refetch, an explicit
+  write — and both the read's options and the entry's freshness are checked
+  when it runs, not when it was scheduled. Explicit `invalidate`, focus, and
+  reconnect keep their existing timing.
+
+- **The router documentation described the back/forward caveat as a History API
+  constraint.** It is a React scheduling behavior
+  ([React issue #35966](https://github.com/react/react/issues/35966)): work
+  scheduled during `popstate` can be attempted synchronously and commit a
+  fallback even though it was scheduled as a transition. `gcTime` is retention,
+  not a no-fallback guarantee — a cold read, a key invalidated while away, or a
+  return during an in-flight replacement can still flash.
+  [`docs/integrations.md`](docs/integrations.md) now says so, and a
+  native-browser regression suite covers the popstate path
+  (`pnpm --filter @lane/e2e e2e:popstate`).
+
+### Changed
+
+- Raised the `typical: LaneProvider + useLane` and `everything (ceiling)` size
+  budgets by 100 B, to 4.45 kB and 6.01 kB, to fit the cancellation and
+  promise-identity guard the fix above needs; they measure 4.37 kB and 5.94 kB
+  (Brotli). The `store without React (design guard)` budget is unchanged at
+  2.93 kB, measured 2.91 kB.
 
 ## [0.9.0] - 2026-09-02
 
@@ -1401,7 +1429,8 @@ Initial public release.
 
 - React 19.2+ (`useEffectEvent`).
 
-[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/KentoMoriwaki/lane/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/KentoMoriwaki/lane/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/KentoMoriwaki/lane/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/KentoMoriwaki/lane/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/KentoMoriwaki/lane/compare/v0.6.0...v0.7.0

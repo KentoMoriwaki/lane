@@ -795,7 +795,8 @@ batch's shared options cannot carry one: a member of
 its own read defines it, or not at all.
 
 **Which read's policy runs** is the one whose loader produced the failure — the
-read that started the load, as with `loaderMeta`.
+read that started the load, as with `loaderMeta`. Every reader of the key shares
+that load's result, including any value `fallback` returns.
 
 A `cancel` is not a failure, so it never consults the policy: the read reverts
 to the last fulfilled value with no `error` beside it.

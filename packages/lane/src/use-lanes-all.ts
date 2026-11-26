@@ -41,7 +41,8 @@ type Descriptor<T, C> = {
 
 /**
  * Read a dynamic set of reads (e.g. `ids.map(taskLanes.detail)`) as one stable,
- * `use()`-able `Promise.all`. Each member is its own keyed read — cached,
+ * `use()`-able `Promise.all`. A tuple of different reads keeps each member's
+ * result type in order. Each member is its own keyed read — cached,
  * deduped, subscribed, invalidatable — exactly as through `useLane`. A member's
  * own options win per option; the batch's shared `options` fill in the rest (an
  * `undefined` member option is unspecified, not an override). **`reads` must be
@@ -57,15 +58,25 @@ type Descriptor<T, C> = {
  */
 export function useLanesAll<T, C = T>(
   reads: readonly LaneReadSpec<T, C>[],
+  options?: LaneUseOptions,
+): Promise<LaneRead<T>[]>;
+// Each loader owns its `current` type. `never` accepts any declared `current`
+// type here without requiring the members' loader contexts to agree.
+export function useLanesAll<const Values extends readonly unknown[]>(
+  reads: readonly [
+    ...{ [Index in keyof Values]: LaneReadSpec<Values[Index], never> },
+  ],
+  options?: LaneUseOptions,
+): Promise<{ -readonly [Index in keyof Values]: LaneRead<Values[Index]> }>;
+export function useLanesAll(
+  reads: readonly LaneReadSpec<any, never>[],
   options: LaneUseOptions = EMPTY_OPTIONS,
-): Promise<LaneRead<T>[]> {
+): Promise<LaneRead<unknown>[]> {
   // `loaderMeta` comes from the lane, not from a member — see `useLane`.
   const { lane, revalidation, loaderMeta } = useLaneContext("useLanesAll");
 
-  const descriptors = useMemo(
-    () => reads.map<Descriptor<T, C>>(toDescriptor),
-    [reads],
-  );
+  const descriptors = useMemo(() => reads.map(toDescriptor), [reads]);
+  type BatchDescriptor = (typeof descriptors)[number];
 
   const [, startTransition] = useTransition();
 
@@ -96,7 +107,7 @@ export function useLanesAll<T, C = T>(
 
   // Triggers read the latest options at fire time, so toggling a flag never
   // re-subscribes. Overlaps coalesce in the store: smallest `staleTime` wins.
-  const mountRefetch = useEffectEvent((descriptor: Descriptor<T, C>) => {
+  const mountRefetch = useEffectEvent((descriptor: BatchDescriptor) => {
     const own = optionsFor(options, descriptor);
     const invalidateOptions = revalidateOptions(
       own.refetchOnMount,
@@ -117,7 +128,7 @@ export function useLanesAll<T, C = T>(
 
   // An event so the subscribing effect need not depend on `options`.
   const gcTimeOf = useEffectEvent(
-    (descriptor: Descriptor<T, C>) => optionsFor(options, descriptor).gcTime,
+    (descriptor: BatchDescriptor) => optionsFor(options, descriptor).gcTime,
   );
 
   // Reconcile subscriptions (keyId → unsubscribe) to the current keys. Passive,
@@ -126,7 +137,7 @@ export function useLanesAll<T, C = T>(
   useEffect(() => {
     const active = subsRef.current;
 
-    const wanted = new Map<string, Descriptor<T, C>>();
+    const wanted = new Map<string, BatchDescriptor>();
     for (const descriptor of descriptors) {
       if (!wanted.has(descriptor.keyId)) {
         wanted.set(descriptor.keyId, descriptor);

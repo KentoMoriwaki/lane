@@ -578,6 +578,21 @@ function typeExpectations(lane: Lane): void {
   expectTypeOf(useLanesAll([detail, detail])).toEqualTypeOf<
     Promise<LaneRead<Task>[]>
   >();
+  const details = [task.id].map(() => detail);
+  expectTypeOf(useLanesAll(details)).toEqualTypeOf<Promise<LaneRead<Task>[]>>();
+  expectTypeOf(useLanesAll<Task[], string>([accumulating])).toEqualTypeOf<
+    Promise<LaneRead<Task[]>[]>
+  >();
+
+  const mixedReads = [detail, accumulating] as const;
+  expectTypeOf(useLanesAll(mixedReads)).toEqualTypeOf<
+    Promise<[LaneRead<Task>, LaneRead<Task[]>]>
+  >();
+  expectTypeOf(useLanesAll([accumulating, detail])).toEqualTypeOf<
+    Promise<[LaneRead<Task[]>, LaneRead<Task>]>
+  >();
+  // @ts-expect-error — every batch member needs a definite loader.
+  useLanesAll([accumulating, gated]);
 
   const feed = infiniteLaneRead({
     key: ["feed"],

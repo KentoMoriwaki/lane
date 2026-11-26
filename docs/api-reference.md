@@ -929,10 +929,10 @@ Two runtime behaviors worth knowing:
 
 ### `useLanesAll(reads, options?)` — a batch read
 
-Read a **dynamic-length** set of reads with one hook and get back a single stable
-`Promise.all` of their values. `useLane` calls a fixed set of hooks, so it can't
-be called in a loop over a list whose length varies; `useLanesAll` orchestrates
-all the reads internally over the same core primitives.
+Read a batch with one hook and get back a single stable `Promise.all` of its
+values. `useLanesAll` also handles dynamic-length batches by orchestrating the
+reads over the same core primitives. The signature for a same-type batch is
+shown below.
 
 ```ts
 function useLanesAll<T, C = T>(
@@ -951,6 +951,18 @@ const reads = useMemo(() => ids.map(taskLanes.detail), [ids]);
 // Suspends until all resolve (they load in parallel); a rejecting *initial* load
 // throws to the Error Boundary.
 const tasks = use(useLanesAll(reads)).map((read) => read.data);
+```
+
+For a fixed tuple of different reads, the result keeps each member's type in
+input order.
+
+```tsx
+const reads = useMemo(
+  () => [workspaceLanes.detail(id), taskLanes.list(id)] as const,
+  [id],
+);
+const [{ data: workspace }, { data: tasks }] = use(useLanesAll(reads));
+// workspace: Workspace, tasks: Task[]
 ```
 
 Each member is its own keyed read — independently cached,

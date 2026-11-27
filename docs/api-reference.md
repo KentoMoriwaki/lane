@@ -929,10 +929,13 @@ Two runtime behaviors worth knowing:
 
 ### `useLanesAll(reads, options?)` — a batch read
 
-Read a batch with one hook and get back a single stable `Promise.all` of its
-values. `useLanesAll` also handles dynamic-length batches by orchestrating the
-reads over the same core primitives. The signature for a same-type batch is
-shown below.
+Use `useLanesAll` when one component needs the results of a **varying number of
+reads** together. A task comparison table, for example, needs the details of
+every selected task. Calling `useLane` in a loop would change the number of
+hook calls as the selection changes. `useLanesAll` starts the reads in parallel
+and returns one stable `Promise.all`.
+
+The signature below covers a batch of reads with the same result type.
 
 ```ts
 function useLanesAll<T, C = T>(
@@ -941,29 +944,21 @@ function useLanesAll<T, C = T>(
 ): Promise<LaneRead<T>[]>;
 ```
 
-A batch is usually derived from a list, which is where
-[`laneRead`](#lanereadspec--key--loader-colocation) fits best — the members are
-the same read applied to different inputs:
+In the comparison table, apply the same
+[`laneRead`](#lanereadspec--key--loader-colocation) definition to each selected ID.
 
 ```tsx
-const reads = useMemo(() => ids.map(taskLanes.detail), [ids]);
+const reads = useMemo(() => selectedIds.map(taskLanes.detail), [selectedIds]);
 
 // Suspends until all resolve (they load in parallel); a rejecting *initial* load
 // throws to the Error Boundary.
 const tasks = use(useLanesAll(reads)).map((read) => read.data);
 ```
 
-For a fixed tuple of different reads, the result keeps each member's type in
-input order.
-
-```tsx
-const reads = useMemo(
-  () => [workspaceLanes.detail(id), taskLanes.list(id)] as const,
-  [id],
-);
-const [{ data: workspace }, { data: tasks }] = use(useLanesAll(reads));
-// workspace: Workspace, tasks: Task[]
-```
+For a fixed set of reads, separate `useLane` calls also start in parallel when
+you call them all before the first `use(promise)`. If you already have a tuple
+of reads with different result types, `useLanesAll` preserves each member's
+`LaneRead<T>` type in input order.
 
 Each member is its own keyed read — independently cached,
 deduped, subscribed (focus / reconnect / `refetchOnMount`), and invalidatable,

@@ -1124,10 +1124,12 @@ this hook: **actions come from the hook, data comes from `use(promise)`.**
 
 Notes:
 
-- **`loadMore` appends one page** through `update`, so the key never changes:
-  the reader converges through a transition with the list still on screen, and
-  `isInvalidationPending` covers it with no `useTransition` of your own. It is a
-  no-op at the end of the list; gate your control on `data.hasNext`.
+- **`loadMore` checks `nextCursor` for the current last page on each call.** A
+  `null` cursor skips the fetch. A cursor fetches one page and appends it through
+  `update`, keeping the existing list on screen during `isInvalidationPending`.
+  Use `data.hasNext` to show the control based on the last pagination result. If
+  live metadata indicates that the list has grown past that point, the app can
+  offer `loadMore` again and use the metadata in `nextCursor`.
 - **`fetchPage`'s `signal` is optional because it is genuinely absent on the
   append path.** A refresh runs as a read and gets the read's abort signal; an
   updater is handed the current value and no controller, so a `loadMore` in

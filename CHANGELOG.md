@@ -11,6 +11,12 @@ All notable changes to `use-lane` are documented here. The format is based on
 - **`useLanesAll` infers results for mixed tuples.** Each position keeps its own
   `LaneRead<T>` type. Dynamic arrays of same-type reads still return an array.
 
+### Fixed
+
+- **`loadMore` can resume a list that grew after reaching its end.** It checks
+  `nextCursor` on the last page on every call, so a cursor derived from newer
+  metadata can append a page while preserving the existing pages.
+
 ## [0.9.1] - 2026-09-10
 
 ### Fixed

@@ -31,10 +31,10 @@ export type {
 export type InfiniteLaneResult<P, C> = {
   promise: Promise<LaneRead<InfiniteLaneValue<P, C>>>;
   /**
-   * Fetch the page after the last one and append it. No-op at the end of the
-   * list. Returns the entry's next promise; like any read it resolves (never
-   * rejects) on failure — check `error`. `undefined` means nothing to append
-   * to (no entry, or the last read rejected).
+   * Check `nextCursor` for the last page and append one page if it returns a
+   * cursor. A `null` cursor skips the fetch. If the append fails, the entry's
+   * next promise resolves with the existing pages and `error`. `undefined`
+   * means nothing to append to (no entry, or the last read rejected).
    */
   loadMore: () => Promise<LaneRead<InfiniteLaneValue<P, C>>> | undefined;
   isInvalidationPending: boolean;
@@ -144,16 +144,15 @@ export function useInfiniteLane<P, C>(
       const lastPage = value.pages[value.pages.length - 1];
       const lastParam = value.params[value.params.length - 1];
 
-      if (!value.hasNext || lastPage === undefined || lastParam === undefined) {
-        // Unchanged value: structural sharing keeps the entry's identity, so an
-        // over-eager caller costs only a notification.
+      if (lastPage === undefined || lastParam === undefined) {
         return value;
       }
 
+      // The app may have learned that the list grew since `hasNext` was set.
       const cursor = nextCursor(lastPage, lastParam);
 
       if (cursor === null) {
-        return { ...value, hasNext: false };
+        return value.hasNext ? { ...value, hasNext: false } : value;
       }
 
       // No `signal`: an updater cannot be aborted; this runs to completion.

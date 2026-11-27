@@ -287,6 +287,39 @@ describe("useInfiniteLane", () => {
     expect(fetchPage).toHaveBeenCalledTimes(2);
   });
 
+  it("appends to a list that grew after reaching the end", async () => {
+    const lane = createLane();
+    const app = await render(feedApp(lane, pageFetcher(2)));
+    await waitForText(app.container, "0|more");
+    await click(() => handle?.loadMore());
+    await waitForText(app.container, "0,1|end");
+
+    // The latest total makes a new cursor available for the cached tail.
+    const total = 3;
+    const grown = gatedFetcher(total);
+    await act(async () => {
+      app.root.render(
+        feedApp(lane, grown.fetchPage, {
+          nextCursor: (_page, cursor) => {
+            const next = cursor + 1;
+            return next < total ? next : null;
+          },
+        }),
+      );
+      await settlePromiseHandlers();
+    });
+    expect(app.container.textContent).toBe("0,1|end");
+    expect(grown.fetchPage).not.toHaveBeenCalled();
+
+    await click(() => handle?.loadMore());
+    expect(grown.pending()).toEqual([2]);
+    expect(app.container.textContent).toBe("0,1|end");
+
+    await grown.resolveNext();
+    await waitForText(app.container, "0,1,2|end");
+    expect(grown.fetchPage).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the whole cached list across a remount, without a request", async () => {
     // Depth lives in the value, not in the component: a reader that remounts
     // over a three-page cache gets three pages back, and no fetch.
@@ -526,6 +559,9 @@ describe("an infinite list whose first page the route publishes", () => {
 });
 
 type PageFetcher = ReturnType<typeof pageFetcher>;
+type FeedOptions = LaneUseOptions & {
+  nextCursor?: (page: Page, cursor: number) => number | null;
+};
 
 /** Resolves immediately; `total` decides where the cursor chain ends. */
 function pageFetcher(total: number) {
@@ -624,14 +660,14 @@ function FeedProbe({
   options,
 }: {
   fetchPage: PageFetcher;
-  options?: LaneUseOptions;
+  options?: FeedOptions;
 }) {
   const result = useInfiniteLane<Page, number>({
     ...options,
     key: ["feed"],
     fetchPage: (cursor) => fetchPage(cursor),
     initialCursor: 0,
-    nextCursor: (page) => page.next,
+    nextCursor: options?.nextCursor ?? ((page) => page.next),
   });
 
   React.useEffect(() => {
@@ -654,7 +690,7 @@ function FeedProbe({
 function feedApp(
   lane: Lane,
   fetchPage: PageFetcher,
-  options?: LaneUseOptions,
+  options?: FeedOptions,
 ): React.ReactElement {
   return React.createElement(LaneProvider, {
     lane,

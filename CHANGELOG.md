@@ -6,6 +6,11 @@ All notable changes to `use-lane` are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`useLanesAll` infers results for mixed tuples.** Each position keeps its own
+  `LaneRead<T>` type. Dynamic arrays of same-type reads still return an array.
+
 ## [0.9.1] - 2026-09-10
 
 ### Fixed
